@@ -75,7 +75,8 @@ func main() {
 		dataSource = SQLDataSource
 	}
 
-	searchFilterGroup := SearchFilterGroup{"Patient.identifier": SearchFilter{Code: "identifier", Type: "token", Value: "https://santeon.nl|1232323", Expression: "Patient.identifier"}}
+	searchFilterGroup := SearchFilterGroup{"Patient.identifier": SearchFilter{Code: "identifier", Type: "token", Value: "https://santeon.nl|123", Expression: "Patient.identifier"},
+		"Patient.birthdate": SearchFilter{Code: "birthdate", Type: "date", Comparator: "ge", Value: "20060101", Expression: "Patient.birthdate"}}
 
 	patient := fhir.Patient{}
 
@@ -108,83 +109,6 @@ func ExtractAndMapData(ds DataSource, s interface{}, sg SearchFilterGroup, logge
 
 	v := reflect.ValueOf(s).Elem()
 	return populateAndFilterStruct(v, data, "", sg)
-}
-
-func populateAndFilterStruct(v reflect.Value, resultMap map[string][]map[string]interface{}, parentField string, sg SearchFilterGroup) error {
-	if v.Kind() != reflect.Struct {
-		return fmt.Errorf("value is not a struct")
-	}
-
-	structName := v.Type().Name()
-	fullFieldName := parentField
-
-	if parentField == "" {
-		fullFieldName = structName
-	}
-
-	if data, ok := resultMap[fullFieldName]; ok {
-		for _, row := range data {
-			err := populateStructFromRow(v.Addr().Interface(), row)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	structID := ""
-	if idField := v.FieldByName("Id"); idField.IsValid() && idField.Kind() == reflect.Ptr && idField.Type().Elem().Kind() == reflect.String {
-		if idField.Elem().IsValid() {
-			structID = idField.Elem().String()
-		}
-	}
-
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Field(i)
-		fieldName := v.Type().Field(i).Name
-		fullFieldName := fullFieldName + "." + fieldName
-		fullFieldName = strings.ToLower(fullFieldName)
-		fullFieldName = strings.ToUpper(string(fullFieldName[0])) + fullFieldName[1:]
-
-		log.Debug().Str("field", fullFieldName).Msg("Processing field")
-		if fieldExistsInResultMap(resultMap, fullFieldName) {
-			//log.Debug().Str("field", newFullFieldName).Msg("Field exists in resultMap")
-			err := populateField(field, resultMap, fullFieldName, structID, sg)
-			if err != nil {
-				return err
-			}
-
-			if _, ok := sg[fullFieldName]; ok {
-				log.Debug().Str("field", fullFieldName).Msg("Field exists in search filter group")
-			}
-
-			err = filterField(field, sg, fullFieldName)
-			if err != nil {
-				return err
-			}
-
-		} else {
-			log.Debug().Str("field", fullFieldName).Msg("Field does not exist in resultMap")
-		}
-	}
-
-	return nil
-}
-
-func filterField(field reflect.Value, sg SearchFilterGroup, fullFieldName string) error {
-	if searchFilter, ok := sg[fullFieldName]; ok {
-		log.Debug().Str("field", fullFieldName).Interface("searchFilter", searchFilter).Msg("Filtering field")
-
-		// Add Coding struct filtering logic
-		system, code := parseFilter(searchFilter.Value)
-		log.Debug().Str("field", fullFieldName).Str("system", system).Str("code", code).Msg("Filtering Coding field")
-		if !fieldMatchesIdentifierFilter(field, system, code) {
-			log.Debug().Str("field", fullFieldName).Msg("Field does not match Coding filter, setting to zero value")
-			field.Set(reflect.Zero(field.Type()))
-		} else {
-			log.Debug().Str("field", fullFieldName).Msg("Field matches Coding filter")
-		}
-	}
-	return nil
 }
 
 func fieldMatchesIdentifierFilter(field reflect.Value, system, code string) bool {
@@ -278,6 +202,70 @@ func fieldExistsInResultMap(resultMap map[string][]map[string]interface{}, field
 	return false
 }
 
+func populateAndFilterStruct(v reflect.Value, resultMap map[string][]map[string]interface{}, parentField string, sg SearchFilterGroup) error {
+	if v.Kind() != reflect.Struct {
+		return fmt.Errorf("value is not a struct")
+	}
+
+	structName := v.Type().Name()
+	fullFieldName := parentField
+
+	if parentField == "" {
+		fullFieldName = structName
+	}
+
+	if data, ok := resultMap[fullFieldName]; ok {
+		for _, row := range data {
+			err := populateStructFromRow(v.Addr().Interface(), row)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	structID := ""
+	if idField := v.FieldByName("Id"); idField.IsValid() && idField.Kind() == reflect.Ptr && idField.Type().Elem().Kind() == reflect.String {
+		if idField.Elem().IsValid() {
+			structID = idField.Elem().String()
+		}
+	}
+
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		fieldName := v.Type().Field(i).Name
+		fullFieldName := fullFieldName + "." + fieldName
+		fullFieldName = strings.ToLower(fullFieldName)
+		fullFieldName = strings.ToUpper(string(fullFieldName[0])) + fullFieldName[1:]
+
+		log.Debug().Str("field", fullFieldName).Msg("Processing field")
+
+		var resultMapKey string
+		if parentField == "" {
+			resultMapKey = structName
+		} else {
+			resultMapKey = fullFieldName
+		}
+
+		if fieldExistsInResultMap(resultMap, resultMapKey) {
+			err := populateField(field, resultMap, fullFieldName, structID, sg)
+			if err != nil {
+				return err
+			}
+
+			if _, ok := sg[fullFieldName]; ok {
+				log.Debug().Str("field", fullFieldName).Msg("Field exists in search filter group")
+			}
+
+			err = FilterField(field, sg, fullFieldName)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func populateField(field reflect.Value, resultMap map[string][]map[string]interface{}, fieldName string, parentID string, sg SearchFilterGroup) error {
 	log.Debug().Msgf("Populating field %s in populateField: %s and parentID", fieldName, parentID)
 	switch field.Kind() {
@@ -300,7 +288,7 @@ func populateBasicType(field reflect.Value, resultMap map[string][]map[string]in
 
 	data, ok := resultMap[fullFieldName]
 	if !ok {
-		return nil
+		return nil // Don't set any value if the field is not in the resultMap
 	}
 
 	fieldName := strings.Split(fullFieldName, ".")[len(strings.Split(fullFieldName, "."))-1]
