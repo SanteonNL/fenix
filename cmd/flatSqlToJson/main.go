@@ -111,97 +111,6 @@ func ExtractAndMapData(ds DataSource, s interface{}, sg SearchFilterGroup, logge
 	return populateAndFilterStruct(v, data, "", sg)
 }
 
-func fieldMatchesIdentifierFilter(field reflect.Value, system, code string) bool {
-	if field.Kind() == reflect.Slice {
-		for i := 0; i < field.Len(); i++ {
-			if matchesIdentifierFilter(field.Index(i), system, code) {
-				return true
-			}
-		}
-	} else if field.Kind() == reflect.Struct {
-		return matchesIdentifierFilter(field, system, code)
-	}
-	return false
-}
-
-func matchesIdentifierFilter(v reflect.Value, system, code string) bool {
-	if v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return false
-		}
-		v = v.Elem()
-	}
-
-	if v.Kind() != reflect.Struct {
-		return false
-	}
-
-	identifierField := v.FieldByName("Identifier")
-	if identifierField.IsValid() && identifierField.Kind() == reflect.Slice {
-		for i := 0; i < identifierField.Len(); i++ {
-			coding := identifierField.Index(i)
-			if matchesIndentifierValues(coding, system, code) {
-				return true
-			}
-		}
-	} else {
-		return matchesIndentifierValues(v, system, code)
-	}
-
-	return false
-}
-func matchesIndentifierValues(v reflect.Value, system, code string) bool {
-	systemField := v.FieldByName("System")
-	codeField := v.FieldByName("Value")
-
-	if !systemField.IsValid() || !codeField.IsValid() {
-		return false
-	}
-
-	if systemField.Kind() == reflect.Ptr {
-		if systemField.IsNil() {
-			return false
-		}
-		systemField = systemField.Elem()
-	}
-
-	if codeField.Kind() == reflect.Ptr {
-		if codeField.IsNil() {
-			return false
-		}
-		codeField = codeField.Elem()
-	}
-
-	log.Debug().Str("system", systemField.String()).Str("code", codeField.String()).Msg("Matching identifier values")
-
-	return (system == "" || systemField.String() == system) && codeField.String() == code
-}
-
-func parseFilter(filter string) (string, string) {
-	parts := strings.Split(filter, "|")
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", parts[0]
-}
-
-func fieldExistsInResultMap(resultMap map[string][]map[string]interface{}, fieldName string) bool {
-	fieldName = strings.ToLower(fieldName)
-	fieldName = strings.ToUpper(string(fieldName[0])) + fieldName[1:]
-
-	if _, ok := resultMap[fieldName]; ok {
-		return true
-	}
-
-	for key := range resultMap {
-		if strings.HasPrefix(key, fieldName+".") {
-			log.Debug().Msgf("Nested field exists in resultMap: %s", key)
-			return true
-		}
-	}
-	return false
-}
-
 func populateAndFilterStruct(v reflect.Value, resultMap map[string][]map[string]interface{}, parentField string, sg SearchFilterGroup) error {
 	if v.Kind() != reflect.Struct {
 		return fmt.Errorf("value is not a struct")
@@ -266,39 +175,20 @@ func populateAndFilterStruct(v reflect.Value, resultMap map[string][]map[string]
 	return nil
 }
 
-func populateField(field reflect.Value, resultMap map[string][]map[string]interface{}, fieldName string, parentID string, sg SearchFilterGroup) error {
-	log.Debug().Msgf("Populating field %s in populateField: %s and parentID", fieldName, parentID)
-	switch field.Kind() {
-	case reflect.Slice:
-		return populateSlice(field, resultMap, fieldName, parentID, sg)
-	case reflect.Struct:
-		return populateAndFilterStruct(field, resultMap, fieldName, sg)
-	case reflect.Ptr:
-		if field.IsNil() {
-			field.Set(reflect.New(field.Type().Elem()))
-		}
-		return populateField(field.Elem(), resultMap, fieldName, parentID, sg)
-	default:
-		return populateBasicType(field, resultMap, fieldName)
-	}
-}
+func populateStructFromRow(obj interface{}, row map[string]interface{}) error {
+	v := reflect.ValueOf(obj).Elem()
+	t := v.Type()
 
-func populateBasicType(field reflect.Value, resultMap map[string][]map[string]interface{}, fullFieldName string) error {
-	log.Debug().Msgf("Populating basic type fullFieldName: %s", fullFieldName)
+	for key, value := range row {
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			fieldNameLower := strings.ToLower(field.Name)
 
-	data, ok := resultMap[fullFieldName]
-	if !ok {
-		return nil // Don't set any value if the field is not in the resultMap
-	}
-
-	fieldName := strings.Split(fullFieldName, ".")[len(strings.Split(fullFieldName, "."))-1]
-	log.Debug().Msgf("Populating basic type fieldName: %s", fieldName)
-
-	for _, row := range data {
-		for key, value := range row {
-			if strings.EqualFold(key, fieldName) {
-				log.Debug().Msgf("Setting field: %s with value: %v", fieldName, value)
-				return SetField(field.Addr().Interface(), fieldName, value)
+			if fieldNameLower == strings.ToLower(key) {
+				err := SetField(obj, field.Name, value)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -347,20 +237,39 @@ func populateSlice(field reflect.Value, resultMap map[string][]map[string]interf
 	return nil
 }
 
-func populateStructFromRow(obj interface{}, row map[string]interface{}) error {
-	v := reflect.ValueOf(obj).Elem()
-	t := v.Type()
+func populateField(field reflect.Value, resultMap map[string][]map[string]interface{}, fieldName string, parentID string, sg SearchFilterGroup) error {
+	log.Debug().Msgf("Populating field %s in populateField: %s and parentID", fieldName, parentID)
+	switch field.Kind() {
+	case reflect.Slice:
+		return populateSlice(field, resultMap, fieldName, parentID, sg)
+	case reflect.Struct:
+		return populateAndFilterStruct(field, resultMap, fieldName, sg)
+	case reflect.Ptr:
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		return populateField(field.Elem(), resultMap, fieldName, parentID, sg)
+	default:
+		return populateBasicType(field, resultMap, fieldName)
+	}
+}
 
-	for key, value := range row {
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			fieldNameLower := strings.ToLower(field.Name)
+func populateBasicType(field reflect.Value, resultMap map[string][]map[string]interface{}, fullFieldName string) error {
+	log.Debug().Msgf("Populating basic type fullFieldName: %s", fullFieldName)
 
-			if fieldNameLower == strings.ToLower(key) {
-				err := SetField(obj, field.Name, value)
-				if err != nil {
-					return err
-				}
+	data, ok := resultMap[fullFieldName]
+	if !ok {
+		return nil // Don't set any value if the field is not in the resultMap
+	}
+
+	fieldName := strings.Split(fullFieldName, ".")[len(strings.Split(fullFieldName, "."))-1]
+	log.Debug().Msgf("Populating basic type fieldName: %s", fieldName)
+
+	for _, row := range data {
+		for key, value := range row {
+			if strings.EqualFold(key, fieldName) {
+				log.Debug().Msgf("Setting field: %s with value: %v", fieldName, value)
+				return SetField(field.Addr().Interface(), fieldName, value)
 			}
 		}
 	}
@@ -477,4 +386,21 @@ func SetField(obj interface{}, name string, value interface{}) error {
 	}
 
 	return nil
+}
+
+func fieldExistsInResultMap(resultMap map[string][]map[string]interface{}, fieldName string) bool {
+	fieldName = strings.ToLower(fieldName)
+	fieldName = strings.ToUpper(string(fieldName[0])) + fieldName[1:]
+
+	if _, ok := resultMap[fieldName]; ok {
+		return true
+	}
+
+	for key := range resultMap {
+		if strings.HasPrefix(key, fieldName+".") {
+			log.Debug().Msgf("Nested field exists in resultMap: %s", key)
+			return true
+		}
+	}
+	return false
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -158,4 +159,78 @@ func matchesCodingValues(v reflect.Value, system, code string) bool {
 	log.Debug().Str("system", systemField.String()).Str("code", codeField.String()).Msg("Matching coding values")
 
 	return (system == "" || systemField.String() == system) && codeField.String() == code
+}
+
+func fieldMatchesIdentifierFilter(field reflect.Value, system, code string) bool {
+	if field.Kind() == reflect.Slice {
+		for i := 0; i < field.Len(); i++ {
+			if matchesIdentifierFilter(field.Index(i), system, code) {
+				return true
+			}
+		}
+	} else if field.Kind() == reflect.Struct {
+		return matchesIdentifierFilter(field, system, code)
+	}
+	return false
+}
+
+func matchesIdentifierFilter(v reflect.Value, system, code string) bool {
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return false
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+
+	identifierField := v.FieldByName("Identifier")
+	if identifierField.IsValid() && identifierField.Kind() == reflect.Slice {
+		for i := 0; i < identifierField.Len(); i++ {
+			coding := identifierField.Index(i)
+			if matchesIndentifierValues(coding, system, code) {
+				return true
+			}
+		}
+	} else {
+		return matchesIndentifierValues(v, system, code)
+	}
+
+	return false
+}
+func matchesIndentifierValues(v reflect.Value, system, code string) bool {
+	systemField := v.FieldByName("System")
+	codeField := v.FieldByName("Value")
+
+	if !systemField.IsValid() || !codeField.IsValid() {
+		return false
+	}
+
+	if systemField.Kind() == reflect.Ptr {
+		if systemField.IsNil() {
+			return false
+		}
+		systemField = systemField.Elem()
+	}
+
+	if codeField.Kind() == reflect.Ptr {
+		if codeField.IsNil() {
+			return false
+		}
+		codeField = codeField.Elem()
+	}
+
+	log.Debug().Str("system", systemField.String()).Str("code", codeField.String()).Msg("Matching identifier values")
+
+	return (system == "" || systemField.String() == system) && codeField.String() == code
+}
+
+func parseFilter(filter string) (string, string) {
+	parts := strings.Split(filter, "|")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", parts[0]
 }
