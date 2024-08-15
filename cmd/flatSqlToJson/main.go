@@ -30,6 +30,14 @@ type TargetCode struct {
 
 var globalConceptMaps ConceptMapperMap
 
+// FHIRResourceFactory is a function type that creates a new instance of a FHIR resource
+type FHIRResourceFactory func() interface{}
+
+var FHIRResourceMap = map[string]FHIRResourceFactory{
+	"Patient":     func() interface{} { return &fhir.Patient{} },
+	"Observation": func() interface{} { return &fhir.Observation{} },
+}
+
 func initializeGenderConceptMap() {
 	globalConceptMaps = ConceptMapperMap{
 		"Patient.gender": {
@@ -106,30 +114,29 @@ func main() {
 		"Patient.identifier": SearchParameter{
 			Code:  "identifier",
 			Type:  "token",
-			Value: "https://santeon.nl|123",
+			Value: "https://santeon.nl|123456",
 		},
 	}
 
 	// Initialize concept maps
 	initializeGenderConceptMap()
 
-	// Process data
-	patient, filterMessage, err := ProcessDataSource(dataSource, searchParameterMap, log)
+	resourceName := "Patient"                    // Example: processing Patients
+	resourceIDs := []string{"123", "456", "789"} // Example patient numbers
+	resources, err := ProcessMultipleFHIRResources(dataSource, resourceName, resourceIDs, searchParameterMap, log)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to process data source")
+		log.Fatal().Err(err).Msg("Failed to process FHIR resources")
 	}
 
-	if filterMessage != "" {
-		log.Info().Msg(filterMessage)
-		fmt.Println("No data returned due to filtering")
-	} else {
-		// Output the result
-		jsonData, err := json.MarshalIndent(patient, "", "  ")
+	for i, resource := range resources {
+		jsonData, err := json.MarshalIndent(resource, "", "  ")
 		if err != nil {
-			log.Fatal().Err(err).Msg("Failed to marshal patient to JSON")
+			log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", i)
+			continue
 		}
-		fmt.Println("Patient data:")
+		fmt.Printf("%s %d data:\n", resourceName, i+1)
 		fmt.Println(string(jsonData))
+		fmt.Println()
 	}
 
 	endTime := time.Now()
@@ -137,26 +144,48 @@ func main() {
 	log.Debug().Msgf("Execution time: %s", duration)
 }
 
-func ProcessDataSource(ds DataSource, searchParameterMap SearchParameterMap, log zerolog.Logger) (*fhir.Patient, string, error) {
-	data, err := ds.Read()
-	if err != nil {
-		return nil, "", err
-	}
-	log.Debug().Interface("dataMap", data).Msg("Flat data before mapping to FHIR")
-
-	patient := &fhir.Patient{}
-	v := reflect.ValueOf(patient).Elem()
-
-	filterResult, err := populateStruct(v, data, "", "", searchParameterMap, log)
-	if err != nil {
-		return nil, "", err
+func ProcessMultipleFHIRResources(ds DataSource, resourceName string, resourceIDs []string, searchParameterMap SearchParameterMap, log zerolog.Logger) ([]interface{}, error) {
+	factory, ok := FHIRResourceMap[resourceName]
+	if !ok {
+		return nil, fmt.Errorf("unsupported FHIR resource: %s", resourceName)
 	}
 
-	if !filterResult.Passed {
-		return &fhir.Patient{}, filterResult.Message, nil
+	var originalQuery string
+
+	var resources []interface{}
+	if sqlDS, ok := ds.(*SQLDataSource); ok {
+		originalQuery = sqlDS.query
 	}
 
-	return patient, "", nil
+	for _, id := range resourceIDs {
+		resource := factory()
+		v := reflect.ValueOf(resource).Elem()
+
+		identifier := "'" + id + "'"
+
+		if sqlDS, ok := ds.(*SQLDataSource); ok {
+			sqlDS.query = strings.ReplaceAll(originalQuery, ":identifier", identifier)
+			log.Debug().Str("query", originalQuery).Str("id", id).Msg("Modified query")
+		}
+
+		data, err := ds.Read()
+		if err != nil {
+			return nil, fmt.Errorf("error reading data for %s %s: %w", resourceName, id, err)
+		}
+
+		filterResult, err := populateStruct(v, data, "", "", searchParameterMap, log)
+		if err != nil {
+			return nil, fmt.Errorf("error populating %s %s: %w", resourceName, id, err)
+		}
+
+		if filterResult.Passed {
+			resources = append(resources, resource)
+		} else {
+			log.Info().Str("id", id).Msg(filterResult.Message)
+		}
+	}
+
+	return resources, nil
 }
 
 func populateStruct(field reflect.Value, resultMap map[string][]map[string]interface{}, fhirPath string, parentID string, searchParameterMap SearchParameterMap, log zerolog.Logger) (*FilterResult, error) {

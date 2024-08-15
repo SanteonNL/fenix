@@ -188,7 +188,7 @@ func (s *SQLDataSource) Read() (map[string][]map[string]interface{}, error) {
 		}
 	}
 
-	//s.log.Debug().Interface("result", result).Msg("Data from SQL query")
+	s.log.Debug().Interface("result", result).Msg("Data from SQL query")
 	return result, nil
 }
 func NewCSVDataSource(filePath string, mapper *CSVMapper) *CSVDataSource {
