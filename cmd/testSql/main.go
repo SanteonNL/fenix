@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/models/fhir"
+	fhir "github.com/SanteonNL/fenix/models/fhir/r4"
 	"github.com/SanteonNL/fenix/util"
 	"github.com/gorilla/mux"
 

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/models/fhir/r4"
 	"github.com/SanteonNL/fenix/models/sim"
 	"github.com/gorilla/mux"
 
