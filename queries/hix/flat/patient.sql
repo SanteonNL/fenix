@@ -11,7 +11,7 @@ WITH names AS (
         patient p
     WHERE
         1 = 1
-        AND p.identificatienummer =  '456'
+        AND p.identificatienummer =  :id
 )
 SELECT
     *

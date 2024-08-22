@@ -107,7 +107,10 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to read query file")
 	}
 	query := string(queryBytes)
-	dataSource := NewSQLDataSource(db, query, log)
+
+	log.Debug().Str("query", query).Msg("Query loaded")
+
+	sqlDatasource := NewSQLDataSource(db, query, log)
 
 	// Set up search parameters
 	searchParameterMap := SearchParameterMap{
@@ -123,7 +126,7 @@ func main() {
 
 	resourceName := "Patient"                    // Example: processing Patients
 	resourceIDs := []string{"123", "456", "789"} // Example patient numbers
-	resources, err := ProcessMultipleFHIRResources(dataSource, resourceName, resourceIDs, searchParameterMap, log)
+	resources, err := ProcessMultipleFHIRResources(sqlDatasource, resourceName, resourceIDs, searchParameterMap, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to process FHIR resources")
 	}
@@ -144,38 +147,38 @@ func main() {
 	log.Debug().Msgf("Execution time: %s", duration)
 }
 
-func ProcessMultipleFHIRResources(ds DataSource, resourceName string, resourceIDs []string, searchParameterMap SearchParameterMap, log zerolog.Logger) ([]interface{}, error) {
+func ProcessMultipleFHIRResources(dataSource DataSource, resourceName string, resourceIDs []string, searchParameterMap SearchParameterMap, log zerolog.Logger) ([]interface{}, error) {
 	factory, ok := FHIRResourceMap[resourceName]
 	if !ok {
 		return nil, fmt.Errorf("unsupported FHIR resource: %s", resourceName)
 	}
 
-	var originalQuery string
-
 	var resources []interface{}
-	if sqlDS, ok := ds.(*SQLDataSource); ok {
-		originalQuery = sqlDS.query
+	sqlDS, ok := dataSource.(*SQLDataSource)
+	if !ok {
+		return nil, fmt.Errorf("unsupported data source type")
 	}
+
+	originalQuery := sqlDS.query
 
 	for _, id := range resourceIDs {
 		resource := factory()
 		v := reflect.ValueOf(resource).Elem()
+		log.Debug().Str("query", originalQuery).Str("id", id).Msg("Original query")
+		// Replace the placeholder with the current resource ID
+		sqlDS.query = strings.ReplaceAll(originalQuery, ":id", fmt.Sprintf("'%s'", id))
+		log.Debug().Str("query", sqlDS.query).Str("id", id).Msg("Modified query")
 
-		identifier := "'" + id + "'"
-
-		if sqlDS, ok := ds.(*SQLDataSource); ok {
-			sqlDS.query = strings.ReplaceAll(originalQuery, ":identifier", identifier)
-			log.Debug().Str("query", originalQuery).Str("id", id).Msg("Modified query")
-		}
-
-		data, err := ds.Read()
+		data, err := sqlDS.Read()
 		if err != nil {
-			return nil, fmt.Errorf("error reading data for %s %s: %w", resourceName, id, err)
+			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error reading data")
+			continue
 		}
 
 		filterResult, err := populateStruct(v, data, "", "", searchParameterMap, log)
 		if err != nil {
-			return nil, fmt.Errorf("error populating %s %s: %w", resourceName, id, err)
+			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error populating struct")
+			continue
 		}
 
 		if filterResult.Passed {
@@ -183,6 +186,9 @@ func ProcessMultipleFHIRResources(ds DataSource, resourceName string, resourceID
 		} else {
 			log.Info().Str("id", id).Msg(filterResult.Message)
 		}
+
+		// Reset the query to the original for the next iteration
+		sqlDS.query = originalQuery
 	}
 
 	return resources, nil
