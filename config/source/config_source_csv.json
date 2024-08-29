@@ -1,90 +1,95 @@
 {
-    "mappings": [
-      {
-        "fieldName": "Patient",
-        "files": [
-          {
-            "fileName": "test/data/sim/patient.csv",
-            "fieldMappings": [
-              {
-                "csvFields": {
-                  "Identificatienummer": "id",
-                  "Geboortedatum": "birthDate",
-                  "GeslachtCode": "gender"
-                },
-                "idField": "Identificatienummer",
-                "parentIdField": ""
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "fieldName": "Patient.name",
-        "files": [
-          {
-            "fileName": "test/data/sim/patient.csv",
-            "fieldMappings": [
-              {
-                "csvFields": {
-                  "Achternaam": "family"
-                },
-                "idField": "Identificatienummer",
-                "parentIdField": "Identificatienummer"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "fieldName": "Patient.contact",
-        "files": [
-          {
-            "fileName": "test/data/sim/patient.csv",
-            "fieldMappings": [
-              {
-                "csvFields": {
-                },
-                "idField": "GerelateerdPersoonID",
-                "parentIdField": "Identificatienummer"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "fieldName": "Patient.contact.name",
-        "files": [
-          {
-            "fileName": "test/data/sim/patient_contacts.csv",
-            "fieldMappings": [
-              {
-                "csvFields": {
-                  "GerelateerdeRelatie": "family"
-                },
-                "idField": "GerelateerdPersoonID",
-                "parentIdField": "Identificatienummer"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "fieldName": "Patient.contact.relationship",
-        "files": [
-          {
-            "fileName": "test/data/sim/patient.csv",
-            "fieldMappings": [
-              {
-                "csvFields": {
-                  "GerelateerdeRelatie": "family"
-                },
-                "idField": "GerelateerdPersoonID",
-                "parentIdField": "Identificatienummer"
-              }
-            ]
-          }
-        ]
-      }
-    ]
-  }
+  "mappings": [
+    {
+      "fhirPath": "Patient",
+      "files": [
+        {
+          "fileName": "test/data/sim/patient.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "Identificatienummer": "id",
+                "Geboortedatum": "birthDate",
+                "GeslachtCode": "gender"
+              },
+              "idField": "Identificatienummer",
+              "parentIdField": "",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Patient.name",
+      "files": [
+        {
+          "fileName": "test/data/sim/patient_names.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "Achternaam": "family",
+                "Voornaam": "given"
+              },
+              "idField": "Identificatienummer",
+              "parentIdField": "Identificatienummer",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Patient.contact",
+      "files": [
+        {
+          "fileName": "test/data/sim/patient.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {},
+              "idField": "GerelateerdPersoonID",
+              "parentIdField": "Identificatienummer",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Patient.contact.name",
+      "files": [
+        {
+          "fileName": "test/data/sim/patient_contacts.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "GerelateerdeRelatie": "family"
+              },
+              "idField": "GerelateerdPersoonID",
+              "parentIdField": "Identificatienummer",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Patient.contact.relationship",
+      "files": [
+        {
+          "fileName": "test/data/sim/patient.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "GerelateerdeRelatie": "coding.display"
+              },
+              "idField": "GerelateerdPersoonID",
+              "parentIdField": "Identificatienummer",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

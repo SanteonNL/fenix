@@ -110,37 +110,54 @@ func main() {
 
 	log.Debug().Str("query", query).Msg("Query loaded")
 
-	sqlDatasource := NewSQLDataSource(db, query, log)
+	// sqlDatasource := NewSQLDataSource(db, query, log)
 
-	// Set up search parameters
-	searchParameterMap := SearchParameterMap{
-		"Patient.identifier": SearchParameter{
-			Code:  "identifier",
-			Type:  "token",
-			Value: "https://santeon.nl|123456",
-		},
-	}
+	// // Set up search parameters
+	// searchParameterMap := SearchParameterMap{
+	// 	"Patient.identifier": SearchParameter{
+	// 		Code:  "identifier",
+	// 		Type:  "token",
+	// 		Value: "https://santeon.nl|123456",
+	// 	},
+	// }
 
 	// Initialize concept maps
-	initializeGenderConceptMap()
-
-	resourceName := "Patient"                    // Example: processing Patients
-	resourceIDs := []string{"123", "456", "789"} // Example patient numbers
-	resources, err := ProcessMultipleFHIRResources(sqlDatasource, resourceName, resourceIDs, searchParameterMap, log)
+	// Read data from CSV file
+	configPath := "config/source/config_source_csv.json"
+	csvDataSource, err := NewCSVDataSource(configPath, log)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to process FHIR resources")
+		log.Fatal().Err(err).Msg("Failed to create CSV data source from config")
 	}
 
-	for i, resource := range resources {
-		jsonData, err := json.MarshalIndent(resource, "", "  ")
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", i)
-			continue
-		}
-		fmt.Printf("%s %d data:\n", resourceName, i+1)
-		fmt.Println(string(jsonData))
-		fmt.Println()
+	// Read data from CSV file
+	data, err := csvDataSource.Read()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to read data from CSV file")
 	}
+
+	// Print the result
+	for id, row := range data {
+		fmt.Println(id)
+		fmt.Println(row)
+	}
+
+	// resourceName := "Patient"                    // Example: processing Patients
+	// resourceIDs := []string{"123", "456", "789"} // Example patient numbers
+	// // resources, err := ProcessMultipleFHIRResources(sqlDatasource, resourceName, resourceIDs, searchParameterMap, log)
+	// // if err != nil {
+	// // 	log.Fatal().Err(err).Msg("Failed to process FHIR resources")
+	// // }
+
+	// // for i, resource := range resources {
+	// // 	jsonData, err := json.MarshalIndent(resource, "", "  ")
+	// // 	if err != nil {
+	// // 		log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", i)
+	// // 		continue
+	// // 	}
+	// // 	fmt.Printf("%s %d data:\n", resourceName, i+1)
+	// // 	fmt.Println(string(jsonData))
+	// // 	fmt.Println()
+	// // }
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
@@ -169,13 +186,15 @@ func ProcessMultipleFHIRResources(dataSource DataSource, resourceName string, re
 		sqlDS.query = strings.ReplaceAll(originalQuery, ":id", fmt.Sprintf("'%s'", id))
 		log.Debug().Str("query", sqlDS.query).Str("id", id).Msg("Modified query")
 
-		data, err := sqlDS.Read()
+		data, err := sqlDS.Read(id)
 		if err != nil {
 			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error reading data")
 			continue
 		}
 
-		filterResult, err := populateStruct(v, data, "", "", searchParameterMap, log)
+		patientData := data[id]
+
+		filterResult, err := populateStruct(v, patientData, "", "", searchParameterMap, log)
 		if err != nil {
 			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error populating struct")
 			continue

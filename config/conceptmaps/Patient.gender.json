@@ -1,0 +1,52 @@
+{
+  "resourceType" : "ConceptMap",
+  "id" : "gender-map",
+  "url" : "http://example.org/ConceptMap/gender-map",
+  "version" : "0.1",
+  "name" : "GenderCodeMapping",
+  "title" : "HL7 v2 to FHIR Gender Code Mapping",
+  "status" : "draft",
+  "experimental" : true,
+  "date" : "2024-07-25",
+  "publisher" : "ACME Healthcare",
+  "description" : "A mapping between HL7 v2 and FHIR gender codes",
+  "sourceScopeUri" : "http://terminology.hl7.org/ValueSet/v2-0001",
+  "targetScopeUri" : "http://hl7.org/fhir/ValueSet/administrative-gender",
+  "group" : [{
+    "source" : "http://terminology.hl7.org/CodeSystem/v2-0001",
+    "target" : "http://hl7.org/fhir/administrative-gender",
+    "element" : [{
+      "code" : "M",
+      "display" : "Male",
+      "target" : [{
+        "code" : "male",
+        "display" : "Male",
+        "relationship" : "equivalent"
+      }]
+    },
+    {
+      "code" : "F",
+      "display" : "Female",
+      "target" : [{
+        "code" : "female",
+        "display" : "Female",
+        "relationship" : "equivalent"
+      }]
+    },
+    {
+      "code" : "ksladj",
+      "display" : "Unknown",
+      "target" : [{
+        "code" : "unknown",
+        "display" : "Unknown",
+        "relationship" : "equivalent"
+      }]
+    }],
+    "unmapped" : {
+      "mode" : "fixed",
+      "code" : "other",
+      "display" : "Other",
+      "relationship" : "related-to"
+    }
+  }]
+}
