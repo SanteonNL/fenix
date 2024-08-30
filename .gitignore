@@ -20,3 +20,6 @@
 
 # Go workspace file
 go.work
+
+# Ignore all files in the output folder in the main directory
+/output/*
