@@ -121,50 +121,7 @@ func main() {
 		// },
 	}
 
-	// Initialize concept maps
-	// Read data from CSV file
-	configPath := "config/source/config_source_csv.json"
-	csvDataSource, err := NewCSVDataSource(configPath, log)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create CSV data source from config")
-	}
-
-	// Read data from CSV file
-	data, err := csvDataSource.Read()
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to read data from CSV file")
-	}
-
-	// Print the result
-	for id, row := range data {
-		fmt.Println(id)
-		fmt.Println(row)
-
-		resourceName := "Patient"
-
-		factory, ok := FHIRResourceMap[resourceName]
-		if !ok {
-			log.Fatal().Msg("Unsupported FHIR resource")
-		}
-
-		resource := factory()
-		v := reflect.ValueOf(resource).Elem()
-
-		_, err := populateStruct(v, row, "", "", searchParameterMap, log)
-		if err != nil {
-			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error populating struct")
-			continue
-		}
-
-		jsonData, err := json.MarshalIndent(resource, "", "  ")
-		if err != nil {
-			log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", id)
-			continue
-		}
-		fmt.Printf("%s %d data:\n", resourceName, id)
-		fmt.Println(string(jsonData))
-		fmt.Println()
-	}
+	ProcessCSVData(searchParameterMap, log)
 
 	// resourceName := "Patient"                    // Example: processing Patients
 	// resourceIDs := []string{"123", "456", "789"} // Example patient numbers
@@ -236,6 +193,75 @@ func ProcessMultipleFHIRResources(dataSource DataSource, resourceName string, re
 	}
 
 	return resources, nil
+}
+
+func ProcessCSVData(searchParameterMap SearchParameterMap, log zerolog.Logger) error {
+	configPath := "config/source/config_source_csv.json"
+	csvDataSource, err := NewCSVDataSource(configPath, log)
+	if err != nil {
+		return fmt.Errorf("failed to create CSV data source: %w", err)
+	}
+
+	resourceType := "Patient"
+	data, err := csvDataSource.Read(resourceType)
+	if err != nil {
+		return fmt.Errorf("failed to read data from CSV file: %w", err)
+	}
+
+	factory, ok := FHIRResourceMap[resourceType]
+	if !ok {
+		return fmt.Errorf("unsupported FHIR resource type: %s", resourceType)
+	}
+
+	outputFolder := fmt.Sprintf("output_%s", time.Now().Format("20060102150405"))
+	err = os.Mkdir(outputFolder, 0755)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create output folder")
+		return err
+	}
+
+	outputFile := fmt.Sprintf("%s/%s.ndjson", outputFolder, resourceType)
+	file, err := os.Create(outputFile)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create output file")
+		return err
+	}
+	defer file.Close()
+
+	for resourceID, resourceData := range data {
+		resource := factory()
+		v := reflect.ValueOf(resource).Elem()
+
+		_, err = populateStruct(v, resourceData, "", "", searchParameterMap, log)
+		if err != nil {
+			log.Error().Err(err).Str("resourceType", resourceType).Str("resourceID", resourceID).Msg("Error populating struct from CSV data")
+			continue
+		}
+
+		jsonData, err := json.Marshal(resource)
+		if err != nil {
+			log.Error().Err(err).Str("resourceType", resourceType).Str("resourceID", resourceID).Msg("Failed to marshal resource to JSON")
+			continue
+		}
+
+		_, err = file.Write(jsonData)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to write JSON data to file")
+			return err
+		}
+
+		// Write a newline after each JSON object
+		_, err = file.WriteString("\n")
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to write newline to file")
+			return err
+		}
+
+		log.Info().Str("resourceType", resourceType).Str("resourceID", resourceID).Msg("Processed and wrote resource to file")
+	}
+
+	log.Info().Str("file", outputFile).Msg("All data written to NDJSON file")
+	return nil
 }
 
 func populateStruct(field reflect.Value, resultMap map[string][]map[string]interface{}, fhirPath string, parentID string, searchParameterMap SearchParameterMap, log zerolog.Logger) (*FilterResult, error) {

@@ -1,0 +1,125 @@
+{
+  "resourceType": "Observation",
+  "mappings": [
+    {
+      "fhirPath": "Observation",
+      "files": [
+        {
+          "fileName": "AlgemeneMeting.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "MetingID": "identifier.value",
+                "MetingDatumTijd": "effectiveDateTime"
+              },
+              "idField": "MetingID",
+              "parentIdField": "",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Observation.code.coding",
+      "files": [
+        {
+          "fileName": "AlgemeneMeting.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "MetingNaamCode": "code",
+                "MetingNaamOmschrijving": "display"
+              },
+              "idField": "MetingID",
+              "parentIdField": "MetingID",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Observation.valueQuantity",
+      "files": [
+        {
+          "fileName": "AlgemeneMeting.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "UitslagWaarde": "value",
+                "UitslagWaardeEenheid": "unit",
+                "UitslagWaardeOperator": "comparator"
+              },
+              "idField": "MetingID",
+              "parentIdField": "MetingID",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Observation.valueCodeableConcept.coding",
+      "files": [
+        {
+          "fileName": "AlgemeneMeting.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "UitslagCode": "code",
+                "UitslagCodeOmschrijving": "display"
+              },
+              "idField": "MetingID",
+              "parentIdField": "MetingID",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fhirPath": "Observation.valueDateTime",
+      "files": [
+        {
+          "fileName": "AlgemeneMeting.csv",
+          "fieldMappings": [
+            {
+              "csvFields": {
+                "UitslagDatumTijd": "valueDateTime"
+              },
+              "idField": "MetingID",
+              "parentIdField": "MetingID",
+              "patientIdField": "Identificatienummer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "defaultValues": [
+    {
+      "fhirPath": "Observation.status",
+      "value": "final"
+    },
+    {
+      "fhirPath": "Observation.identifier.system",
+      "value": "https://santeon.nl/observation-identifier"
+    },
+    {
+      "fhirPath": "Observation.code.coding.system",
+      "value": "http://loinc.org"
+    },
+    {
+      "fhirPath": "Observation.valueCodeableConcept.coding.system",
+      "value": "http://snomed.info/sct"
+    }
+  ],
+  "references": [
+    {
+      "fhirPath": "Observation.subject",
+      "referencedResource": "Patient",
+      "referenceField": "Identificatienummer"
+    }
+  ]
+}

@@ -13,7 +13,7 @@ import (
 )
 
 type DataSource interface {
-	Read(patientID string) (map[string]map[string][]map[string]interface{}, error) // map[patientID\map[fhirPath][]map[fhirField]fhirValue
+	Read(string) (map[string]map[string][]map[string]interface{}, error) // map[patientID\map[fhirPath][]map[fhirField]fhirValue
 }
 
 type SQLDataSource struct {
@@ -83,11 +83,17 @@ func LoadCSVMapperFromConfig(filePath string) (*CSVMapper, error) {
 	return &mapper, nil
 }
 
-func (c *CSVDataSource) Read() (map[string]map[string][]map[string]interface{}, error) {
+func (c *CSVDataSource) Read(resourceName string) (map[string]map[string][]map[string]interface{}, error) {
 	result := make(map[string]map[string][]map[string]interface{})
 	idMap := make(map[string]map[string]string) // map[FHIRPath]map[ID]PatientID
 
 	for _, mapping := range c.mapper.Mappings {
+		// Check if the mapping is for the requested resource
+		fhirPathParts := strings.Split(mapping.FHIRPath, ".")
+		if len(fhirPathParts) == 0 || fhirPathParts[0] != resourceName {
+			continue
+		}
+
 		idMap[mapping.FHIRPath] = make(map[string]string)
 		for _, fileMapping := range mapping.Files {
 			fileData, err := c.readFile(fileMapping.FileName)
@@ -146,7 +152,6 @@ func (c *CSVDataSource) Read() (map[string]map[string][]map[string]interface{}, 
 
 	return result, nil
 }
-
 func (c *CSVDataSource) readFile(fileName string) ([]map[string]interface{}, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
