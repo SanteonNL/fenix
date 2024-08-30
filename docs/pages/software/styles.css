@@ -1,0 +1,64 @@
+.markdown-body table {
+    width: 100%;
+    border: 1px solid black;
+}
+
+.markdown-body th {
+    font-weight: bold;
+    text-align: center;
+    border: 1px solid black;
+}
+
+.markdown-body td {
+    border: 1px solid black;
+}
+
+.markdown-body div.header th {
+    text-transform: uppercase;
+}
+
+/*first and third column*/
+.markdown-body div.organization td:first-of-type,
+.markdown-body div.organization td:nth-of-type(3) {
+    width: 10%;
+}
+
+.markdown-body div.organization td {
+    width: 40%;
+}
+
+/*first row of table body, i.e., the second row*/
+.markdown-body div.tracking tbody tr:first-of-type {
+    text-align: center;
+}
+
+/*first and third column*/
+.markdown-body div.tracking td:first-of-type,
+.markdown-body div.tracking td:nth-of-type(3) {
+    width: 10%;
+}
+
+.markdown-body div.tracking td {
+    width: 40%;
+}
+
+.markdown-body div.requirements td:first-of-type {
+    width: 10%;
+}
+
+.markdown-body div.requirements td:nth-of-type(2) {
+    width: 50%;
+}
+
+.markdown-body div.requirements td:nth-of-type(3) {
+    width: 40%;
+}
+
+.markdown-body div.description th {
+    font-weight: normal;
+    text-align: left;
+}
+
+.markdown-body div.info td {
+    width: 16.67%;
+}
