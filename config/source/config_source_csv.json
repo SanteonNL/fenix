@@ -56,14 +56,14 @@
       ]
     },
     {
-      "fhirPath": "Patient.contact.name",
+      "fhirPath": "Patient.contact",
       "files": [
         {
           "fileName": "test/data/sim/patient_contacts.csv",
           "fieldMappings": [
             {
               "csvFields": {
-                "GerelateerdeRelatie": "family"
+                "GeslachtCode": "gender"
               },
               "idField": "GerelateerdPersoonID",
               "parentIdField": "Identificatienummer",
@@ -81,7 +81,7 @@
           "fieldMappings": [
             {
               "csvFields": {
-                "GerelateerdeRelatie": "coding.display"
+                "GerelateerdeRelatie": "gender"
               },
               "idField": "GerelateerdPersoonID",
               "parentIdField": "Identificatienummer",

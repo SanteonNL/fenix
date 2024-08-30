@@ -112,14 +112,14 @@ func main() {
 
 	// sqlDatasource := NewSQLDataSource(db, query, log)
 
-	// // Set up search parameters
-	// searchParameterMap := SearchParameterMap{
-	// 	"Patient.identifier": SearchParameter{
-	// 		Code:  "identifier",
-	// 		Type:  "token",
-	// 		Value: "https://santeon.nl|123456",
-	// 	},
-	// }
+	// Set up search parameters
+	searchParameterMap := SearchParameterMap{
+		// "Patient.identifier": SearchParameter{
+		// 	Code:  "identifier",
+		// 	Type:  "token",
+		// 	Value: "https://santeon.nl|123456",
+		// },
+	}
 
 	// Initialize concept maps
 	// Read data from CSV file
@@ -139,6 +139,31 @@ func main() {
 	for id, row := range data {
 		fmt.Println(id)
 		fmt.Println(row)
+
+		resourceName := "Patient"
+
+		factory, ok := FHIRResourceMap[resourceName]
+		if !ok {
+			log.Fatal().Msg("Unsupported FHIR resource")
+		}
+
+		resource := factory()
+		v := reflect.ValueOf(resource).Elem()
+
+		_, err := populateStruct(v, row, "", "", searchParameterMap, log)
+		if err != nil {
+			log.Error().Err(err).Str("resourceName", resourceName).Str("id", id).Msg("Error populating struct")
+			continue
+		}
+
+		jsonData, err := json.MarshalIndent(resource, "", "  ")
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", id)
+			continue
+		}
+		fmt.Printf("%s %d data:\n", resourceName, id)
+		fmt.Println(string(jsonData))
+		fmt.Println()
 	}
 
 	// resourceName := "Patient"                    // Example: processing Patients
@@ -149,14 +174,14 @@ func main() {
 	// // }
 
 	// // for i, resource := range resources {
-	// // 	jsonData, err := json.MarshalIndent(resource, "", "  ")
-	// // 	if err != nil {
-	// // 		log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", i)
-	// // 		continue
-	// // 	}
-	// // 	fmt.Printf("%s %d data:\n", resourceName, i+1)
-	// // 	fmt.Println(string(jsonData))
-	// // 	fmt.Println()
+	// jsonData, err := json.MarshalIndent(resource, "", "  ")
+	// if err != nil {
+	// 	log.Error().Err(err).Msgf("Failed to marshal resource %d to JSON", i)
+	// 	continue
+	// }
+	// fmt.Printf("%s %d data:\n", resourceName, i+1)
+	// fmt.Println(string(jsonData))
+	// fmt.Println()
 	// // }
 
 	endTime := time.Now()
@@ -254,34 +279,56 @@ func populateField(field reflect.Value, resultMap map[string][]map[string]interf
 
 func populateSlice(field reflect.Value, rows []map[string]interface{}, fieldName string, parentID string, resultMap map[string][]map[string]interface{}, searchParameterMap SearchParameterMap, log zerolog.Logger) (*FilterResult, error) {
 	anyElementPassed := false
+	elementsAdded := false
+
 	for _, row := range rows {
 		if row["parent_id"] == parentID || parentID == "" {
 			elem := reflect.New(field.Type().Elem()).Elem()
 			if err := populateElement(elem, row, fieldName, resultMap, searchParameterMap, log); err != nil {
-				return nil, err
+				log.Error().Err(err).Str("fieldName", fieldName).Interface("row", row).Msg("Error populating element")
+				continue
 			}
 
 			filterResult, err := applyFilter(elem, fieldName, searchParameterMap, log)
 			if err != nil {
-				return nil, err
+				log.Error().Err(err).Str("fieldName", fieldName).Interface("row", row).Msg("Error applying filter")
+				continue
 			}
 
 			if filterResult.Passed {
 				anyElementPassed = true
 				log.Debug().
 					Str("field", fieldName).
-					Msg("Slice element passed filter, continuing slice population")
+					Interface("element", elem.Interface()).
+					Msg("Slice element passed filter")
+			} else {
+				log.Debug().
+					Str("field", fieldName).
+					Interface("element", elem.Interface()).
+					Msg("Slice element did not pass filter")
 			}
 
 			// Always add the element to the slice, regardless of filter result
 			field.Set(reflect.Append(field, elem))
+			elementsAdded = true
 		}
+	}
+
+	if !elementsAdded {
+		log.Debug().Str("fieldName", fieldName).Msg("No elements added to slice")
+		return &FilterResult{Passed: true}, nil
+	}
+
+	if len(searchParameterMap) == 0 || searchParameterMap[fieldName].Value == "" {
+		// If no filter is defined, consider it passed
+		return &FilterResult{Passed: true}, nil
 	}
 
 	if anyElementPassed {
 		return &FilterResult{Passed: true}, nil
 	}
 
+	log.Warn().Str("fieldName", fieldName).Msg("No elements in slice passed filter")
 	return &FilterResult{Passed: false, Message: fmt.Sprintf("No elements in slice passed filter: %s", fieldName)}, nil
 }
 
@@ -436,6 +483,13 @@ func SetField(obj interface{}, name string, value interface{}, log zerolog.Logge
 		return nil
 	}
 
+	// Handle conversion from string to []string
+	if field.Type() == reflect.TypeOf([]string{}) && reflect.TypeOf(value).Kind() == reflect.String {
+		strSlice := []string{value.(string)}
+		field.Set(reflect.ValueOf(strSlice))
+		return nil
+	}
+
 	if field.Kind() == reflect.Ptr && (field.Type().Elem().Kind() == reflect.String || field.Type().Elem().Kind() == reflect.Bool) {
 		var newValue reflect.Value
 
@@ -488,6 +542,10 @@ func SetField(obj interface{}, name string, value interface{}, log zerolog.Logge
 	return nil
 }
 func applyFilter(field reflect.Value, fhirPath string, searchParameterMap SearchParameterMap, log zerolog.Logger) (*FilterResult, error) {
+	if len(searchParameterMap) == 0 {
+		return &FilterResult{Passed: true}, nil
+	}
+
 	searchParameter, ok := searchParameterMap[fhirPath]
 	if !ok {
 		log.Debug().
