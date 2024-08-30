@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 )
 
 func getStringValue(field reflect.Value) string {
@@ -11,5 +12,8 @@ func getStringValue(field reflect.Value) string {
 		}
 		field = field.Elem()
 	}
-	return field.String()
+	sanitized := strings.ReplaceAll(field.String(), "\"", "") // Remove quotes
+	sanitized = strings.ReplaceAll(sanitized, "\n", "")       // Remove newlines
+	sanitized = strings.TrimSpace(sanitized)                  // Trim whitespace
+	return sanitized
 }

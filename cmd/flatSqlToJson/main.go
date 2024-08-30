@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -196,24 +197,29 @@ func ProcessMultipleFHIRResources(dataSource DataSource, resourceName string, re
 }
 
 func ProcessCSVData(searchParameterMap SearchParameterMap, log zerolog.Logger) error {
-	configPath := "config/source/config_source_csv.json"
+	log.Debug().Msg("Processing CSV data")
+	configPath := "config/source/config_sim_observation.json"
 	csvDataSource, err := NewCSVDataSource(configPath, log)
 	if err != nil {
 		return fmt.Errorf("failed to create CSV data source: %w", err)
 	}
 
-	resourceType := "Patient"
+	log.Debug().Msg("CSV data source created")
+
+	resourceType := "Observation"
 	data, err := csvDataSource.Read(resourceType)
 	if err != nil {
 		return fmt.Errorf("failed to read data from CSV file: %w", err)
 	}
+
+	log.Debug().Msgf("Data read from CSV file %v", data)
 
 	factory, ok := FHIRResourceMap[resourceType]
 	if !ok {
 		return fmt.Errorf("unsupported FHIR resource type: %s", resourceType)
 	}
 
-	outputFolder := fmt.Sprintf("output_%s", time.Now().Format("20060102150405"))
+	outputFolder := fmt.Sprintf("output/output_%s", time.Now().Format("20060102150405"))
 	err = os.Mkdir(outputFolder, 0755)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create output folder")
@@ -477,18 +483,30 @@ func SetField(obj interface{}, name string, value interface{}, log zerolog.Logge
 		if unmarshalJSONMethod.IsValid() {
 			//Map value first
 			stringValue := getStringValue(reflect.ValueOf(value))
+
 			TargetCode, err := mapConceptCode(stringValue, "Patient.gender", log)
 			if err != nil {
 				return fmt.Errorf("failed to map concept code: %v", err)
 			}
-			value = TargetCode.Code
-			// Convert the value to JSON
-			jsonValue, err := json.Marshal(value)
-			if err != nil {
-				return fmt.Errorf("failed to marshal value to JSON: %v", err)
+
+			if stringValue == "" || TargetCode.Code == "" {
+				log.Debug().Str("field", name).Msg("Skipping empty value after concept mapping")
+				return nil // Skip setting the field for empty values
 			}
 
-			// Call UnmarshalJSON
+			value = TargetCode.Code
+			log.Debug().Str("field", name).Str("value", value.(string)).Msg("Mapped concept code")
+
+			// Convert the value to JSON
+			var buf bytes.Buffer
+			encoder := json.NewEncoder(&buf)
+			encoder.SetEscapeHTML(false) // Disable HTML escaping
+			if err := encoder.Encode(value); err != nil {
+				return fmt.Errorf("failed to marshal value to JSON: %v", err)
+			}
+			jsonValue := buf.Bytes()
+
+			// Call the UnmarshalJSON method on the field
 			results := unmarshalJSONMethod.Call([]reflect.Value{reflect.ValueOf(jsonValue)})
 			if len(results) > 0 && !results[0].IsNil() {
 				return results[0].Interface().(error)

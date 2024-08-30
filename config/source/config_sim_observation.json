@@ -1,11 +1,10 @@
 {
-  "resourceType": "Observation",
   "mappings": [
     {
       "fhirPath": "Observation",
       "files": [
         {
-          "fileName": "AlgemeneMeting.csv",
+          "fileName": "test/data/sim/AlgemeneMeting.csv",
           "fieldMappings": [
             {
               "csvFields": {
@@ -24,7 +23,7 @@
       "fhirPath": "Observation.code.coding",
       "files": [
         {
-          "fileName": "AlgemeneMeting.csv",
+          "fileName": "test/data/sim/AlgemeneMeting.csv",
           "fieldMappings": [
             {
               "csvFields": {
@@ -40,16 +39,16 @@
       ]
     },
     {
-      "fhirPath": "Observation.valueQuantity",
+      "fhirPath": "Observation.valuequantity",
       "files": [
         {
-          "fileName": "AlgemeneMeting.csv",
+          "fileName": "test/data/sim/AlgemeneMeting.csv",
           "fieldMappings": [
             {
               "csvFields": {
-                "UitslagWaarde": "value",
                 "UitslagWaardeEenheid": "unit",
-                "UitslagWaardeOperator": "comparator"
+                "UitslagWaardeOperator" : "comparator"
+      
               },
               "idField": "MetingID",
               "parentIdField": "MetingID",
@@ -63,7 +62,7 @@
       "fhirPath": "Observation.valueCodeableConcept.coding",
       "files": [
         {
-          "fileName": "AlgemeneMeting.csv",
+          "fileName": "test/data/sim/AlgemeneMeting.csv",
           "fieldMappings": [
             {
               "csvFields": {
@@ -82,7 +81,7 @@
       "fhirPath": "Observation.valueDateTime",
       "files": [
         {
-          "fileName": "AlgemeneMeting.csv",
+          "fileName": "test/data/sim/AlgemeneMeting.csv",
           "fieldMappings": [
             {
               "csvFields": {

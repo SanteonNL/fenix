@@ -1,0 +1,6 @@
+MetingID;Identificatienummer;MetingDatumTijd;MetingNaamCode;MetingNaamOmschrijving;UitslagWaarde;UitslagWaardeEenheid;UitslagWaardeOperator;UitslagCodeSysteem;UitslagCode;UitslagCodeOmschrijving;UitslagDatumTijd
+1;123;2021-10-30T09:09:09;75859-9;;10;cm;>;;LA6111-4;;
+2;123;2021-10-30T09:09:09;75859-9;;;lang;;;ditVindtNTSNooit;;
+3;456;2021-11-30T19:19:19;72089-6;;;xxx;<;;;;
+4;456;2021-11-30T19:19:19;foutecode;;;kilooo;;;;;
+5;789;2021-10-30T09:09:09;75859-9;;0;vier;;;;;

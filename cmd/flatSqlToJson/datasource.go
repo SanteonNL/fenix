@@ -69,53 +69,83 @@ func NewCSVDataSource(configFilePath string, log zerolog.Logger) (*CSVDataSource
 }
 
 func LoadCSVMapperFromConfig(filePath string) (*CSVMapper, error) {
+	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	log.Debug().Str("filePath", filePath).Msg("Attempting to load CSV mapper config")
+
+	// Check if the file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Error().Err(err).Str("filePath", filePath).Msg("Config file does not exist")
+		return nil, fmt.Errorf("config file does not exist: %w", err)
+	}
+
+	// Check if we have read permissions
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Error().Err(err).Str("filePath", filePath).Msg("Unable to open config file")
+		return nil, fmt.Errorf("unable to open config file: %w", err)
+	}
+	file.Close()
+
+	// Attempt to read the file
 	jsonFile, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		log.Error().Err(err).Str("filePath", filePath).Msg("Failed to read config file")
+		return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	// Check if the file is empty
+	if len(jsonFile) == 0 {
+		log.Error().Str("filePath", filePath).Msg("Config file is empty")
+		return nil, fmt.Errorf("config file is empty: %s", filePath)
 	}
 
 	var mapper CSVMapper
 	err = json.Unmarshal(jsonFile, &mapper)
 	if err != nil {
-		return nil, err
+		log.Error().Err(err).Str("filePath", filePath).Msg("Failed to unmarshal config file")
+		return nil, fmt.Errorf("failed to unmarshal config file: %w", err)
 	}
 
+	log.Debug().Str("filePath", filePath).Msg("Successfully loaded CSV mapper config")
 	return &mapper, nil
 }
 
 func (c *CSVDataSource) Read(resourceName string) (map[string]map[string][]map[string]interface{}, error) {
+	c.log.Info().Str("resourceName", resourceName).Msg("Starting to read CSV data for resource")
 	result := make(map[string]map[string][]map[string]interface{})
 	idMap := make(map[string]map[string]string) // map[FHIRPath]map[ID]PatientID
 
 	for _, mapping := range c.mapper.Mappings {
-		// Check if the mapping is for the requested resource
 		fhirPathParts := strings.Split(mapping.FHIRPath, ".")
 		if len(fhirPathParts) == 0 || fhirPathParts[0] != resourceName {
+			c.log.Debug().Str("fhirPath", mapping.FHIRPath).Msg("Skipping mapping, not for requested resource")
 			continue
 		}
 
+		c.log.Debug().Str("fhirPath", mapping.FHIRPath).Msg("Processing mapping")
 		idMap[mapping.FHIRPath] = make(map[string]string)
 		for _, fileMapping := range mapping.Files {
+			c.log.Debug().Str("fileName", fileMapping.FileName).Msg("Reading file")
 			fileData, err := c.readFile(fileMapping.FileName)
 			if err != nil {
+				c.log.Error().Err(err).Str("fileName", fileMapping.FileName).Msg("Failed to read file")
 				return nil, err
 			}
+			c.log.Debug().Str("fileName", fileMapping.FileName).Int("rowCount", len(fileData)).Msg("File read successfully")
 
-			for _, row := range fileData {
+			for rowIndex, row := range fileData {
 				for _, fieldMapping := range fileMapping.FieldMappings {
 					mappedRow := make(map[string]interface{})
 
-					// Map CSV fields to FHIR fields
 					for csvField, fhirField := range fieldMapping.CSVFields {
 						if value, ok := row[csvField]; ok {
 							mappedRow[fhirField] = value
 						}
 					}
 
-					// Handle special fields
 					id, ok := row[fieldMapping.IDField].(string)
 					if !ok {
-						c.log.Warn().Str("fhirPath", mapping.FHIRPath).Msg("ID not found or not a string")
+						c.log.Warn().Str("fhirPath", mapping.FHIRPath).Int("rowIndex", rowIndex).Msg("ID not found or not a string")
 						continue
 					}
 					mappedRow["id"] = id
@@ -128,14 +158,14 @@ func (c *CSVDataSource) Read(resourceName string) (map[string]map[string][]map[s
 
 					mappedRow["field_name"] = mapping.FHIRPath
 
-					// If no fields were mapped, skip this row
-					if len(mappedRow) <= 3 { // Only id, parent_id, and field_name
+					if len(mappedRow) <= 3 {
+						c.log.Debug().Str("fhirPath", mapping.FHIRPath).Int("rowIndex", rowIndex).Msg("Skipping row, no fields mapped")
 						continue
 					}
 
 					patientID := c.resolvePatientID(mapping.FHIRPath, row, fieldMapping, idMap)
 					if patientID == "" {
-						c.log.Warn().Str("fhirPath", mapping.FHIRPath).Str("id", id).Msg("Patient ID not found")
+						c.log.Warn().Str("fhirPath", mapping.FHIRPath).Str("id", id).Int("rowIndex", rowIndex).Msg("Patient ID not found")
 						continue
 					}
 
@@ -150,11 +180,15 @@ func (c *CSVDataSource) Read(resourceName string) (map[string]map[string][]map[s
 		}
 	}
 
+	c.log.Info().Str("resourceName", resourceName).Int("patientCount", len(result)).Msg("Completed reading CSV data")
 	return result, nil
 }
+
 func (c *CSVDataSource) readFile(fileName string) ([]map[string]interface{}, error) {
+	c.log.Debug().Str("fileName", fileName).Msg("Starting to read CSV file")
 	file, err := os.Open(fileName)
 	if err != nil {
+		c.log.Error().Err(err).Str("fileName", fileName).Msg("Failed to open file")
 		return nil, fmt.Errorf("failed to open file %s: %w", fileName, err)
 	}
 	defer file.Close()
@@ -163,10 +197,13 @@ func (c *CSVDataSource) readFile(fileName string) ([]map[string]interface{}, err
 	reader.Comma = ';'
 	headers, err := reader.Read()
 	if err != nil {
+		c.log.Error().Err(err).Str("fileName", fileName).Msg("Failed to read headers")
 		return nil, fmt.Errorf("failed to read headers from file %s: %w", fileName, err)
 	}
+	c.log.Debug().Str("fileName", fileName).Strs("headers", headers).Msg("CSV headers read")
 
 	var result []map[string]interface{}
+	lineCount := 0
 
 	for {
 		record, err := reader.Read()
@@ -174,7 +211,8 @@ func (c *CSVDataSource) readFile(fileName string) ([]map[string]interface{}, err
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to read record from file %s: %w", fileName, err)
+			c.log.Error().Err(err).Str("fileName", fileName).Int("line", lineCount).Msg("Failed to read record")
+			return nil, fmt.Errorf("failed to read record from file %s at line %d: %w", fileName, lineCount, err)
 		}
 
 		row := make(map[string]interface{})
@@ -183,8 +221,14 @@ func (c *CSVDataSource) readFile(fileName string) ([]map[string]interface{}, err
 		}
 
 		result = append(result, row)
+		lineCount++
+
+		if lineCount%1000 == 0 {
+			c.log.Debug().Str("fileName", fileName).Int("linesProcessed", lineCount).Msg("Processing CSV lines")
+		}
 	}
 
+	c.log.Info().Str("fileName", fileName).Int("totalLines", lineCount).Msg("Finished reading CSV file")
 	return result, nil
 }
 
