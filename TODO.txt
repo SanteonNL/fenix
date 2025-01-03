@@ -23,3 +23,4 @@
 - TODO configureren SQL query (nog niet relevant zolang we binnnen MST blijven) 
 - TODO naamgeving rechttrekken
 - TODO caching voor conceptmaps + valuesets gelijke techniek maken 
+- TODO encoding van unicode characters opschonen voor json uitsturen

@@ -1,0 +1,7 @@
+2024/10/15 13:12:29 Request: GET /Encounter?location.type=ICU&status=in-progress Output: C:\Users\t.hetterscheid\Repos\fenix\cmd\fenix_endpoint_test\output\encounter_20241015-131229.json
+2024/10/15 13:12:57 Request: GET /Observation?patient=P002 Output: C:\Users\t.hetterscheid\Repos\fenix\cmd\fenix_endpoint_test\output\observation_20241015-131257.json
+2024/10/15 13:16:31 Request: GET /Encounter?location.type=ICU&status=in-progress Output: C:\Users\t.hetterscheid\Repos\fenix\cmd\fenix_endpoint_test\output\encounter_20241015-131631.json
+2024/10/17 13:55:17 Request: GET /Encounter?location.type=ICU&status=in-progress Output: cmd\fenix_endpoint_test\output\encounter_20241017-135517.json
+2024/10/17 13:55:20 Request: GET /Observation?patient=P001 Output: cmd\fenix_endpoint_test\output\observation_20241017-135520.json
+2024/10/17 13:55:22 Request: GET /Observation?patient=P002 Output: cmd\fenix_endpoint_test\output\observation_20241017-135522.json
+2024/10/17 13:55:23 Request: GET /Observation?patient=P003 Output: cmd\fenix_endpoint_test\output\observation_20241017-135523.json

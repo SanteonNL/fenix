@@ -11,6 +11,7 @@ import (
 	"github.com/SanteonNL/fenix/models/fhir"
 	"github.com/SanteonNL/fenix/util"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // BundleService handles creation and management of FHIR bundles
@@ -58,6 +59,9 @@ func NewBundleService(log zerolog.Logger, cacheConfig *CacheConfig) *BundleServi
 }
 
 func (s *BundleService) CreateSearchBundle(result SearchResult, params *PaginationParams) (*fhir.Bundle, error) {
+
+	s.log.Debug().Interface("result", result).Interface("params", params).Msg("CreateSearchBundle called")
+
 	bundle := &fhir.Bundle{
 		Id:        util.StringPtr(fmt.Sprintf("bundle-%s", time.Now().Format("20060102150405"))),
 		Type:      fhir.BundleTypeSearchset,
@@ -69,6 +73,8 @@ func (s *BundleService) CreateSearchBundle(result SearchResult, params *Paginati
 	if params != nil {
 		bundle.Link = s.createPaginationLinks(params, result.Total)
 	}
+
+	log.Debug().Interface("bundle", bundle.Link).Msg("Created bundle links")
 
 	// Initialize entries slice
 	totalEntries := len(result.Resources) + len(result.Issues)
@@ -105,7 +111,6 @@ func (s *BundleService) CreateSearchBundle(result SearchResult, params *Paginati
 	// Handle pagination
 	start := 0
 	end := len(result.Resources)
-
 	if params != nil {
 		start = params.PageOffset
 		if start < 0 {
@@ -118,8 +123,13 @@ func (s *BundleService) CreateSearchBundle(result SearchResult, params *Paginati
 		}
 
 		end = start + pageSize
+
+		// Ensure `start` and `end` are within bounds
+		if start > len(result.Resources) {
+			start = len(result.Resources) // Start cannot exceed the number of resources
+		}
 		if end > len(result.Resources) {
-			end = len(result.Resources)
+			end = len(result.Resources) // End cannot exceed the number of resources
 		}
 	}
 
@@ -159,21 +169,30 @@ func (s *BundleService) createPaginationLinks(params *PaginationParams, total in
 	// Create URL values for query parameters
 	query := url.Values{}
 	if params.SearchParams != "" {
-		// Parse existing search parameters
 		existingParams, err := url.ParseQuery(params.SearchParams)
-		if err == nil {
+		if err != nil {
+			s.log.Warn().Err(err).Msg("Failed to parse search parameters")
+		} else {
 			for k, v := range existingParams {
-				query[k] = v
+				if strings.TrimSpace(k) != "" && len(v) > 0 {
+					query[k] = v
+				} else {
+					s.log.Warn().Str("parameter", k).Msg("Ignoring malformed search parameter")
+				}
 			}
 		}
 	}
 
 	// Helper function to create links with proper encoding
 	createLink := func(offset int) string {
-		queryParams := query
+		queryParams := url.Values{}
+		for k, v := range query {
+			queryParams[k] = v
+		}
 		queryParams.Set("_count", fmt.Sprintf("%d", pageSize))
 		queryParams.Set("_offset", fmt.Sprintf("%d", offset))
-		return fmt.Sprintf("%s?%s", baseURL, queryParams.Encode())
+		url := fmt.Sprintf("%s?%s", baseURL, queryParams.Encode())
+		return url
 	}
 
 	// Self link

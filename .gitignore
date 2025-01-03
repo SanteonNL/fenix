@@ -31,3 +31,6 @@ output/temp/*.json
 
 
 config/conceptmaps/fhir/converted/
+
+# Environment variable files
+*.env

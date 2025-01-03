@@ -6,13 +6,13 @@ GET {{url}}/Patient?_count=2&_offset=0
 ### 
 
 ### 
-GET {{url}}/Observation?_count=2&_offset=0
+GET {{url}}/Observation?_count=2&_offset=0&code:in:https://www.hl7.org/fhir/observation-vitalsigns.html
 
 ###
 GET {{url}}/Observation?_count=2&_offset=4?klasdf=123
 
 ###
-GET {{url}}/Observation?_count=2&_offset=4
+GET {{url}}/Observation?_count=2&_offset=0
 
 
 ### JALA

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // Add bundleCache to FHIRRouter struct
@@ -267,9 +269,66 @@ func (fr *FHIRRouter) validateSearchParameters(resourceType string, params map[s
 
 	return validFilters, invalidFilters
 }
-
 func respondWithJSON(w http.ResponseWriter, status int, data interface{}) {
+	// Set headers
 	w.Header().Set("Content-Type", "application/fhir+json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+
+	// Use a bytes.Buffer to encode the JSON without escaping
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+
+	// Encode the data
+	if err := encoder.Encode(data); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Debug().Msgf("Bundle JSON: %s", strings.TrimSpace(buf.String()))
+	// Convert the JSON bytes to string and manually decode Unicode escape sequences
+	decodedJSON := decodeUnicodeEscapes(buf.String())
+
+	// Write the JSON to the response writer
+	w.Write([]byte(decodedJSON))
+}
+
+// decodeUnicodeEscapes decodes the Unicode escape sequences (e.g., \u0026) into their proper characters
+// like '&', and ensures that no other special character is wrongly escaped.
+func decodeUnicodeEscapes(jsonString string) string {
+	var result string
+	i := 0
+	for i < len(jsonString) {
+		// Check if we encounter a Unicode escape sequence (e.g., \u0026)
+		if jsonString[i] == '\\' && i+5 < len(jsonString) && jsonString[i+1] == 'u' {
+			// Capture the Unicode sequence and decode
+			hexValue := jsonString[i+2 : i+6]
+			codepoint, err := hexToRune(hexValue)
+			if err != nil {
+				// If we cannot decode the Unicode sequence, add the original characters
+				result += jsonString[i : i+6]
+				i += 6
+				continue
+			}
+
+			// Add the decoded character
+			result += string(codepoint)
+			i += 6
+		} else {
+			// If no escape sequence, just add the current character
+			result += string(jsonString[i])
+			i++
+		}
+	}
+
+	return result
+}
+
+// hexToRune converts a hex string (e.g., "0026") to a rune (character).
+func hexToRune(hexStr string) (rune, error) {
+	var codepoint int
+	_, err := fmt.Sscanf(hexStr, "%x", &codepoint)
+	if err != nil {
+		return 0, err
+	}
+	return rune(codepoint), nil
 }

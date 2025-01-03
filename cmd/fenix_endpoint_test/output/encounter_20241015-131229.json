@@ -1,0 +1,124 @@
+{
+  "type": "searchset",
+  "total": 3,
+  "entry": [
+    {
+      "fullUrl": "https://santeon.nl/r4/Encounter/ICU001",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "ICU001",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP",
+          "display": "inpatient encounter"
+        },
+        "subject": {
+          "reference": "https://santeon.nl/r4/Patient/P001"
+        },
+        "participant": [
+          {
+            "individual": {
+              "reference": "https://santeon.nl/r4/Practitioner/PR001",
+              "display": "Dr. Jane Smith"
+            }
+          }
+        ],
+        "period": {
+          "start": "2024-10-14T10:30:00+01:00"
+        },
+        "location": [
+          {
+            "location": {
+              "reference": "https://santeon.nl/r4/Location/P23JOHed3aabfafafa",
+              "display": "Intensive Care Unit - Alpha Hospital"
+            },
+            "status": "active"
+          }
+        ]
+      },
+      "search": {
+        "mode": "match"
+      }
+    },
+    {
+      "fullUrl": "https://santeon.nl/r4/Encounter/ICU002",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "ICU002",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP",
+          "display": "inpatient encounter"
+        },
+        "subject": {
+          "reference": "https://santeon.nl/r4/Patient/P002"
+        },
+        "participant": [
+          {
+            "individual": {
+              "reference": "https://santeon.nl/r4/Practitioner/PR002",
+              "display": "Dr. John Doe"
+            }
+          }
+        ],
+        "period": {
+          "start": "2024-10-13T15:45:00+01:00"
+        },
+        "location": [
+          {
+            "location": {
+              "reference": "https://santeon.nl/r4/Location/P23JOHed3aabfafafa",
+              "display": "Intensive Care Unit - Alpha Hospital"
+            },
+            "status": "active"
+          }
+        ]
+      },
+      "search": {
+        "mode": "match"
+      }
+    },
+    {
+      "fullUrl": "https://santeon.nl/r4/Encounter/ICU003",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "ICU003",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP",
+          "display": "inpatient encounter"
+        },
+        "subject": {
+          "reference": "https://santeon.nl/r4/Patient/P003"
+        },
+        "participant": [
+          {
+            "individual": {
+              "reference": "https://santeon.nl/r4/Practitioner/PR003",
+              "display": "Dr. Emily Johnson"
+            }
+          }
+        ],
+        "period": {
+          "start": "2024-10-15T08:20:00+01:00"
+        },
+        "location": [
+          {
+            "location": {
+              "reference": "https://santeon.nl/r4/Location/P23JOHed3aabfafafa",
+              "display": "Intensive Care Unit - Alpha Hospital"
+            },
+            "status": "active"
+          }
+        ]
+      },
+      "search": {
+        "mode": "match"
+      }
+    }
+  ],
+  "resourceType": "Bundle"
+}

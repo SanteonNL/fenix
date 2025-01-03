@@ -1,0 +1,20 @@
+@base = http://localhost:8080
+### All current ICU patients
+GET {{base}}/Encounter?location.type=ICU&status=in-progress
+
+### Patient with one Observation
+GET {{base}}/Observation?patient=P001
+
+### Patient P002 multiple Observations
+GET {{base}}/Observation?patient=P002
+
+### Patient 1 multiple Observations
+GET {{base}}/Observation?patient=P003
+
+
+
+
+
+
+
+

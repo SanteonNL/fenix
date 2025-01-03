@@ -3,3 +3,6 @@
 
 ###
 GET {{url}}/Patient?dfsfg=male
+
+###
+GET https://server.fire.ly/r4/745ce5c4-5e86-4b10-856f-ebb89cecb84f

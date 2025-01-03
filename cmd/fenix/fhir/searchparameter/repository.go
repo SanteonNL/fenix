@@ -94,12 +94,12 @@ func (repo *SearchParameterRepository) loadFromBundle(data []byte) error {
 			continue
 		}
 
-		repo.log.Debug().
-			Str("url", searchParam.Url).
-			Str("code", searchParam.Code).
-			Str("type", searchParam.Type.String()).
-			Interface("base", searchParam.Base).
-			Msg("Loaded search parameter")
+		// repo.log.Debug().
+		// 	Str("url", searchParam.Url).
+		// 	Str("code", searchParam.Code).
+		// 	Str("type", searchParam.Type.String()).
+		// 	Interface("base", searchParam.Base).
+		// 	Msg("Loaded search parameter")
 
 		repo.searchParametersMap[searchParam.Url] = &searchParam
 	}

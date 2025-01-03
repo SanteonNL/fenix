@@ -135,7 +135,7 @@ func (s *ConceptMapService) SaveConceptMap(outputPath string, cm *fhir.ConceptMa
 		return fmt.Errorf("failed to write ConceptMap file: %w", err)
 	}
 
-	s.log.Debug().Str("path", outputPath).Msg("Successfully saved ConceptMap")
+	//s.log.Debug().Str("path", outputPath).Msg("Successfully saved ConceptMap")
 	return nil
 }
 
