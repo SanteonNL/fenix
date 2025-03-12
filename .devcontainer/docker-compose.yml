@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: postgress-client.Dockerfile
+    volumes:
+      - ..:/workspace:delegated
+      - go-cache:/go
+    command: >
+      sh -c "mkdir -p /workspace/tmp &&
+             chmod -R 777 /workspace/tmp &&
+             mkdir -p /workspace/output/temp/archive &&
+              chmod -R 777 /workspace/output &&
+             cd /workspace &&
+             air -c .air.toml"
+    network_mode: service:db
+    environment:
+      - POSTGRES_HOST=localhost
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=development
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../test/data/sql/setup.sql:/docker-entrypoint-initdb.d/setup.sql
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=development
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres-data:
+    name: go-postgres-data
+  go-cache:
+    name: go-modules-cache

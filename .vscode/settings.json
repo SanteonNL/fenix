@@ -10,5 +10,6 @@
             "password": "mysecretpassword",
             "name": "my-postgres"
         }
-    ]
+    ],
+    "makefile.configureOnOpen": false
 }

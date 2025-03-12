@@ -1,3 +1,0 @@
-{"level":"debug","time":"2025-01-02T12:31:57+01:00","caller":"C:/Users/t.hetterscheid/Repos/fenix/cmd/fenix/main.go:39","message":"Starting fenix"}
-{"level":"error","error":"open config\\conceptmaps\\fhir\\converted: The system cannot find the path specified.","time":"2025-01-02T12:31:57+01:00","caller":"C:/Users/t.hetterscheid/Repos/fenix/cmd/fenix/fhir/conceptmap/repository.go:36","message":"Failed to read directory"}
-{"level":"error","error":"failed to read directory: open config\\conceptmaps\\fhir\\converted: The system cannot find the path specified.","time":"2025-01-02T12:31:57+01:00","caller":"C:/Users/t.hetterscheid/Repos/fenix/cmd/fenix/main.go:57","message":"Failed to load existing concept maps"}

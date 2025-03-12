@@ -1,6 +1,6 @@
-@url = http://localhost:8080/r4
+@url = http://localhost:8081/r4
 
-GET {{url}}/JAPAL
+GET {{url}}/JAPALASD
 ### 
 GET {{url}}/Patient?_count=2&_offset=0
 ### 

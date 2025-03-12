@@ -28,7 +28,7 @@ func main() {
 
 	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
-	outputMgr, err := output.NewOutputManager("output/temp", log)
+	outputMgr, err := output.NewOutputManager("./output/temp", log)
 
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create output manager")
@@ -39,7 +39,7 @@ func main() {
 	log.Debug().Msg("Starting fenix")
 
 	// Th	// Initialize database connection
-	db, err := sqlx.Connect("postgres", "postgres://postgres:mysecretpassword@localhost:5432/tsl_employee?sslmode=disable")
+	db, err := sqlx.Connect("postgres", "postgres://postgres:postgres@localhost:5432/development?sslmode=disable")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
@@ -165,7 +165,7 @@ func main() {
 	structureDefRepo := structuredefinition.NewStructureDefinitionRepository(log)
 
 	// Load existing StructureDefinitions
-	if err := structureDefRepo.LoadStructureDefinitions("profiles\\sim"); err != nil {
+	if err := structureDefRepo.LoadStructureDefinitions("profiles/sim"); err != nil {
 		log.Error().Err(err).Msg("Failed to load existing StructureDefinitions")
 		os.Exit(1)
 	}
@@ -239,7 +239,7 @@ func main() {
 	handler := router.SetupRoutes()
 
 	// Start server
-	port := ":8080"
+	port := ":8081"
 	log.Info().Msgf("Starting FHIR server on port %s", port)
 	if err := http.ListenAndServe(port, handler); err != nil {
 		log.Fatal().Err(err).Msg("Server failed to start")

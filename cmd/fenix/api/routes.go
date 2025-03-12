@@ -161,7 +161,7 @@ func (fr *FHIRRouter) processRequest(ctx context.Context, resourceType string, s
 
 	if len(resources) == 0 {
 		searchResult.Issues = append(searchResult.Issues, bundle.NewNotFoundIssue(
-			"No resources match the search criteria"))
+			"No resources match the search criteria!"))
 	}
 
 	return nil

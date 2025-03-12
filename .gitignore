@@ -23,6 +23,8 @@ go.work
 
 /output/
 
+/tmp/
+
 
 # Environment variable files
 *.env

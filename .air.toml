@@ -1,43 +1,26 @@
+# .air.toml
 root = "."
-testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-  args_bin = []
-  bin = ""  # No binary needed since we use go run directly
-  cmd = "go run ./cmd/fenix -ldflags=-H=windowsgui"  # Using go run instead of building executable
+  cmd = "go build -o ./tmp/main ./cmd/fenix"
+  bin = "./tmp/main"
   delay = 1000
-  exclude_dir = ["assets", "tmp", "vendor", "testdata"]
-  exclude_file = []
-  exclude_regex = ["_test.go"]
-  exclude_unchanged = false
-  follow_symlink = false
-  full_bin = ""
-  include_dir = ["./cmd/fenix"]
-  include_ext = ["go"]
-  kill_delay = "0s"
-  log = "build-errors.log"
-  send_interrupt = false
-  stop_on_error = true
+  include_ext = ["go", "md"]
+  exclude_dir = ["tmp", "output"]
+  poll=true 
+
+[run]
+cmd = "./tmp/main"
 
 [log]
   time = true
   level = "debug"
 
-[color]
-  app = ""
-  build = "yellow"
-  main = "magenta"
-  runner = "green"
-  watcher = "cyan"
-
 [misc]
-  clean_on_exit = false
-
-[screen]
-  clear_on_rebuild = false
+  clean_on_exit = true
 
 [watcher]
-  paths = [
-    "./cmd/fenix"
-  ]
+  poll = true
+  poll_interval = 500
+  recursive = true
