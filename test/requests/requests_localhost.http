@@ -6,7 +6,7 @@ GET {{url}}/Patient?_count=2&_offset=0
 ### 
 
 ### 
-GET {{url}}/Observation?_count=2&_offset=0
+GET {{url}}/Observation
 
 ###
 GET {{url}}/Observation?_count=2&_offset=4?klasdf=123

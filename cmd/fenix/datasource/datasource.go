@@ -195,14 +195,17 @@ func (ds *DataSourceService) processRow(row map[string]interface{}, resources ma
 	// Process top-level fields
 	topLevelData := make(map[string]interface{})
 
+	// Add ID to the Data map
+	topLevelData["id"] = id
+
 	for key, value := range row {
 		// Skip if value is nil
 		if value == nil {
 			continue
 		}
 
-		// Skip metadata fields
-		if key == "id" || key == "parent_id" || key == "fhir_path" || key == "resource_id" {
+		// Skip metadata fields except for id which we want to include
+		if key == "parent_id" || key == "fhir_path" || key == "resource_id" {
 			continue
 		}
 
@@ -257,6 +260,7 @@ func (ds *DataSourceService) processRow(row map[string]interface{}, resources ma
 	}
 }
 
+// Corrected processNestedField function using resource_id
 func (ds *DataSourceService) processNestedField(
 	parts []string,
 	value interface{},
@@ -270,6 +274,19 @@ func (ds *DataSourceService) processNestedField(
 	currentID := id
 	currentParentID := parentID
 
+	// Get the root object ID from the resource_id
+	rootID := resourceID
+	// If there's a root object already in the result, use its ID
+	if rootRows, exists := resources[resourceID][basePath]; exists && len(rootRows) > 0 {
+		rootID = rootRows[0].ID
+	}
+
+	ds.log.Debug().
+		Str("resourceID", resourceID).
+		Str("rootID", rootID).
+		Str("basePath", basePath).
+		Msg("Starting nested field processing")
+
 	for i := 0; i < len(parts)-1; i++ {
 		part := parts[i]
 
@@ -280,19 +297,43 @@ func (ds *DataSourceService) processNestedField(
 		// Build path without array index
 		currentPath += "." + cleanPart
 
-		// Generate ID based on array index if present
-		if arrayIndex > 0 {
-			// For array elements, use the index as the ID
-			currentID = strconv.Itoa(arrayIndex)
-		} else if i == 0 {
-			// First level, use "1" if no index specified
-			currentID = "1"
+		// For first level nested fields, set parent ID to resource's root object ID
+		if i == 0 {
+			// FIX: Set parentID to root object ID for first level
+			currentParentID = rootID
+
+			if arrayIndex >= 0 {
+				// First level with array index (e.g., "category[0]")
+				currentID = fmt.Sprintf("%s_%d", rootID, arrayIndex+1)
+			} else {
+				// First level without array index (e.g., "code")
+				currentID = fmt.Sprintf("%s_%d", rootID, 1)
+			}
+
+			ds.log.Debug().
+				Str("path", currentPath).
+				Str("rootID", rootID).
+				Str("currentID", currentID).
+				Str("currentParentID", currentParentID).
+				Msg("Set first-level field parentID to resource root ID")
+		} else {
+			// Nested levels (below first level)
+			if arrayIndex >= 0 {
+				// Nested array elements (e.g., "code.coding[0]")
+				currentID = fmt.Sprintf("%s_%d", currentParentID, arrayIndex+1)
+			}
+			// For nested elements under an array item, prefix with parent ID
+			if i > 0 && strings.Contains(parts[i-1], "[") {
+				currentID = fmt.Sprintf("%s_%d", currentParentID, arrayIndex+1)
+			}
 		}
 
-		// For nested elements under an array item, prefix with parent ID
-		if i > 0 && strings.Contains(parts[i-1], "[") {
-			currentID = fmt.Sprintf("%s_%d", currentParentID, arrayIndex+1)
-		}
+		ds.log.Debug().
+			Str("part", part).
+			Str("path", currentPath).
+			Str("id", currentID).
+			Str("parentID", currentParentID).
+			Msg("Processing nested field part")
 
 		// Check if we're at the leaf level
 		isLeaf := i >= len(parts)-2
@@ -318,23 +359,37 @@ func (ds *DataSourceService) processNestedField(
 			if existingIndex != -1 {
 				// Update existing entry
 				resources[resourceID][currentPath][existingIndex].Data[leafField] = value
+				// Ensure ID is in Data
+				resources[resourceID][currentPath][existingIndex].Data["id"] = currentID
+				// FIX: Ensure parentID is set correctly
+				resources[resourceID][currentPath][existingIndex].ParentID = currentParentID
 			} else {
-				// Create new entry
+				// Create new entry with ID in Data
 				newRow := RowData{
 					ID:       currentID,
-					ParentID: currentParentID,
-					Data:     map[string]interface{}{leafField: value},
+					ParentID: currentParentID, // FIX: Ensure parentID is set correctly
+					Data: map[string]interface{}{
+						leafField: value,
+						"id":      currentID,
+					},
 				}
 				resources[resourceID][currentPath] = append(resources[resourceID][currentPath], newRow)
 			}
 		} else if existingIndex == -1 {
-			// Create new intermediate node
+			// Create new intermediate node with ID in Data
 			newRow := RowData{
 				ID:       currentID,
-				ParentID: currentParentID,
-				Data:     make(map[string]interface{}),
+				ParentID: currentParentID, // FIX: Ensure parentID is set correctly
+				Data: map[string]interface{}{
+					"id": currentID,
+				},
 			}
 			resources[resourceID][currentPath] = append(resources[resourceID][currentPath], newRow)
+		} else {
+			// Ensure ID is in Data for existing nodes
+			resources[resourceID][currentPath][existingIndex].Data["id"] = currentID
+			// FIX: Ensure parentID is set correctly
+			resources[resourceID][currentPath][existingIndex].ParentID = currentParentID
 		}
 
 		// Update parent ID for next iteration

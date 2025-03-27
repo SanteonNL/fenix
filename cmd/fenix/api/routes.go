@@ -33,6 +33,7 @@ func NewFHIRRouter(
 	searchParamService *searchparameter.SearchParameterService,
 	processorService *processor.ProcessorService,
 	dataSourceService *datasource.DataSourceService,
+
 	log zerolog.Logger,
 ) *FHIRRouter {
 	// Initialize cache with default config
@@ -68,26 +69,26 @@ func (fr *FHIRRouter) handleSearch(w http.ResponseWriter, r *http.Request) {
 	resourceType := chi.URLParam(r, "resourceType")
 	queryParams := r.URL.Query()
 
-	// Get pagination parameters
-	pageSize, _ := strconv.Atoi(queryParams.Get("_count"))
-	offset, _ := strconv.Atoi(queryParams.Get("_offset"))
+	// // Get pagination parameters
+	// pageSize, _ := strconv.Atoi(queryParams.Get("_count"))
+	// offset, _ := strconv.Atoi(queryParams.Get("_offset"))
 
 	// Create search params string for cache key
 	searchParams := getSearchParams(queryParams)
 
-	// Try to get page from cache first
-	if fr.bundleCache != nil {
-		if cachedResult, found := fr.bundleCache.GetPageFromCache(resourceType, searchParams, offset, pageSize); found {
-			fr.log.Debug().
-				Str("resource_type", resourceType).
-				Str("search_params", searchParams).
-				Msg("Serving response from cache")
+	// // Try to get page from cache first
+	// if fr.bundleCache != nil {
+	// 	if cachedResult, found := fr.bundleCache.GetPageFromCache(resourceType, searchParams, offset, pageSize); found {
+	// 		fr.log.Debug().
+	// 			Str("resource_type", resourceType).
+	// 			Str("search_params", searchParams).
+	// 			Msg("Serving response from cache")
 
-			// Create bundle from cached result
-			fr.createAndRespondWithBundle(w, r, *cachedResult, http.StatusOK)
-			return
-		}
-	}
+	// 		// Create bundle from cached result
+	// 		fr.createAndRespondWithBundle(w, r, *cachedResult, http.StatusOK)
+	// 		return
+	// 	}
+	// }
 
 	// If not in cache, proceed with full processing
 	searchResult := bundle.SearchResult{}

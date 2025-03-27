@@ -47,10 +47,10 @@ func (svc *StructureDefinitionService) BuildStructureDefinitionIndex() error {
 
 					svc.pathBindingsMap[path] = valueSetUrl
 
-					svc.log.Debug().
-						Str("path", path).
-						Str("valueSet", valueSetUrl).
-						Msg("Indexed path binding")
+					// svc.log.Debug().
+					// 	Str("path", path).
+					// 	Str("valueSet", valueSetUrl).
+					// 	Msg("Indexed path binding")
 				}
 			}
 		}

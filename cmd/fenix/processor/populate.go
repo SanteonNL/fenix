@@ -12,17 +12,14 @@ import (
 	"github.com/SanteonNL/fenix/models/fhir"
 )
 
-// Add this type at the top level
-type ProcessedPaths map[string]bool
-
-// populateResourceStruct maintains your current population logic
+// populateResourceStruct begint het vulproces voor het hoofdresource
 func (p *ProcessorService) populateResourceStruct(value reflect.Value, filter []*types.Filter) (bool, error) {
+	p.processedPaths = make(map[string]bool)
 	return p.determinePopulateType(p.resourceType, value, "", filter)
 }
 
-// determinePopulateType handles different field types
+// determinePopulateType bepaalt hoe een veld gevuld moet worden op basis van het type
 func (p *ProcessorService) determinePopulateType(structPath string, value reflect.Value, parentID string, filter []*types.Filter) (bool, error) {
-	//p.log.Debug().Str("structPath", structPath).Str("value.Kind()", value.Kind().String()).Msg("Determining populate type")
 	p.log.Debug().
 		Str("structPath", structPath).
 		Str("type", value.Type().String()).
@@ -53,7 +50,7 @@ func (p *ProcessorService) determinePopulateType(structPath string, value reflec
 	}
 }
 
-// Modify populateSlice to mark processed paths
+// populateSlice vult een array-veld met elementen
 func (p *ProcessorService) populateSlice(structPath string, value reflect.Value, parentID string, rows []datasource.RowData, filter []*types.Filter) (bool, error) {
 	p.log.Debug().
 		Str("structPath", structPath).
@@ -61,21 +58,20 @@ func (p *ProcessorService) populateSlice(structPath string, value reflect.Value,
 		Int("total_rows", len(rows)).
 		Msg("Populating slice")
 
-	// Mark this path as processed
+	// Markeer dit pad als verwerkt
 	p.processedPaths[structPath] = true
 
-	// Create slice to hold all elements
+	// Maak slice om alle elementen te bevatten
 	allElements := reflect.MakeSlice(value.Type(), 0, len(rows))
 	anyElementPassed := false
 
-	// Track processed parent IDs to avoid duplicates
+	// Houd verwerkte parent IDs bij om duplicaten te voorkomen
 	processedParentIDs := make(map[string]bool)
 
 	for _, row := range rows {
-		// Process rows without a parent ID or with a matching parent ID
-		// Importantly, allow multiple entries with different parent IDs
+		// Verwerk rijen zonder parent ID of met een overeenkomende parent ID
 		if row.ParentID == parentID || parentID == "" {
-			// Prevent processing the same parent ID multiple times
+			// Voorkom het meerdere keren verwerken van dezelfde parent ID
 			if processedParentIDs[row.ParentID] {
 				continue
 			}
@@ -88,8 +84,9 @@ func (p *ProcessorService) populateSlice(structPath string, value reflect.Value,
 
 			valueElement := reflect.New(value.Type().Elem()).Elem()
 
-			// Populate the element
-			passed, err := p.populateStructAndNestedFields(structPath, valueElement, row, filter)
+			// Vul het element met de geünificeerde functie
+			singleRow := []datasource.RowData{row}
+			passed, err := p.populateStruct(structPath, valueElement, row.ParentID, singleRow, filter)
 			if err != nil {
 				p.log.Error().
 					Err(err).
@@ -102,12 +99,10 @@ func (p *ProcessorService) populateSlice(structPath string, value reflect.Value,
 				anyElementPassed = true
 			}
 
-			// Always add element to the slice
 			allElements = reflect.Append(allElements, valueElement)
 		}
 	}
 
-	// Set the complete slice with all elements
 	value.Set(allElements)
 
 	p.log.Debug().
@@ -118,29 +113,33 @@ func (p *ProcessorService) populateSlice(structPath string, value reflect.Value,
 	return anyElementPassed, nil
 }
 
-// populateStruct handles struct population with filter integration
-func (p *ProcessorService) populateStruct(path string, value reflect.Value, parentID string, rows []datasource.RowData, filter []*types.Filter) (bool, error) {
+// Geünificeerde functie die zowel structuren als geneste velden vult
+func (p *ProcessorService) populateStruct(path string, value reflect.Value, parentID string,
+	rows []datasource.RowData, filter []*types.Filter) (bool, error) {
+
 	p.log.Debug().
 		Str("path", path).
 		Str("parentID", parentID).
 		Int("rowCount", len(rows)).
 		Msg("Populating struct")
+
 	anyFieldPopulated := false
 	processedRows := make(map[string]bool)
 
-	// Process each row that matches the parent ID
+	// Proces alle relevante rijen
 	for _, row := range rows {
+		// Controleer of deze rij overeenkomt met onze criteria en nog niet is verwerkt
 		if (row.ParentID == parentID || parentID == "") && !processedRows[row.ID] {
 			p.log.Debug().Str("path", path).Str("row.ID", row.ID).Msg("Processing struct")
 			processedRows[row.ID] = true
 
-			// First populate direct fields
+			// Eerst directe velden vullen
 			structPassed, err := p.populateStructFields(path, value.Addr().Interface(), row, filter)
 			if err != nil {
 				return false, fmt.Errorf("failed to populate struct fields at %s: %w", path, err)
 			}
 
-			// Then handle nested fields
+			// Daarna geneste velden verwerken
 			nestedPassed, err := p.populateNestedFields(path, value, row.ID, filter)
 			if err != nil {
 				return false, err
@@ -154,70 +153,16 @@ func (p *ProcessorService) populateStruct(path string, value reflect.Value, pare
 
 	return anyFieldPopulated, nil
 }
-
-// Part 1: Struct and Nested Fields
-// populateStructAndNestedFields handles both direct and nested field population
-func (p *ProcessorService) populateStructAndNestedFields(structPath string, value reflect.Value, row datasource.RowData, filter []*types.Filter) (bool, error) {
-	// First populate and filter struct fields
-	structPassed, err := p.populateStructFields(structPath, value.Addr().Interface(), row, filter)
-	if err != nil {
-		return false, fmt.Errorf("failed to populate struct fields at %s: %w", structPath, err)
-	}
-
-	if !structPassed {
-		return false, nil
-	}
-
-	// Then handle nested fields
-	return p.populateNestedFields(structPath, value, row.ID, filter)
-}
-
-// Modify populateNestedFields to check processed paths
-// populateNestedFields handles nested field population
-func (p *ProcessorService) populateNestedFields(parentPath string, parentValue reflect.Value, parentID string, filter []*types.Filter) (bool, error) {
-	anyFieldPassed := false
-
-	for i := 0; i < parentValue.NumField(); i++ {
-		field := parentValue.Field(i)
-		fieldName := parentValue.Type().Field(i).Name
-		fieldPath := fmt.Sprintf("%s.%s", parentPath, strings.ToLower(fieldName))
-
-		// Skip if we've already processed this path
-		if p.processedPaths[fieldPath] {
-			p.log.Debug().
-				Str("fieldPath", fieldPath).
-				Msg("Skipping already processed nested field")
-			continue
-		}
-
-		if rows, exists := p.result[fieldPath]; exists {
-			p.processedPaths[fieldPath] = true
-			p.log.Debug().Str("fieldPath", fieldPath).Msg("Marked path as processed in populateNestedFields")
-
-			// Important change: For top-level nested fields, use empty parentID if the data shows empty parentID
-			effectiveParentID := parentID
-			if len(rows) > 0 && rows[0].ParentID == "" {
-				effectiveParentID = ""
-			}
-
-			passed, err := p.determinePopulateType(fieldPath, field, effectiveParentID, filter)
-			if err != nil {
-				return false, err
-			}
-			if passed {
-				anyFieldPassed = true
-			}
-		}
-	}
-
-	return anyFieldPassed, nil
-}
-
 func (p *ProcessorService) populateStructFields(structPath string, structPtr interface{}, row datasource.RowData, filter []*types.Filter) (bool, error) {
 	structValue := reflect.ValueOf(structPtr).Elem()
 	structType := structValue.Type()
 	processedFields := make(map[string]bool)
 	anyFieldPassed := false
+
+	p.log.Debug().
+		Str("path", structPath).
+		Str("receivedParentID", row.ParentID).
+		Msg("Starting to populate fields with parent ID")
 
 	p.log.Debug().Str("structPath", structPath).Msg("Populating struct fields")
 
@@ -240,7 +185,8 @@ func (p *ProcessorService) populateStructFields(structPath string, structPtr int
 			if !exists {
 				continue
 			}
-			p.log.Debug().Str("codingPath", codingPath).Msg("Processing Coding or Quantity field")
+			p.log.Debug().Str("codingPath", codingPath).Str("row.ID", row.ID).
+				Msg("Processing Coding or Quantity field")
 			// Handle CodeableConcept (single or slice)
 			if strings.Contains(fieldType, "CodeableConcept") {
 				err := p.setCodeableConceptField(field, codingPath, fieldName, row.ID, codingRows, processedFields)
@@ -338,312 +284,138 @@ func (p *ProcessorService) populateStructFields(structPath string, structPtr int
 	return anyFieldPassed, nil
 }
 
-func (p *ProcessorService) setCodeableConceptField(field reflect.Value, path string, fieldName string, parentID string, rows []datasource.RowData, processedFields map[string]bool) error {
+// Add this debug helper function
+func (p *ProcessorService) debugPrintProcessedPaths(location string) {
+	p.log.Debug().Str("location", location).Msg("=== PROCESSED PATHS DEBUG ===")
+	for path, processed := range p.processedPaths {
+		p.log.Debug().Str("path", path).Bool("processed", processed).Msg("Path processing state")
+	}
+	p.log.Debug().Str("location", location).Msg("=== END PROCESSED PATHS DEBUG ===")
+}
+
+// populateNestedFields verwerkt geneste velden in een struct
+func (p *ProcessorService) populateNestedFields(parentPath string, parentValue reflect.Value, parentID string, filter []*types.Filter) (bool, error) {
 	p.log.Debug().
-		Str("path", path).
-		Str("fieldName", fieldName).
+		Str("parentPath", parentPath).
 		Str("parentID", parentID).
-		Int("rowCount", len(rows)).
-		Msg("Setting CodeableConcept field")
+		Msg("Starting to populate nested fields")
 
-	isSlice := field.Kind() == reflect.Slice
+	p.debugPrintProcessedPaths("Start of populateNestedFields for " + parentPath)
 
-	if isSlice {
+	anyFieldPassed := false
+
+	for i := 0; i < parentValue.NumField(); i++ {
+		field := parentValue.Field(i)
+		fieldType := parentValue.Type().Field(i)
+		fieldName := fieldType.Name
+
+		// Skip unexported fields
+		if fieldType.PkgPath != "" {
+			continue
+		}
+
+		// IMPORTANT! Consistent field path construction
+		// For FHIR, first letter should be lowercase
+		var fieldPath string
+		if len(fieldName) > 0 {
+			fieldPath = fmt.Sprintf("%s.%s", parentPath, strings.ToLower(fieldName[0:1])+fieldName[1:])
+		} else {
+			fieldPath = fmt.Sprintf("%s.%s", parentPath, strings.ToLower(fieldName))
+		}
+
+		// Debug field we're checking
 		p.log.Debug().
+			Str("fieldPath", fieldPath).
 			Str("fieldName", fieldName).
-			Msg("Processing CodeableConcept as slice")
+			Str("fieldType", field.Type().String()).
+			Bool("alreadyProcessed", p.processedPaths[fieldPath]).
+			Msg("Checking nested field")
 
-		if field.IsNil() {
-			field.Set(reflect.MakeSlice(field.Type(), 0, len(rows)))
+		// Skip if we've already processed this path
+		if p.processedPaths[fieldPath] {
+			p.log.Debug().
+				Str("fieldPath", fieldPath).
+				Msg("⚠️ SKIPPING already processed nested field")
+			continue
 		}
 
-		// Create a map to track unique concepts
-		conceptMap := make(map[string]datasource.RowData)
-
-		// First, collect all unique top-level concepts
-		for _, row := range rows {
-			if row.ParentID == "" { // Only process top-level concepts
-				conceptMap[row.ID] = row
-			}
+		// Check if there's data for this path
+		rows, exists := p.result[fieldPath]
+		if !exists {
+			p.log.Debug().
+				Str("fieldPath", fieldPath).
+				Msg("No data for this field path")
+			continue
 		}
 
-		// Process each unique concept
-		for conceptID, conceptRow := range conceptMap {
-			newConcept := reflect.New(field.Type().Elem()).Elem()
-			if err := p.populateCodeableConcept(newConcept, path, conceptRow, processedFields); err != nil {
-				return fmt.Errorf("failed to populate concept %s: %w", conceptID, err)
-			}
-			field.Set(reflect.Append(field, newConcept))
-		}
-	} else {
-		// Non-slice case
-		if field.Kind() == reflect.Ptr {
-			if field.IsNil() {
-				field.Set(reflect.New(field.Type().Elem()))
-			}
-			field = field.Elem()
+		p.log.Debug().
+			Str("fieldPath", fieldPath).
+			Int("rowCount", len(rows)).
+			Msg("Found data for field path, about to process")
+
+		// Determine effective parent ID
+		effectiveParentID := parentID
+		if len(rows) > 0 && rows[0].ParentID == "" {
+			effectiveParentID = ""
+			p.log.Debug().
+				Str("fieldPath", fieldPath).
+				Msg("Using empty parentID because first row has empty parentID")
 		}
 
-		// Use empty concept if one exists
-		var conceptRow datasource.RowData
-		for _, row := range rows {
-			if (row.ParentID == parentID || parentID == "") && row.ParentID == "" {
-				conceptRow = row
-				break
-			}
+		// Populate the field
+		passed, err := p.determinePopulateType(fieldPath, field, effectiveParentID, filter)
+		if err != nil {
+			p.log.Error().
+				Err(err).
+				Str("fieldPath", fieldPath).
+				Msg("❌ Error populating nested field")
+			return false, err
 		}
 
-		// Always process even if conceptRow is empty, using ID "1" if no row found
-		if conceptRow.ID == "" {
-			conceptRow = datasource.RowData{ID: "1"}
-		}
+		// CORRECT: Mark as processed AFTER successful processing
+		p.processedPaths[fieldPath] = true
+		p.log.Debug().
+			Str("fieldPath", fieldPath).
+			Msg("✅ Marked path as processed AFTER successful population")
 
-		if err := p.populateCodeableConcept(field, path, conceptRow, processedFields); err != nil {
-			return err
+		if passed {
+			anyFieldPassed = true
+			p.log.Debug().
+				Str("fieldPath", fieldPath).
+				Msg("Field passed filters")
 		}
 	}
 
-	return nil
+	p.debugPrintProcessedPaths("End of populateNestedFields for " + parentPath)
+	return anyFieldPassed, nil
 }
 
-func (p *ProcessorService) populateCodeableConcept(conceptValue reflect.Value, path string, row datasource.RowData, processedFields map[string]bool) error {
-	p.log.Debug().
-		Str("path", path).
-		Str("rowID", row.ID).
-		Interface("rowData", row.Data).
-		Msg("Populating CodeableConcept")
-
-	// Get the Coding field
-	codingField := conceptValue.FieldByName("Coding")
-	if !codingField.IsValid() {
-		return fmt.Errorf("invalid Coding field in CodeableConcept")
-	}
-
-	// Initialize Coding slice
-	if codingField.Kind() == reflect.Slice && codingField.IsNil() {
-		codingField.Set(reflect.MakeSlice(codingField.Type(), 0, 1))
-	}
-
-	// Look up coding rows
-	codingPath := fmt.Sprintf("%s.coding", path)
-	codingRows, exists := p.result[codingPath]
-
-	if exists {
-		// Simply process all coding rows that match the parent ID
-		for _, codingRow := range codingRows {
-			if codingRow.ParentID == row.ID {
-				if err := p.setCodingOrQuantityFromRow(path, codingPath, codingField, "Coding", codingRow, processedFields, true); err != nil {
-					return fmt.Errorf("failed to set coding: %w", err)
+// setBasicType handles basic type field population
+func (p *ProcessorService) setBasicType(path string, field reflect.Value, parentID string, rows []datasource.RowData, filter []*types.Filter) (bool, error) {
+	p.log.Debug().Str("path", path).Msg("Setting basic type")
+	for _, row := range rows {
+		if row.ParentID == parentID || parentID == "" {
+			for key, value := range row.Data {
+				p.log.Debug().Str("key", key).Interface("value", value).Msg("Setting field")
+				if err := p.setField(path, field.Addr().Interface(), key, value); err != nil {
+					p.log.Error().Err(err).Str("key", key).Msg("Failed to set field")
+					return false, err
 				}
+
+				// Check filter if exists
+				passed, err := true, error(nil)
+				if err != nil {
+					p.log.Error().Err(err).Msg("Filter check failed")
+					return false, err
+				}
+				p.log.Debug().Bool("passed", passed).Msg("Field passed filter check")
+				return passed, nil
 			}
 		}
 	}
-
-	// Process text field if present
-	if textValue, exists := row.Data["text"]; exists {
-		textField := conceptValue.FieldByName("Text")
-		if textField.IsValid() && textField.CanSet() && textField.Kind() == reflect.Ptr {
-			if textField.IsNil() {
-				textField.Set(reflect.New(textField.Type().Elem()))
-			}
-			textField.Elem().SetString(fmt.Sprint(textValue))
-		}
-	}
-
-	return nil
-}
-func (p *ProcessorService) setCodingOrQuantityFromRow(valuesetBindingPath string, structPath string, field reflect.Value, fieldName string, row datasource.RowData, processedFields map[string]bool, isCoding bool) error {
-	fieldValues := p.extractFieldValues(row, processedFields)
-
-	var newValue interface{}
-	code := fieldValues["code"]
-	system := fieldValues["system"]
-
-	if isCoding {
-		if code == "" && system == "" {
-			return nil
-		}
-		coding := fhir.Coding{
-			Code:    stringPtr(code),
-			Display: stringPtr(fieldValues["display"]),
-			System:  stringPtr(system),
-		}
-
-		// // Handle concept mapping
-		// if mappedCode, _, err := p.conceptMapSvc.MapConcept(valuesetBindingPath, code); err == nil && mappedCode != "" {
-		// 	coding.Code = &mappedCode
-		// }
-
-		if field.Type().Kind() == reflect.Ptr {
-			newValue = &coding
-		} else {
-			newValue = coding
-		}
-	} else {
-		quantity := fhir.Quantity{
-			Value:  jsonNumberPtr(fieldValues["value"]),
-			Unit:   stringPtr(fieldValues["unit"]),
-			System: stringPtr(system),
-			Code:   stringPtr(code),
-		}
-
-		// if code != "" {
-		// 	if mappedCode, _, err := p.conceptMapSvc.MapConcept(valuesetBindingPath, code); err == nil && mappedCode != "" {
-		// 		quantity.Code = &mappedCode
-		// 	}
-		// }
-
-		if field.Type().Kind() == reflect.Ptr {
-			newValue = &quantity
-		} else {
-			newValue = quantity
-		}
-	}
-
-	if field.Kind() == reflect.Slice {
-		if field.IsNil() {
-			field.Set(reflect.MakeSlice(field.Type(), 0, 1))
-		}
-
-		exists := false
-		for i := 0; i < field.Len(); i++ {
-			if isDuplicate(field.Index(i).Interface(), newValue) {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			field.Set(reflect.Append(field, reflect.ValueOf(newValue)))
-		}
-	} else {
-		field.Set(reflect.ValueOf(newValue))
-	}
-
-	return nil
+	return true, nil
 }
 
-// extractFieldValues extracts key values from row data based on suffixes
-func (rp *ProcessorService) extractFieldValues(row datasource.RowData, processedFields map[string]bool) map[string]string {
-	fieldValues := make(map[string]string)
-
-	for key, value := range row.Data {
-		keyLower := strings.ToLower(key)
-		strValue := fmt.Sprint(value)
-
-		// Handle byte slice to string conversion if needed
-		if byteSlice, ok := value.([]byte); ok {
-			strValue = string(byteSlice)
-		}
-
-		switch {
-		case strings.HasSuffix(keyLower, "code"):
-			fieldValues["code"] = strValue
-			processedFields[key] = true
-			rp.log.Debug().Str("code", strValue).Msg("Found code")
-		case strings.HasSuffix(keyLower, "display"):
-			fieldValues["display"] = strValue
-			processedFields[key] = true
-			rp.log.Debug().Str("display", strValue).Msg("Found display")
-		case strings.HasSuffix(keyLower, "system"):
-			fieldValues["system"] = strValue
-			processedFields[key] = true
-			rp.log.Debug().Str("system", strValue).Msg("Found system")
-		case strings.HasSuffix(keyLower, "unit"):
-			fieldValues["unit"] = strValue
-			processedFields[key] = true
-			rp.log.Debug().Str("unit", strValue).Msg("Found unit")
-		case strings.HasSuffix(keyLower, "value"):
-			fieldValues["value"] = strValue
-			processedFields[key] = true
-			rp.log.Debug().Str("value", strValue).Msg("Found value")
-		}
-	}
-	return fieldValues
-}
-
-// setCodingOrQuantityField sets a single field or appends to a slice if needed
-func (rp *ProcessorService) setCodingOrQuantityField(field reflect.Value, newValue interface{}, code string, system string) {
-	// If the field is expecting a pointer, ensure newVal is a pointer as well
-
-	if field.Kind() == reflect.Slice {
-		var newSlice reflect.Value
-		if field.IsNil() {
-			newSlice = reflect.MakeSlice(field.Type(), 0, 1)
-		} else {
-			newSlice = field
-		}
-
-		// Check for duplicates
-		exists := false
-		for i := 0; i < newSlice.Len(); i++ {
-			existing := newSlice.Index(i).Interface()
-			if isDuplicate(existing, newValue) {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			newSlice = reflect.Append(newSlice, reflect.ValueOf(newValue))
-			field.Set(newSlice)
-			rp.log.Debug().
-				Str("code", code).
-				Str("system", system).
-				Msg("Added new entry to slice")
-		}
-	} else {
-		field.Set(reflect.ValueOf(newValue))
-		rp.log.Debug().
-			Str("code", code).
-			Str("system", system).
-			Msg("Set single field entry")
-	}
-}
-
-// Helper to check for duplicate coding or quantity.
-// As slice elements are not pointers, only Coding and Quantity are checked
-func isDuplicate(existing, newValue interface{}) bool {
-	switch e := existing.(type) {
-	case fhir.Coding:
-		if n, ok := newValue.(fhir.Coding); ok {
-			return e.Code != nil && n.Code != nil && *e.Code == *n.Code &&
-				e.System != nil && n.System != nil && *e.System == *n.System
-		}
-	case fhir.Quantity:
-		if n, ok := newValue.(fhir.Quantity); ok {
-			return e.Code != nil && n.Code != nil && *e.Code == *n.Code &&
-				e.System != nil && n.System != nil && *e.System == *n.System
-		}
-	}
-	return false
-}
-
-// Helper function to set a json.Number pointer if the value is not empty
-func jsonNumberPtr(s string) *json.Number {
-	if s == "" {
-		return nil
-	}
-	num := json.Number(s)
-	return &num
-}
-
-// Helper function to set a string pointer if the value is not empty
-func stringPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// Helper function to check if a field name matches a pattern with a suffix
-func fieldMatchesPattern(fieldName string, prefix string, suffix string) bool {
-	fieldLower := strings.ToLower(fieldName)
-	return strings.HasPrefix(fieldLower, strings.ToLower(prefix)) &&
-		strings.HasSuffix(fieldLower, strings.ToLower(suffix))
-}
-
-// Part 2: Field Setting and Type Conversion
 func (rp *ProcessorService) setField(structPath string, structPtr interface{}, fieldName string, value interface{}) error {
 	fhirPath := fmt.Sprintf("%s.%s", structPath, strings.ToLower(fieldName[:1])+fieldName[1:])
 
@@ -681,26 +453,12 @@ func (rp *ProcessorService) setField(structPath string, structPtr interface{}, f
 		return rp.setJSONNumber(field, value)
 	}
 
-	// TODO: this can be removed but for now keep it for reference
-	// Cannot use field.Type as above because codes have different types, e.g. ObservationStatus has type ObservationStatus but
-	// for other resource it can be other types. So we need to check if the type has a Code() method
-	// equivalents in SetField function in
-	// https://github.com/SanteonNL/fenix/blob/feature/lw_add_conceptmapping_based_on_renamed_functions_before_rewrite_tommy/cmd/flatSqlToJson/main.go
-	//structFieldName := fieldName
-	//structValueElement := structElem
-	//structField := field
-	//inputValue := value
-
-	// Perform concept mapping for codes if applicable
+	// Check for code types that might need concept mapping
 	structFieldType := field.Type()
 	if typeHasCodeMethod(structFieldType) { // Suggesting it is a code type
 		rp.log.Debug().Msgf("The type has a Code() method, indicating a 'code' type.")
 
 		// Retrieve the specific concept map from the repository
-		// TODO: make it more generic
-		// TODO: make sure that nils etc. are handled properly
-		// TODO: also translate the display field
-		// TODO: make a function insetad of much code within setFied
 		bindingValueSet, err := rp.structDefSvc.GetBindingValueSet(fhirPath)
 		if err != nil {
 			rp.log.Error().Err(err).Msg("Failed to get ValueSet")
@@ -727,7 +485,6 @@ func (rp *ProcessorService) setField(structPath string, structPtr interface{}, f
 				rp.log.Debug().Msg("No translation found")
 			}
 		}
-
 	}
 
 	// Check if type implements UnmarshalJSON
@@ -757,6 +514,7 @@ func (rp *ProcessorService) setField(structPath string, structPtr interface{}, f
 	return rp.setBasicField(field, value)
 }
 
+// Sets a FHIR Date field
 func (rp *ProcessorService) setDateField(field reflect.Value, value interface{}) error {
 	rp.log.Debug().Str("field", field.Type().String()).Msg("Setting date field")
 	// Ensure we can take the address of the field
@@ -783,6 +541,7 @@ func (rp *ProcessorService) setDateField(field reflect.Value, value interface{})
 	return nil
 }
 
+// Sets a json.Number field
 func (rp *ProcessorService) setJSONNumber(field reflect.Value, value interface{}) error {
 	var num json.Number
 	switch v := value.(type) {
@@ -804,6 +563,13 @@ func (rp *ProcessorService) setJSONNumber(field reflect.Value, value interface{}
 	return nil
 }
 
+// Helper function to check if type has Code method
+func typeHasCodeMethod(t reflect.Type) bool {
+	_, ok := t.MethodByName("Code")
+	return ok
+}
+
+// Sets a basic field (standard types)
 func (rp *ProcessorService) setBasicField(field reflect.Value, value interface{}) error {
 	v := reflect.ValueOf(value)
 	if field.Type() == v.Type() {
@@ -839,75 +605,334 @@ func (rp *ProcessorService) setBasicField(field reflect.Value, value interface{}
 	return nil
 }
 
-// Helper function to check for nested data
-func hasDataForPath(resultMap map[string][]datasource.RowData, path string) bool {
-	if _, exists := resultMap[path]; exists {
-		return true
+// setCodeableConceptField handles setting CodeableConcept fields
+func (p *ProcessorService) setCodeableConceptField(field reflect.Value, path string, fieldName string,
+	parentID string, rows []datasource.RowData, processedFields map[string]bool) error {
+
+	p.log.Debug().
+		Str("path", path).
+		Str("fieldName", fieldName).
+		Str("parentID", parentID).
+		Int("rowCount", len(rows)).
+		Msg("Setting CodeableConcept field")
+
+	// Determine if this is a slice or a single field
+	isSlice := field.Kind() == reflect.Slice
+
+	// Path for coding entries
+	codingPath := fmt.Sprintf("%s.coding", path)
+
+	// Get all coding rows for this path
+	codingRows, exists := p.result[codingPath]
+	if !exists {
+		p.log.Debug().
+			Str("codingPath", codingPath).
+			Msg("No coding rows found for path")
+	}
+
+	// Mark both paths as processed
+	p.processedPaths[path] = true
+	p.processedPaths[codingPath] = true
+
+	if isSlice {
+		// Handle array of CodeableConcepts
+		p.log.Debug().
+			Str("fieldName", fieldName).
+			Msg("Processing CodeableConcept as slice")
+
+		if field.IsNil() {
+			field.Set(reflect.MakeSlice(field.Type(), 0, len(rows)))
+		}
+
+		// Collect unique concepts
+		conceptMap := make(map[string]datasource.RowData)
+		for _, row := range rows {
+			// For slice we look at top-level concepts
+			if row.ParentID == parentID || parentID == "" {
+				conceptMap[row.ID] = row
+			}
+		}
+
+		// Process each unique concept
+		for conceptID, conceptRow := range conceptMap {
+			// Create new concept and populate it
+			newConcept := reflect.New(field.Type().Elem()).Elem()
+
+			// KEY FIX: Use the conceptID to find its codings
+			if err := p.populateCodeableConcept(newConcept, path, conceptRow, conceptID, codingRows, processedFields); err != nil {
+				return fmt.Errorf("failed to populate concept %s: %w", conceptID, err)
+			}
+
+			// Add to slice
+			field.Set(reflect.Append(field, newConcept))
+		}
+	} else {
+		// Handle single CodeableConcept
+		if field.Kind() == reflect.Ptr {
+			if field.IsNil() {
+				field.Set(reflect.New(field.Type().Elem()))
+			}
+			field = field.Elem()
+		}
+
+		// Find a row with matching parentID
+		var conceptRow datasource.RowData
+		var conceptID string
+
+		for _, row := range rows {
+			if row.ParentID == parentID || parentID == "" {
+				conceptRow = row
+				conceptID = row.ID // KEY FIX: Store the concept's ID
+				p.log.Debug().
+					Str("conceptID", conceptID).
+					Msg("Found concept row with matching parentID")
+				break
+			}
+		}
+
+		// If no concept found but we have rows, use the first one
+		if conceptID == "" && len(rows) > 0 {
+			conceptRow = rows[0]
+			conceptID = conceptRow.ID // KEY FIX: Get the ID even for default case
+			p.log.Debug().
+				Str("conceptID", conceptID).
+				Msg("Using first available concept row")
+		}
+
+		// KEY FIX: Use the concept's ID to find its codings
+		if err := p.populateCodeableConcept(field, path, conceptRow, conceptID, codingRows, processedFields); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// populateCodeableConcept fills a CodeableConcept with its data and codings
+func (p *ProcessorService) populateCodeableConcept(concept reflect.Value, path string,
+	conceptRow datasource.RowData, conceptID string, codingRows []datasource.RowData,
+	processedFields map[string]bool) error {
+
+	p.log.Debug().
+		Str("path", path).
+		Str("conceptID", conceptID).
+		Interface("conceptData", conceptRow.Data).
+		Msg("Populating CodeableConcept")
+
+	// Set Text field if present
+	if textValue, exists := conceptRow.Data["text"]; exists {
+		textField := concept.FieldByName("Text")
+		if textField.IsValid() && textField.CanSet() {
+			if textField.Kind() == reflect.Ptr {
+				if textField.IsNil() {
+					textField.Set(reflect.New(textField.Type().Elem()))
+				}
+				textField.Elem().SetString(fmt.Sprint(textValue))
+			} else {
+				textField.SetString(fmt.Sprint(textValue))
+			}
+		}
+	}
+
+	// Get Coding field
+	codingField := concept.FieldByName("Coding")
+	if !codingField.IsValid() {
+		return fmt.Errorf("invalid Coding field in CodeableConcept")
+	}
+
+	// Initialize Coding slice
+	if codingField.Kind() == reflect.Slice && codingField.IsNil() {
+		codingField.Set(reflect.MakeSlice(codingField.Type(), 0, 5))
+	}
+
+	// KEY FIX: Process all coding rows where ParentID matches this concept's ID
+	if len(codingRows) > 0 && conceptID != "" {
+		codingCount := 0
+
+		for _, codingRow := range codingRows {
+			// KEY FIX: Match by concept ID, not the parent ID from higher level
+			if codingRow.ParentID == conceptID {
+				p.log.Debug().
+					Str("codingID", codingRow.ID).
+					Str("codingParentID", codingRow.ParentID).
+					Str("conceptID", conceptID).
+					Msg("Adding coding to concept")
+
+				if err := p.setCodingOrQuantityFromRow(path, path+".coding", codingField,
+					"Coding", codingRow, processedFields, true); err != nil {
+					return fmt.Errorf("failed to set coding: %w", err)
+				}
+
+				codingCount++
+			}
+		}
+
+		p.log.Debug().
+			Str("conceptID", conceptID).
+			Int("codingCount", codingCount).
+			Msg("Added codings to concept")
+	} else {
+		p.log.Debug().
+			Str("conceptID", conceptID).
+			Msg("No codings found for concept")
+	}
+
+	return nil
+}
+
+// Functie voor het vullen van Coding en Quantity velden
+func (p *ProcessorService) setCodingOrQuantityFromRow(valuesetBindingPath string, structPath string,
+	field reflect.Value, fieldName string, row datasource.RowData,
+	processedFields map[string]bool, isCoding bool) error {
+
+	// Haal veldwaarden op
+	fieldValues := p.extractFieldValues(row, processedFields)
+
+	var newValue interface{}
+	code := fieldValues["code"]
+	system := fieldValues["system"]
+
+	if isCoding {
+		// Coding verwerken
+		if code == "" && system == "" {
+			return nil // Sla over als er geen code of systeem is
+		}
+
+		// Maak Coding object
+		coding := fhir.Coding{
+			Code:    stringPtr(code),
+			Display: stringPtr(fieldValues["display"]),
+			System:  stringPtr(system),
+		}
+
+		// Concept mapping kan hier plaatsvinden (uitgecommentarieerd in originele code)
+		// if mappedCode, _, err := p.conceptMapSvc.MapConcept(valuesetBindingPath, code); err == nil && mappedCode != "" {
+		//     coding.Code = &mappedCode
+		// }
+
+		// Zet de waarde als pointer of direct object
+		if field.Type().Kind() == reflect.Ptr {
+			newValue = &coding
+		} else {
+			newValue = coding
+		}
+	} else {
+		// Quantity verwerken
+		quantity := fhir.Quantity{
+			Value:  jsonNumberPtr(fieldValues["value"]),
+			Unit:   stringPtr(fieldValues["unit"]),
+			System: stringPtr(system),
+			Code:   stringPtr(code),
+		}
+
+		// Concept mapping voor quantity codes (uitgecommentarieerd in originele code)
+		// if code != "" {
+		//     if mappedCode, _, err := p.conceptMapSvc.MapConcept(valuesetBindingPath, code); err == nil && mappedCode != "" {
+		//         quantity.Code = &mappedCode
+		//     }
+		// }
+
+		// Zet de waarde als pointer of direct object
+		if field.Type().Kind() == reflect.Ptr {
+			newValue = &quantity
+		} else {
+			newValue = quantity
+		}
+	}
+
+	// Toevoegen aan slice of direct veld instellen
+	if field.Kind() == reflect.Slice {
+		if field.IsNil() {
+			field.Set(reflect.MakeSlice(field.Type(), 0, 1))
+		}
+
+		// Controleer op duplicaten
+		exists := false
+		for i := 0; i < field.Len(); i++ {
+			if isDuplicate(field.Index(i).Interface(), newValue) {
+				exists = true
+				break
+			}
+		}
+
+		// Alleen toevoegen als het geen duplicaat is
+		if !exists {
+			field.Set(reflect.Append(field, reflect.ValueOf(newValue)))
+		}
+	} else {
+		// Direct veld instellen
+		field.Set(reflect.ValueOf(newValue))
+	}
+
+	return nil
+}
+
+// Helper functie om veldwaarden uit row.Data te extraheren
+func (p *ProcessorService) extractFieldValues(row datasource.RowData, processedFields map[string]bool) map[string]string {
+	fieldValues := make(map[string]string)
+
+	for key, value := range row.Data {
+		keyLower := strings.ToLower(key)
+		strValue := fmt.Sprint(value)
+
+		// Converteer byte slice naar string indien nodig
+		if byteSlice, ok := value.([]byte); ok {
+			strValue = string(byteSlice)
+		}
+
+		// Determine which field this is based on key suffix
+		switch {
+		case strings.HasSuffix(keyLower, "code"):
+			fieldValues["code"] = strValue
+			processedFields[key] = true
+		case strings.HasSuffix(keyLower, "display"):
+			fieldValues["display"] = strValue
+			processedFields[key] = true
+		case strings.HasSuffix(keyLower, "system"):
+			fieldValues["system"] = strValue
+			processedFields[key] = true
+		case strings.HasSuffix(keyLower, "unit"):
+			fieldValues["unit"] = strValue
+			processedFields[key] = true
+		case strings.HasSuffix(keyLower, "value"):
+			fieldValues["value"] = strValue
+			processedFields[key] = true
+		}
+	}
+
+	return fieldValues
+}
+
+// Helper functie om te controleren op duplicate coding of quantity
+func isDuplicate(existing, newValue interface{}) bool {
+	switch e := existing.(type) {
+	case fhir.Coding:
+		if n, ok := newValue.(fhir.Coding); ok {
+			return e.Code != nil && n.Code != nil && *e.Code == *n.Code &&
+				e.System != nil && n.System != nil && *e.System == *n.System
+		}
+	case fhir.Quantity:
+		if n, ok := newValue.(fhir.Quantity); ok {
+			return e.Code != nil && n.Code != nil && *e.Code == *n.Code &&
+				e.System != nil && n.System != nil && *e.System == *n.System
+		}
 	}
 	return false
 }
 
-// Helper function to get byte value
-func getByteValue(v interface{}) ([]byte, error) {
-	switch value := v.(type) {
-	case string:
-		return []byte(value), nil
-	case []byte:
-		return value, nil
-	default:
-		return json.Marshal(v)
+// Helper functie om een json.Number pointer te maken als de waarde niet leeg is
+func jsonNumberPtr(s string) *json.Number {
+	if s == "" {
+		return nil
 	}
+	num := json.Number(s)
+	return &num
 }
 
-// setBasicType handles basic type field population
-func (p *ProcessorService) setBasicType(path string, field reflect.Value, parentID string, rows []datasource.RowData, filter []*types.Filter) (bool, error) {
-	p.log.Debug().Str("path", path).Msg("Setting basic type")
-	for _, row := range rows {
-		if row.ParentID == parentID || parentID == "" {
-			for key, value := range row.Data {
-				p.log.Debug().Str("key", key).Interface("value", value).Msg("Setting field")
-				if err := p.setField(path, field.Addr().Interface(), key, value); err != nil {
-					p.log.Error().Err(err).Str("key", key).Msg("Failed to set field")
-					return false, err
-				}
-
-				// Check filter if exists
-				passed, err := true, error(nil)
-				if err != nil {
-					p.log.Error().Err(err).Msg("Filter check failed")
-					return false, err
-				}
-				p.log.Debug().Bool("passed", passed).Msg("Field passed filter check")
-				return passed, nil
-			}
-		}
+// Helper functie om een string pointer te maken als de waarde niet leeg is
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
 	}
-	return true, nil
-}
-
-// Helper function to check if type has Code method
-func typeHasCodeMethod(t reflect.Type) bool {
-	_, ok := t.MethodByName("Code")
-	return ok
-}
-
-func (p *ProcessorService) debugPrintResultMap() {
-	p.log.Debug().Msg("START: Full Result Map Contents")
-	for path, rows := range p.result {
-		p.log.Debug().
-			Str("path", path).
-			Int("row_count", len(rows)).
-			Msg("Result Map Path")
-
-		for _, row := range rows {
-			rowJSON, _ := json.MarshalIndent(row, "", "  ")
-			p.log.Debug().
-				Str("path", path).
-				Str("row_id", row.ID).
-				Str("parent_id", row.ParentID).
-				RawJSON("row_data", rowJSON).
-				Msg("Row Details")
-		}
-	}
-	p.log.Debug().Msg("END: Full Result Map Contents")
+	return &s
 }

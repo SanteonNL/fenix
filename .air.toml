@@ -3,7 +3,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/main ./cmd/fenix"
+  cmd = "kill -9 $(lsof -t -i:8081) && go build -o ./tmp/main ./cmd/fenix"
   bin = "./tmp/main"
   delay = 1000
   include_ext = ["go", "md"]
