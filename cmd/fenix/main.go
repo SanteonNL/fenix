@@ -23,6 +23,11 @@ import (
 func main() {
 	startTime := time.Now()
 
+	// Archive existing output directories
+	if err := output.ArchiveExistingOutputs("./output/temp"); err != nil {
+		fmt.Println("Failed to archive existing outputs")
+	}
+
 	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 	outputMgr, err := output.NewOutputManager("./output/temp", log)

@@ -18,7 +18,7 @@ type OutputManager struct {
 }
 
 // archiveExistingOutputs moves existing output directories to an archive folder
-func archiveExistingOutputs(baseDir string) error {
+func ArchiveExistingOutputs(baseDir string) error {
 	// Create archive directory if it doesn't exist
 	archiveDir := filepath.Join(baseDir, "archive")
 	if err := os.MkdirAll(archiveDir, os.ModePerm); err != nil {
@@ -57,11 +57,6 @@ func archiveExistingOutputs(baseDir string) error {
 
 // NewOutputManager creates a new OutputManager with the given base directory
 func NewOutputManager(baseDir string, log zerolog.Logger) (*OutputManager, error) {
-	// Archive existing output directories
-	if err := archiveExistingOutputs(baseDir); err != nil {
-		return nil, fmt.Errorf("failed to archive existing outputs: %w", err)
-	}
-
 	timestamp := time.Now().Format("20060102_150405")
 
 	// Create the base output directory with timestamp
