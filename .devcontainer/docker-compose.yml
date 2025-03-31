@@ -9,7 +9,8 @@ services:
       - ..:/workspace:delegated
       - go-cache:/go
     command: >
-      sh -c "mkdir -p /workspace/tmp &&
+      sh -c "apt-get update && apt-get install -y lsof &&
+             mkdir -p /workspace/tmp &&
              chmod -R 777 /workspace/tmp &&
              mkdir -p /workspace/output/temp/archive &&
               chmod -R 777 /workspace/output &&
