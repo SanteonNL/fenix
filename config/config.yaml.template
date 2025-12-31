@@ -1,6 +1,11 @@
 # config.yaml.template
 # Copy this file to config.yaml and edit as needed.
 
+# Environment: development, staging, production
+# - development: colored console logging with debug level
+# - staging/production: JSON logging with info level
+environment: development
+
 # Use a SQL mock server (true/false)
 use_sql_mock_server: false
 

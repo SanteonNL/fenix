@@ -12,6 +12,7 @@ import (
 )
 
 type Config struct {
+	Environment      string       `yaml:"environment"` // development, staging, production
 	UseSQLMockServer bool         `yaml:"use_sql_mock_server"`
 	Datasources      []Datasource `yaml:"datasources"`
 	Paths            Paths        `yaml:"paths,omitempty"`
