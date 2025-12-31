@@ -1,0 +1,12 @@
+# config.yaml.template
+# Copy this file to config.yaml and edit as needed.
+
+# Use a SQL mock server (true/false)
+use_sql_mock_server: false
+
+datasources:
+  - name: test_db
+    type: sql
+    driver: sqlserver
+    # For Docker test database (see test/README.md):
+    connection_string: "sqlserver://sa:TestPass123!@localhost:1433?database=testdb&encrypt=disable"  

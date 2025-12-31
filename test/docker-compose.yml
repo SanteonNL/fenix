@@ -1,0 +1,33 @@
+services:
+  test_db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: fenix-test-db
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "TestPass123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      # Mount the SQL scripts directory and init script
+      - ./data/sql:/scripts:ro
+      - ./init-db.sh:/init-db.sh:ro
+      # Persist database data
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P TestPass123! -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      /bin/bash -c "
+      /opt/mssql/bin/sqlservr &
+      sleep 30 &&
+      /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P TestPass123! -C -Q 'CREATE DATABASE testdb' &&
+      /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P TestPass123! -C -d testdb -i /scripts/setup.sql &&
+      wait
+      "
+
+volumes:
+  mssql-data:

@@ -1,0 +1,151 @@
+# config.yaml.template
+# Copy this file to config.yaml and edit as needed.
+
+# Use a SQL mock server (true/false)
+use_sql_mock_server: false
+
+# Datasource configuration
+# Define one or more datasources below
+# Supported types: sql, nosql, api, flat_file, cloud_storage, message_queue, cache, other
+
+datasources:
+  # ===== SQL Databases =====
+
+  # SQL Server (Docker test database)
+  - name: test_db
+    type: sql
+    driver: sqlserver
+    connection_string: "sqlserver://sa:TestPass123!@localhost:1433?database=testdb&encrypt=disable"
+
+  # PostgreSQL
+  # - name: postgres_db
+  #   type: sql
+  #   driver: postgres
+  #   connection_string: "postgres://user:password@localhost:5432/dbname?sslmode=disable"
+
+  # MySQL
+  # - name: mysql_db
+  #   type: sql
+  #   driver: mysql
+  #   connection_string: "user:password@tcp(localhost:3306)/dbname"
+
+  # ===== NoSQL Databases =====
+
+  # MongoDB
+  # - name: mongodb
+  #   type: nosql
+  #   engine: mongodb
+  #   uri: "mongodb://user:password@localhost:27017/dbname"
+
+  # Redis
+  # - name: redis_cache
+  #   type: cache
+  #   engine: redis
+  #   host: localhost
+  #   port: 6379
+  #   password: ""
+  #   db: 0
+
+  # ===== REST APIs =====
+
+  # External API with authentication
+  # - name: external_api
+  #   type: api
+  #   base_url: "https://api.example.com"
+  #   api_key: "your_api_key_here"
+  #   headers:
+  #     Authorization: "Bearer your_token"
+  #     Content-Type: "application/json"
+
+  # FHIR Server
+  # - name: fhir_server
+  #   type: api
+  #   base_url: "https://fhir.example.com/fhir"
+  #   headers:
+  #     Accept: "application/fhir+json"
+
+  # ===== Flat Files =====
+
+  # Local JSON file
+  # - name: local_json
+  #   type: flat_file
+  #   format: json
+  #   path: "data/input.json"
+
+  # Local CSV file
+  # - name: local_csv
+  #   type: flat_file
+  #   format: csv
+  #   path: "data/input.csv"
+
+  # Local XML file
+  # - name: local_xml
+  #   type: flat_file
+  #   format: xml
+  #   path: "data/input.xml"
+
+  # ===== Cloud Storage =====
+
+  # AWS S3
+  # - name: s3_bucket
+  #   type: cloud_storage
+  #   provider: aws
+  #   bucket: "my-bucket"
+  #   region: "eu-west-1"
+  #   credentials:
+  #     access_key: "your_access_key"
+  #     secret_key: "your_secret_key"
+
+  # Azure Blob Storage
+  # - name: azure_blob
+  #   type: cloud_storage
+  #   provider: azure
+  #   account_name: "your_account_name"
+  #   account_key: "your_account_key"
+  #   container: "your-container"
+
+  # Google Cloud Storage
+  # - name: gcs_bucket
+  #   type: cloud_storage
+  #   provider: gcp
+  #   bucket: "my-bucket"
+  #   credentials:
+  #     project_id: "your-project-id"
+  #     private_key: "your-private-key"
+
+  # ===== Message Queues =====
+
+  # AWS SQS
+  # - name: sqs_queue
+  #   type: message_queue
+  #   provider: aws
+  #   queue_url: "https://sqs.eu-west-1.amazonaws.com/123456789/my-queue"
+  #   region: "eu-west-1"
+  #   credentials:
+  #     access_key: "your_access_key"
+  #     secret_key: "your_secret_key"
+
+  # RabbitMQ
+  # - name: rabbitmq
+  #   type: message_queue
+  #   engine: rabbitmq
+  #   uri: "amqp://user:password@localhost:5672/"
+  #   topic: "my-topic"
+
+  # Kafka
+  # - name: kafka
+  #   type: message_queue
+  #   engine: kafka
+  #   host: localhost
+  #   port: 9092
+  #   topic: "my-topic"
+
+# Optional: Path configuration (defaults shown below)
+# paths:
+#   base_dir: "."
+#   input: "input"
+#   output: "output"
+#   logs: "logs"
+#   valueset_local: "terminology/valuesets/local"
+#   valueset_custom: "terminology/valuesets/custom"
+#   conceptmaps: "terminology/conceptmaps"
