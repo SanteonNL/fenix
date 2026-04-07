@@ -1,0 +1,21 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "patient_flat",
+  "resource": "Patient",
+  "description": "Flattened view of Patient demographics",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "gender", "path": "gender", "type": "code" },
+        { "name": "birth_date", "path": "birthDate", "type": "date" },
+        { "name": "family_name", "path": "name.where(use='official').family", "type": "string" },
+        { "name": "given_name", "path": "name.where(use='official').given.first()", "type": "string" },
+        { "name": "city", "path": "address.city", "type": "string" },
+        { "name": "postal_code", "path": "address.postalCode", "type": "string" },
+        { "name": "country", "path": "address.country", "type": "string" },
+        { "name": "marital_status", "path": "maritalStatus.coding.code", "type": "code" }
+      ]
+    }
+  ]
+}

@@ -1,32 +1,60 @@
-SELECT  
-    identificatienummer AS "Patient.id",
-    encounter_id AS "resource_id",
-    encounter_id AS id,
-    '' AS parent_id,
-    'Encounter' AS fhir_path,
-    'in-progress' AS "status",  -- Example of code concept mapping, should be mapped accordingly
-    'text' AS "type[0].text",
-    'text1' AS "type[1].text",
-    'http://terminology.hl7.org/CodeSystem/encounter-type' AS "type[0].coding[0].system",
-    'hospital-visit' AS "type[0].coding[0].code",
-    'Hospital Visit' AS "type[0].coding[0].display",
-    'http://terminology.hl7.org/CodeSystem/encounter-type' AS "type[0].coding[1].system",
-    'inpatient' AS "type[0].coding[1].code",
-    'Inpatient' AS "type[0].coding[1].display",
-    'http://terminology.hl7.org/CodeSystem/encounter-status' AS "status.coding[0].system",
-    'active' AS "status.coding[0].code",
-    'Active' AS "status.coding[0].display",
-    'City Clinic' AS "serviceProvider.display",
-    'Patient/' || identificatienummer AS "subject.reference",
-    encounter_start_time AS "period.start",
-    encounter_end_time AS "period.end",
-    'http://terminology.hl7.org/CodeSystem/encounter-class' AS "class.coding[0].system",
-    'IMP' AS "class.code",
-    'inpatient encounter' AS "class.display",
-    'ReasonSystem1' AS "reason[0].coding[0].system",
-    'R01' AS "reason[0].coding[0].code",
-    'Acute Chest Pain' AS "reason[0].coding[0].display"
-FROM 
-    encounter_raw
---WHERE patient_id = :Patient.id
-LIMIT 1;
+-- Encounter SQL-to-FHIR query
+-- Meerdere statements, elk een aparte resultset.
+-- Meerdere rijen voor dezelfde fhir_path + parent_id → FHIR array.
+--
+-- Verwachte CSV-tabellen:
+--   encounters.csv        → tabel "encounters"
+--   encounter_type.csv    → tabel "encounter_type"
+--   encounter_reason.csv  → tabel "encounter_reason"
+
+-- ── Statement 1: Root Encounter ───────────────────────────────────────────
+-- encounters.csv kolommen: encounter_id, patient_id, status, start_time, end_time, service_provider
+SELECT
+    encounter_id                        AS resource_id,
+    encounter_id                        AS id,
+    ''                                  AS parent_id,
+    'Encounter'                         AS fhir_path,
+    status,
+    start_time                          AS "period.start",
+    end_time                            AS "period.end",
+    'Patient/' || patient_id            AS "subject.reference",
+    service_provider                    AS "serviceProvider.display"
+FROM encounters;
+
+-- ── Statement 2: Type ─────────────────────────────────────────────────────
+-- encounter_type.csv kolommen: encounter_id, type_id, type_text
+-- Meerdere rijen per encounter_id → array in Encounter.type
+SELECT
+    encounter_id                        AS resource_id,
+    type_id                             AS id,
+    encounter_id                        AS parent_id,
+    'Encounter.type'                    AS fhir_path,
+    type_text                           AS text
+FROM encounter_type;
+
+-- ── Statement 3: Type coding ──────────────────────────────────────────────
+-- encounter_type_coding.csv kolommen: type_id, coding_id, coding_system, coding_code, coding_display
+-- Meerdere rijen per type_id → array in Encounter.type.coding
+SELECT
+    t.encounter_id                      AS resource_id,
+    tc.coding_id                        AS id,
+    tc.type_id                          AS parent_id,
+    'Encounter.type.coding'             AS fhir_path,
+    tc.coding_system                    AS "system",
+    tc.coding_code                      AS code,
+    tc.coding_display                   AS display
+FROM encounter_type_coding tc
+JOIN encounter_type t ON t.type_id = tc.type_id;
+
+-- ── Statement 4: Reason ───────────────────────────────────────────────────
+-- encounter_reason.csv kolommen: encounter_id, reason_id, reason_system, reason_code, reason_display
+-- Meerdere rijen per encounter_id → array in Encounter.reason
+SELECT
+    encounter_id                        AS resource_id,
+    reason_id                           AS id,
+    encounter_id                        AS parent_id,
+    'Encounter.reason'                  AS fhir_path,
+    reason_system                       AS "system",
+    reason_code                         AS code,
+    reason_display                      AS display
+FROM encounter_reason;

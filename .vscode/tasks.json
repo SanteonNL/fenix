@@ -1,0 +1,78 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go: build csv2fhir",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "-o", "csv2fhir.exe", "./cmd/csv2fhir"],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: build all",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "./cmd/..."],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: test",
+      "type": "shell",
+      "command": "go",
+      "args": ["test", "-v", "./cmd/csv2fhir/..."],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "test"
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: mod tidy",
+      "type": "shell",
+      "command": "go",
+      "args": ["mod", "tidy"],
+      "problemMatcher": []
+    },
+    {
+      "label": "csv2fhir: run help",
+      "type": "shell",
+      "command": "${workspaceFolder}/cmd/csv2fhir/csv2fhir.exe",
+      "args": ["-help"],
+      "group": {
+        "kind": "test"
+      }
+    },
+    {
+      "label": "csv2fhir: convert sample data",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/csv2fhir", "-cmd", "all"],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "test"
+      }
+    }
+  ]
+}

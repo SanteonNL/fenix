@@ -1,0 +1,24 @@
+# CSV to FHIR Converter Configuration
+
+environment: dev  # dev (colored output) or prod (JSON output)
+
+database:
+  type: sqlite
+  path: data/csv2fhir.db
+  # driver: sqlite    # pure Go, geen CGO — standaard (modernc.org/sqlite)
+  # driver: sqlite3   # CGO-gebaseerd, vereist GCC/MinGW (github.com/mattn/go-sqlite3)
+
+csv:
+  inputDir: test/data/source1   # map met CSV-bestanden; bestandsnaam = tabelnaam
+  delimiter: ","
+  hasHeader: true
+
+fhir:
+  # SQL-bestand met meerdere statements (gescheiden door ";")
+  # Elke statement bevraagt de geladen CSV-tabellen in SQLite
+  # Meerdere rijen met dezelfde fhir_path + parent_id worden een FHIR array
+  sqlFile: queries/hix/flat/patient_1.sql
+
+output:
+  dir: output
+  format: ndjson   # json of ndjson

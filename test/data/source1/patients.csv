@@ -1,0 +1,4 @@
+patient_id,gender,birth_date,active
+p001,asd,1985-03-12,1
+p002,asd,1992-07-24,1
+p003,male,1970-11-05,0

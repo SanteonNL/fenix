@@ -1,0 +1,17 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "encounter_flat",
+  "resource": "Encounter",
+  "description": "Flattened view of Encounters",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "patient_ref", "path": "subject.reference", "type": "string" },
+        { "name": "status", "path": "status", "type": "code" },
+        { "name": "encounter_type", "path": "type.text", "type": "string" },
+        { "name": "service_provider", "path": "serviceProvider.display", "type": "string" }
+      ]
+    }
+  ]
+}

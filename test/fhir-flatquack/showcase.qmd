@@ -1,0 +1,375 @@
+---
+title: "FHIR → FlatQuack → DuckDB → R"
+subtitle: "A synthetic health data analytics showcase"
+author: "Fenix / DSG"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-tools: true
+    self-contained: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+.libPaths(c("C:/Users/t.hetterscheid/R/library", .libPaths()))
+
+library(DBI)
+library(duckdb)
+library(dplyr)
+library(dbplyr)
+library(ggplot2)
+library(gt)
+library(scales)
+library(crosstalk)
+library(plotly)
+library(DT)
+
+DB_PATH <- file.path(dirname(knitr::current_input(dir = TRUE)), "output", "fhir.duckdb")
+con     <- dbConnect(duckdb(), dbdir = DB_PATH, read_only = TRUE)
+tbl_fhir <- function(name) tbl(con, name)
+
+current_year <- as.integer(format(Sys.Date(), "%Y"))
+```
+
+## Overview
+
+This document demonstrates a full healthcare analytics pipeline:
+
+| Step | Tool | What it does |
+|------|------|-------------|
+| 1 | **FHIR NDJSON** | Synthetic patient data in bulk-export format |
+| 2 | **FlatQuack** | Compiles SQL-on-FHIR ViewDefinitions → DuckDB SQL |
+| 3 | **DuckDB** | Executes the SQL, creates flat analytical tables |
+| 4 | **R + dplyr** | Queries the tables via familiar grammar |
+| 5 | **Quarto + OJS** | Renders this interactive report |
+
+The test dataset covers **5 synthetic German patients** with diagnoses, lab results, encounters, and medications.
+
+---
+
+## 1. Patient Cohort
+
+```{r patients}
+patients <- tbl_fhir("patient_flat") |>
+  select(id, given_name, family_name, gender, birth_date, city) |>
+  collect() |>
+  mutate(
+    full_name = paste(given_name, family_name),
+    age       = current_year - as.integer(substr(birth_date, 1, 4))
+  )
+
+patients |>
+  select(id, full_name, gender, age, city) |>
+  gt() |>
+  tab_header(title = "Patient Demographics") |>
+  cols_label(id = "ID", full_name = "Name", gender = "Gender",
+             age = "Age", city = "City") |>
+  tab_style(style = cell_fill(color = "#f0f4ff"),
+            locations = cells_column_labels())
+```
+
+```{r age-gender-plot}
+#| fig-cap: "Age and gender distribution of the synthetic cohort"
+ggplot(patients, aes(x = reorder(full_name, age), y = age, fill = gender)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = age), hjust = -0.2, size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("female" = "#e88dac", "male" = "#6baed6")) +
+  labs(title = "Patient Ages by Gender", x = NULL, y = "Age (years)", fill = "Gender") +
+  theme_minimal(base_size = 13) +
+  ylim(0, max(patients$age) * 1.15)
+```
+
+---
+
+## 2. Laboratory & Vital Signs
+
+```{r observations}
+observations <- tbl_fhir("observation_flat") |>
+  mutate(patient_id = regexp_replace(patient_ref, "Patient/", "")) |>
+  left_join(tbl_fhir("patient_flat") |> select(id, family_name, given_name),
+            by = c("patient_id" = "id")) |>
+  select(patient_id, family_name, given_name, display, category,
+         value, unit, interpretation, effective_date) |>
+  collect() |>
+  mutate(
+    date        = as.Date(substr(effective_date, 1, 10)),
+    full_name   = paste(given_name, family_name),
+    flag        = case_when(interpretation == "H" ~ "High",
+                            interpretation == "L" ~ "Low",
+                            TRUE                  ~ "Normal")
+  )
+
+observations |>
+  select(full_name, display, value, unit, flag, date) |>
+  arrange(full_name, display) |>
+  gt() |>
+  tab_header(title = "Observations Summary") |>
+  cols_label(full_name = "Patient", display = "Measurement",
+             value = "Value", unit = "Unit", flag = "Status", date = "Date") |>
+  tab_style(style = list(cell_fill(color = "#fff0f0"), cell_text(weight = "bold")),
+            locations = cells_body(columns = flag, rows = flag == "High"))
+```
+
+```{r obs-plot}
+#| fig-cap: "Lab values coloured by interpretation flag"
+ggplot(observations, aes(x = display, y = value, colour = flag, shape = full_name)) +
+  geom_point(size = 4, alpha = 0.85) +
+  scale_colour_manual(values = c("High" = "#d73027", "Normal" = "#1a9850", "Low" = "#4575b4")) +
+  labs(title = "Observation Values by Measurement Type",
+       x = NULL, y = "Value", colour = "Interpretation", shape = "Patient") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+---
+
+## 3. Diagnoses — Option A: Multiple Code Systems per Column
+
+A single FHIR `Condition` can carry codes from several terminologies simultaneously.
+**Option A** extracts each system into its own column — one row per condition, no row explosion.
+
+The ViewDefinition uses `forEach` on a filtered coding array:
+
+```json
+{ "forEach": "code.coding.where(system = 'http://snomed.info/sct')",
+  "column": [
+    { "name": "snomed_code",    "path": "code" },
+    { "name": "snomed_display", "path": "display" }
+  ]
+},
+{ "forEach": "code.coding.where(system = 'http://hl7.org/fhir/sid/icd-10')",
+  "column": [
+    { "name": "icd10_code",    "path": "code" },
+    { "name": "icd10_display", "path": "display" }
+  ]
+}
+```
+
+FlatQuack compiles this to `CROSS JOIN UNNEST(list_filter(...))` — keeping one row per condition as long as each system appears exactly once.
+
+```{r conditions}
+conditions <- tbl_fhir("condition_flat") |>
+  filter(clinical_status == "active") |>
+  mutate(patient_id = regexp_replace(patient_ref, "Patient/", "")) |>
+  left_join(tbl_fhir("patient_flat") |> select(id, given_name, family_name),
+            by = c("patient_id" = "id")) |>
+  select(given_name, family_name, condition_display, severity,
+         snomed_code, snomed_display, icd10_code, icd10_display, onset_date) |>
+  collect()
+
+conditions |>
+  mutate(patient = paste(given_name, family_name)) |>
+  select(patient, condition_display, severity, snomed_code, icd10_code, onset_date) |>
+  gt() |>
+  tab_header(
+    title    = "Active Diagnoses — Option A",
+    subtitle = "SNOMED CT and ICD-10 codes extracted as separate columns from the same Condition resource"
+  ) |>
+  cols_label(patient           = "Patient",
+             condition_display = "Condition",
+             severity          = "Severity",
+             snomed_code       = "SNOMED CT",
+             icd10_code        = "ICD-10",
+             onset_date        = "Onset") |>
+  tab_style(style = cell_fill(color = "#f0fff0"),
+            locations = cells_body(columns = snomed_code)) |>
+  tab_style(style = cell_fill(color = "#f0f4ff"),
+            locations = cells_body(columns = icd10_code)) |>
+  tab_style(style = cell_fill(color = "#fff5e6"),
+            locations = cells_body(rows = severity == "Moderate"))
+```
+
+---
+
+## 4. Medications
+
+```{r medications}
+medications <- tbl_fhir("medication_request_flat") |>
+  filter(status == "active") |>
+  mutate(patient_id = regexp_replace(patient_ref, "Patient/", "")) |>
+  left_join(tbl_fhir("patient_flat") |> select(id, family_name),
+            by = c("patient_id" = "id")) |>
+  select(family_name, medication_display, dosage_text, authored_on, requester) |>
+  arrange(family_name) |>
+  collect() |>
+  mutate(medication_display = gsub('^"|"$', "", medication_display))
+
+medications |>
+  gt() |>
+  tab_header(title = "Active Medication Orders") |>
+  cols_label(family_name = "Patient", medication_display = "Medication",
+             dosage_text = "Dosage Instructions", authored_on = "Prescribed",
+             requester   = "Prescriber") |>
+  cols_width(dosage_text ~ px(230))
+```
+
+---
+
+## 5. Interactive Explorer {#interactive}
+
+Filter by **patient**, **category**, and **interpretation flag** — all controls are linked:
+the dot-plot, the observation table, and the conditions table all update together.
+Everything runs client-side via `crosstalk` + `plotly` + `DT`, so the file works when
+opened directly from disk (no server, no Shiny).
+
+```{r interactive}
+#| echo: false
+# ── Shared data objects ───────────────────────────────────────────────────────
+obs_shared <- observations |>
+  transmute(
+    Patient   = full_name,
+    Category  = category,
+    Flag      = flag,
+    Test      = display,
+    Value     = round(value, 1),
+    Unit      = unit,
+    Date      = as.character(date)
+  ) |>
+  SharedData$new(key = ~Patient, group = "fhir")
+
+cond_shared <- conditions |>
+  mutate(Patient = paste(given_name, family_name)) |>
+  transmute(
+    Patient, Condition = condition_display,
+    Severity = severity, SNOMED = snomed_code, ICD10 = icd10_code,
+    Onset = onset_date
+  ) |>
+  SharedData$new(key = ~Patient, group = "fhir")
+
+# ── Filter controls ───────────────────────────────────────────────────────────
+filters <- bscols(
+  widths = c(4, 4, 4),
+  filter_checkbox("patient_flt", "Patient",      obs_shared, ~Patient,  inline = FALSE),
+  filter_checkbox("cat_flt",     "Category",     obs_shared, ~Category, inline = FALSE),
+  filter_select(  "flag_flt",    "Interpretation",obs_shared, ~Flag)
+)
+
+# ── Dot plot (plotly) — tooltip shows patient + value ────────────────────────
+dot_plot <- plot_ly(
+  obs_shared,
+  x       = ~Value,
+  y       = ~Test,
+  color   = ~Flag,
+  colors  = c("High" = "#d73027", "Normal" = "#1a9850", "Low" = "#4575b4"),
+  type    = "scatter",
+  mode    = "markers",
+  marker  = list(size = 12, opacity = 0.85),
+  text    = ~paste0("<b>", Patient, "</b><br>", Value, " ", Unit, "<br>", Date),
+  hoverinfo = "text"
+) |>
+  layout(
+    xaxis  = list(title = "Value"),
+    yaxis  = list(title = ""),
+    legend = list(title = list(text = "Flag")),
+    margin = list(l = 160)
+  ) |>
+  highlight(on = "plotly_click", off = "plotly_doubleclick")
+
+# ── Observation table (DT) ────────────────────────────────────────────────────
+obs_table <- datatable(
+  obs_shared,
+  colnames    = c("Patient", "Category", "Flag", "Measurement", "Value", "Unit", "Date"),
+  rownames    = FALSE,
+  options     = list(pageLength = 8, dom = "tip"),
+  class       = "compact stripe"
+)
+
+# ── Conditions table (DT) — linked by Patient key ────────────────────────────
+cond_table <- datatable(
+  cond_shared,
+  colnames    = c("Patient", "Condition", "Severity", "SNOMED CT", "ICD-10", "Onset"),
+  rownames    = FALSE,
+  options     = list(pageLength = 8, dom = "tip"),
+  class       = "compact stripe"
+)
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+htmltools::tagList(
+  htmltools::h4("Controls"),
+  filters,
+  htmltools::hr(),
+  htmltools::h4("Observations — dot plot"),
+  dot_plot,
+  htmltools::hr(),
+  htmltools::h4("Observations — table"),
+  obs_table,
+  htmltools::hr(),
+  htmltools::h4("Diagnoses for selected patients"),
+  cond_table
+)
+```
+
+---
+
+## 6. Cross-Resource Query
+
+> Which diabetic patients have an HbA1c result, and what was it?
+
+```{r cross-query}
+diabetic_ids <- tbl_fhir("condition_flat") |>
+  filter(condition_display %LIKE% "%Diabetes%") |>
+  mutate(patient_id = regexp_replace(patient_ref, "Patient/", "")) |>
+  select(patient_id) |>
+  distinct()
+
+inner_join(
+  diabetic_ids,
+  tbl_fhir("observation_flat") |>
+    filter(loinc_code == "4548-4") |>
+    mutate(patient_id = regexp_replace(patient_ref, "Patient/", "")) |>
+    select(patient_id, display, value, unit, effective_date),
+  by = "patient_id"
+) |>
+  left_join(tbl_fhir("patient_flat") |> select(id, given_name, family_name),
+            by = c("patient_id" = "id")) |>
+  collect() |>
+  mutate(date = as.Date(substr(effective_date, 1, 10))) |>
+  select(given_name, family_name, display, value, unit, date) |>
+  gt() |>
+  tab_header(title    = "Diabetic Patients — HbA1c Results",
+             subtitle = "HbA1c > 7% indicates sub-optimal glycaemic control") |>
+  cols_label(given_name = "Given", family_name = "Family", display = "Test",
+             value = "HbA1c (%)", unit = "Unit", date = "Date") |>
+  tab_style(style = cell_fill(color = "#ffcccc"),
+            locations = cells_body(rows = value > 7))
+```
+
+---
+
+## Pipeline Architecture
+
+```
+FHIR NDJSON
+  Patient · Observation · Condition · Encounter · MedicationRequest
+        │
+        ▼  *.vd.json  (SQL-on-FHIR ViewDefinitions)
+           forEach + where(system=...) → Option A dual-code columns
+        │
+        ▼  flatquack --mode build
+           *.vd.sql  (DuckDB SQL with FHIRPath → struct traversal)
+        │
+        ▼  setup_db.R
+           output/fhir.duckdb
+             ├── patient_flat           (id, gender, birth_date, city …)
+             ├── observation_flat       (loinc_code, value, unit, flag …)
+             ├── condition_flat         (snomed_code, icd10_code …)  ← Option A
+             ├── encounter_flat
+             └── medication_request_flat
+        │
+        ▼  showcase.qmd
+           Static tables + ggplot2 + OJS interactive explorer
+```
+
+```{r teardown}
+#| include: false
+dbDisconnect(con, shutdown = TRUE)
+```

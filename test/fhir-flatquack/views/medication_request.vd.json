@@ -1,0 +1,20 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "medication_request_flat",
+  "resource": "MedicationRequest",
+  "description": "Flattened view of MedicationRequests",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "patient_ref", "path": "subject.reference", "type": "string" },
+        { "name": "status", "path": "status", "type": "code" },
+        { "name": "intent", "path": "intent", "type": "code" },
+        { "name": "medication_display", "path": "medicationCodeableConcept.text", "type": "string" },
+        { "name": "authored_on", "path": "authoredOn", "type": "date" },
+        { "name": "requester", "path": "requester.display", "type": "string" },
+        { "name": "dosage_text", "path": "dosageInstruction.text", "type": "string" }
+      ]
+    }
+  ]
+}

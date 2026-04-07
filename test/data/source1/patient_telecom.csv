@@ -1,0 +1,6 @@
+patient_id,telecom_id,telecom_system,telecom_value,telecom_use
+p001,p001-t1,phone,0650989181,home
+p001,p001-t2,email,tommy@example.nl,home
+p002,p002-t1,phone,0612345678,work
+p003,p003-t1,phone,0698765432,home
+p003,p003-t2,email,pieter@example.nl,home

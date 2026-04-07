@@ -1,0 +1,7 @@
+patient_id,name_id,name_use,family,given
+p001,p001-n1,official,Hetterscheid,Tommy
+p001,p001-n2,maiden,Janla,Tommy
+p001,p001-n3,nickname,Albers,Tom
+p002,p002-n1,official,De Vries,Anna
+p003,p003-n1,official,Jansen,Pieter
+p003,p003-n2,usual,Jansen,Pete

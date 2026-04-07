@@ -1,0 +1,34 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "condition_flat",
+  "resource": "Condition",
+  "description": "Flattened view of Conditions — Option A: one row per condition, multiple code systems as separate columns",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "patient_ref", "path": "subject.reference", "type": "string" },
+        { "name": "clinical_status", "path": "clinicalStatus.coding.code", "type": "code" },
+        { "name": "verification_status", "path": "verificationStatus.coding.code", "type": "code" },
+        { "name": "severity", "path": "severity.coding.display", "type": "string" },
+        { "name": "condition_display", "path": "code.text", "type": "string" },
+        { "name": "onset_date", "path": "onsetDateTime", "type": "dateTime" },
+        { "name": "recorded_date", "path": "recordedDate", "type": "date" }
+      ]
+    },
+    {
+      "forEach": "code.coding.where(system = 'http://snomed.info/sct')",
+      "column": [
+        { "name": "snomed_code",    "path": "code",    "type": "code" },
+        { "name": "snomed_display", "path": "display", "type": "string" }
+      ]
+    },
+    {
+      "forEach": "code.coding.where(system = 'http://hl7.org/fhir/sid/icd-10')",
+      "column": [
+        { "name": "icd10_code",    "path": "code",    "type": "code" },
+        { "name": "icd10_display", "path": "display", "type": "string" }
+      ]
+    }
+  ]
+}

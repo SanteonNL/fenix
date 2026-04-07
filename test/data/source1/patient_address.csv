@@ -1,0 +1,5 @@
+patient_id,address_id,address_use,line,city,postal_code,country
+p001,p001-a1,home,2e Daalsedijk 106,Utrecht,3565AA,NL
+p002,p002-a1,home,Keizersgracht 1,Amsterdam,1015CV,NL
+p003,p003-a1,home,Binnenweg 50,Rotterdam,3021GA,NL
+p003,p003-a2,work,Coolsingel 10,Rotterdam,3012AA,NL

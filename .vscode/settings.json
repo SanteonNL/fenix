@@ -10,5 +10,20 @@
             "password": "mysecretpassword",
             "name": "my-postgres"
         }
-    ]
+    ],
+    "go.useLanguageServer": true,
+    "go.lintOnSave": "package",
+    "[go]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "editor.defaultFormatter": "golang.Go"
+    },
+    "go.buildFlags": ["-v"],
+    "terminal.integrated.env.windows": {
+        "CGO_ENABLED": "0"
+    },
+    "go.gopath": "C:/Users/t.hetterscheid/go",
+    "go.goroot": "C:/Program Files/Go"
 }
