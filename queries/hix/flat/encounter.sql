@@ -58,3 +58,18 @@ SELECT
     reason_code                         AS code,
     reason_display                      AS display
 FROM encounter_reason;
+
+-- ── Statement 5: Status History (level 3 hierarchy example) ───────────────
+-- encounter_status_history.csv kolommen: encounter_id, history_id, status, period_start, period_end
+-- Meerdere rijen per encounter_id → array in Encounter.statusHistory
+-- status kolom bevat broncode (bijv. "DONE") die via conceptmap wordt vertaald
+-- naar een geldig FHIR EncounterStatus (bijv. "finished")
+SELECT
+    encounter_id                        AS resource_id,
+    history_id                          AS id,
+    encounter_id                        AS parent_id,
+    'Encounter.statusHistory'           AS fhir_path,
+    status,
+    period_start                        AS "period.start",
+    period_end                          AS "period.end"
+FROM encounter_status_history;

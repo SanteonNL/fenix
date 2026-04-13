@@ -191,7 +191,7 @@ func findFHIRType(typeName string) reflect.Type {
 	// We'll do this by instantiating a Patient and looking at its field types
 	p := &fhir.Patient{}
 	pType := reflect.TypeOf(p)
-	
+
 	// Search through all fields and their types
 	var foundType reflect.Type
 	searchType := func(t reflect.Type) {
@@ -201,19 +201,19 @@ func findFHIRType(typeName string) reflect.Type {
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
 			fieldType := field.Type
-			
+
 			// Check direct field type
 			if fieldType.Name() == typeName {
 				foundType = fieldType
 				return
 			}
-			
+
 			// Check pointer type
 			if fieldType.Kind() == reflect.Ptr && fieldType.Elem().Name() == typeName {
 				foundType = fieldType.Elem()
 				return
 			}
-			
+
 			// Check slice element type
 			if fieldType.Kind() == reflect.Slice {
 				elemType := fieldType.Elem()
@@ -228,9 +228,9 @@ func findFHIRType(typeName string) reflect.Type {
 			}
 		}
 	}
-	
+
 	searchType(pType.Elem())
-	
+
 	return foundType
 }
 

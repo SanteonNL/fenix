@@ -1,14 +1,71 @@
 package converter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
+
+// fhirOutput wraps a validated FHIR struct and ensures "resourceType" appears
+// as the first JSON field.
+//
+// The samply-generated fhir.* models already inject resourceType via a custom
+// MarshalJSON — but always as the LAST field (because they embed OtherXxx
+// first and declare ResourceType string after it). This wrapper moves it to
+// the front so the output is easier to read.
+type fhirOutput struct {
+	resourceType string
+	inner        interface{}
+}
+
+func (f fhirOutput) MarshalJSON() ([]byte, error) {
+	inner, err := json.Marshal(f.inner)
+	if err != nil {
+		return nil, err
+	}
+	rt, err := json.Marshal(f.resourceType)
+	if err != nil {
+		return nil, err
+	}
+
+	// The generated models append: ,"resourceType":"Patient"}
+	// Strip it from the end so we can re-inject it at the front.
+	suffix := make([]byte, 0, len(rt)+18)
+	suffix = append(suffix, `,"resourceType":`...)
+	suffix = append(suffix, rt...)
+	suffix = append(suffix, '}')
+
+	if bytes.HasSuffix(inner, suffix) {
+		// Remove the trailing ,"resourceType":"X"} and re-add closing brace
+		trimmed := append(inner[:len(inner)-len(suffix)], '}')
+		if bytes.Equal(trimmed, []byte("{}")) {
+			return append(append([]byte(`{"resourceType":`), rt...), '}'), nil
+		}
+		out := make([]byte, 0, len(trimmed)+len(rt)+20)
+		out = append(out, `{"resourceType":`...)
+		out = append(out, rt...)
+		out = append(out, ',')
+		out = append(out, trimmed[1:]...) // skip opening '{'
+		return out, nil
+	}
+
+	// Fallback: inner has no resourceType (e.g. raw map) — inject at front naively.
+	if len(inner) >= 2 && inner[0] == '{' && inner[1] == '}' {
+		return append(append([]byte(`{"resourceType":`), rt...), '}'), nil
+	}
+	out := make([]byte, 0, len(inner)+len(rt)+20)
+	out = append(out, `{"resourceType":`...)
+	out = append(out, rt...)
+	out = append(out, ',')
+	out = append(out, inner[1:]...)
+	return out, nil
+}
 
 // RowData represents one SQL row at a given FHIR path level.
 // Multiple rows at the same fhir_path + parent_id become FHIR array elements.
@@ -33,13 +90,15 @@ type ResourceResult map[string][]RowData
 //	               Dot-notation is allowed for simple scalar nesting (e.g. "subject.reference")
 //	               Arrays are created by providing multiple rows with the same fhir_path + parent_id.
 type FHIRConverter struct {
-	db     *sqlx.DB
-	logger zerolog.Logger
+	db         *sqlx.DB
+	logger     zerolog.Logger
+	profile    *ProfileService
+	conceptMap *ConceptMapService
 }
 
 // NewFHIRConverter creates a new converter.
-func NewFHIRConverter(db *sqlx.DB, logger zerolog.Logger) *FHIRConverter {
-	return &FHIRConverter{db: db, logger: logger}
+func NewFHIRConverter(db *sqlx.DB, logger zerolog.Logger, profile *ProfileService, conceptMap *ConceptMapService) *FHIRConverter {
+	return &FHIRConverter{db: db, logger: logger, profile: profile, conceptMap: conceptMap}
 }
 
 // ConvertSQL executes a SQL string that may contain multiple statements separated by ";".
@@ -87,41 +146,70 @@ func (fc *FHIRConverter) executeStatement(stmt string, n int, resources map[stri
 // Each resource is first built as a map, then validated by unmarshaling into the
 // matching fhir.* struct. Invalid resources are logged and skipped.
 func (fc *FHIRConverter) buildResources(resources map[string]ResourceResult, rootPaths map[string]string) []interface{} {
-	var result []interface{}
-	for resourceID, resResult := range resources {
-		rootPath, ok := rootPaths[resourceID]
-		if !ok {
-			fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
-			continue
+		result := []interface{}{}
+		warningCounts := map[string]int{}
+		warningDetails := map[string][]string{} // resourceIDs per warning
+		for resourceID, resResult := range resources {
+			rootPath, ok := rootPaths[resourceID]
+			if !ok {
+				fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
+				continue
+			}
+
+			raw, err := buildFHIRResource(resResult, rootPath)
+			if err != nil {
+				fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
+				continue
+			}
+
+			// Debug logging: show the raw data structure before validation
+			rawJSON, _ := json.MarshalIndent(raw, "", "  ")
+			fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
+
+			// Apply concept mappings driven by FHIR profile bindings
+			applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
+
+			// Validate by round-tripping through the typed fhir.* struct.
+			validated, err := validateThroughStruct(raw, fc.logger)
+			if err != nil {
+				warnMsg := err.Error()
+				fc.logger.Warn().
+					Err(err).
+					Str("resourceID", resourceID).
+					Str("resourceType", rootPath).
+					RawJSON("raw", rawJSON).
+					Msg("FHIR validation failed — resource skipped")
+				warningCounts[warnMsg]++
+				warningDetails[warnMsg] = append(warningDetails[warnMsg], resourceID)
+				continue
+			}
+
+			// Typed structs lack a ResourceType field — wrap so it appears first in JSON.
+			// Raw maps (unknown resource types) already carry "resourceType".
+			if _, isMap := validated.(map[string]interface{}); isMap {
+				result = append(result, validated)
+			} else {
+				result = append(result, fhirOutput{resourceType: rootPath, inner: validated})
+			}
 		}
+		fc.logger.Info().Int("resources", len(result)).Msg("Conversion completed")
 
-		raw, err := buildFHIRResource(resResult, rootPath)
-		if err != nil {
-			fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
-			continue
+		// Write warnings summary to a separate log file
+		if len(warningCounts) > 0 {
+			warnLogPath := "output/warnings.log"
+			var sb strings.Builder
+			sb.WriteString("Validation Warnings Summary\n==========================\n")
+			for msg, count := range warningCounts {
+				sb.WriteString(fmt.Sprintf("%d\tx: %s\n", count, msg))
+				sb.WriteString("  ResourceIDs: ")
+				sb.WriteString(strings.Join(warningDetails[msg], ", "))
+				sb.WriteString("\n\n")
+			}
+			_ = os.MkdirAll("output", 0755)
+			_ = os.WriteFile(warnLogPath, []byte(sb.String()), 0644)
+			fc.logger.Info().Str("file", warnLogPath).Msg("Wrote validation warnings summary")
 		}
-
-		// Debug logging: show the raw data structure before validation
-		rawJSON, _ := json.MarshalIndent(raw, "", "  ")
-		fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
-
-		// Validate by round-tripping through the typed fhir.* struct.
-		// This catches wrong codes, wrong types, and missing required fields.
-		validated, err := validateThroughStruct(raw, fc.logger)
-		if err != nil {
-			fc.logger.Warn().
-				Err(err).
-				Str("resourceID", resourceID).
-				Str("resourceType", rootPath).
-				RawJSON("raw", rawJSON).
-				Msg("FHIR validation failed — resource skipped")
-			continue
-		}
-
-		result = append(result, validated)
-	}
-	fc.logger.Info().Int("resources", len(result)).Msg("Conversion completed")
-	return result
+		return result
 }
 
 // splitStatements splits a SQL string on ";" into individual non-empty statements.
@@ -329,6 +417,24 @@ func ExportToNDJSON(resources []interface{}) ([]byte, error) {
 		}
 		out = append(out, b...)
 		out = append(out, '\n')
+	}
+	return out, nil
+}
+
+// ExportToPretty marshals resources to pretty-printed JSON blocks separated by
+// a blank line — not valid NDJSON, but easy to read for debugging purposes.
+func ExportToPretty(resources []interface{}) ([]byte, error) {
+	var out []byte
+	for i, r := range resources {
+		b, err := json.MarshalIndent(r, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b...)
+		out = append(out, '\n')
+		if i < len(resources)-1 {
+			out = append(out, '\n') // blank line between resources
+		}
 	}
 	return out, nil
 }

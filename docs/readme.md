@@ -146,3 +146,18 @@ sequenceDiagram
 ```
 
 This approach allows the code to correctly populate complex nested structures while maintaining the relationships between different levels of the hierarchy.
+
+```
+{
+  "resourceType": "Group",
+  "type": "person",
+  "actual": true,
+  "name": "Female patients >65",
+  "extension": [
+    {
+      "url": "http://example.org/fhir/StructureDefinition/group-query",
+      "valueString": "Patient?gender=female&birthdate=lt1960"
+    }
+  ]
+}
+```

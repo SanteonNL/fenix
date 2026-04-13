@@ -1,0 +1,3 @@
+encounter_id,type_id,type_text
+e001,et001,Outpatient visit
+e002,et002,Emergency visit

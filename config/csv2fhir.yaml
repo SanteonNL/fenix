@@ -17,8 +17,10 @@ fhir:
   # SQL-bestand met meerdere statements (gescheiden door ";")
   # Elke statement bevraagt de geladen CSV-tabellen in SQLite
   # Meerdere rijen met dezelfde fhir_path + parent_id worden een FHIR array
-  sqlFile: queries/hix/flat/patient_1.sql
+  sqlFile: queries/hix/flat/encounter.sql
+  profilesDir: profiles/sim
+  conceptMapsDir: config/conceptmaps/flat
 
 output:
   dir: output
-  format: ndjson   # json of ndjson
+  format: pretty   # json of ndjson

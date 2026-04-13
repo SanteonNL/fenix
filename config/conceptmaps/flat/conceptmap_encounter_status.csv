@@ -1,0 +1,5 @@
+system_source;code_source;display_source;system_target;code_target;display_target;target_validation;target_valueset_uri
+;DONE;;http://hl7.org/fhir/encounter-status;finished;Finished;Valid;http://hl7.org/fhir/ValueSet/encounter-status|4.0.1
+;ACTIVE;;http://hl7.org/fhir/encounter-status;in-progress;In Progress;Valid;http://hl7.org/fhir/ValueSet/encounter-status|4.0.1
+;PLANNED;;http://hl7.org/fhir/encounter-status;planned;Planned;Valid;http://hl7.org/fhir/ValueSet/encounter-status|4.0.1
+;*;;http://hl7.org/fhir/encounter-status;unknown;Unknown;Valid;http://hl7.org/fhir/ValueSet/encounter-status|4.0.1

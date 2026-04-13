@@ -1,0 +1,3 @@
+type_id,coding_id,coding_system,coding_code,coding_display
+et001,ec001,http://snomed.info/sct,11429006,Consultation
+et002,ec002,http://snomed.info/sct,50849002,Emergency room admission

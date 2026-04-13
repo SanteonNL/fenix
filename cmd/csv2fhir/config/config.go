@@ -37,7 +37,9 @@ type CSVConfig struct {
 }
 
 type FHIRConfig struct {
-	SQLFile string `yaml:"sqlFile"` // Path to multi-statement SQL conversion file
+	SQLFile        string `yaml:"sqlFile"`        // Path to multi-statement SQL conversion file
+	ProfilesDir    string `yaml:"profilesDir"`    // Directory with FHIR StructureDefinition .json files
+	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with flat CSV concept map files
 }
 
 type OutputConfig struct {

@@ -163,7 +163,25 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 		log.Fatal().Err(err).Str("file", resolvedSQLPath).Msg("Failed to read SQL file")
 	}
 
-	fhirConverter := converter.NewFHIRConverter(db, *log)
+	// Load FHIR profiles (StructureDefinitions) for valueset binding resolution
+	profileSvc := converter.NewProfileService(*log)
+	if cfg.FHIR.ProfilesDir != "" {
+		resolvedProfiles := resolvePath(repoRoot, cfg.FHIR.ProfilesDir)
+		if err := profileSvc.LoadDir(resolvedProfiles); err != nil {
+			log.Warn().Err(err).Str("dir", resolvedProfiles).Msg("Failed to load profiles")
+		}
+	}
+
+	// Load concept maps (flat CSV files indexed by target_valueset_uri)
+	conceptMapSvc := converter.NewConceptMapService(*log)
+	if cfg.FHIR.ConceptMapsDir != "" {
+		resolvedMaps := resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)
+		if err := conceptMapSvc.LoadDir(resolvedMaps); err != nil {
+			log.Warn().Err(err).Str("dir", resolvedMaps).Msg("Failed to load concept maps")
+		}
+	}
+
+	fhirConverter := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 
 	resources, err := fhirConverter.ConvertSQL(string(query))
 	if err != nil {
@@ -179,12 +197,19 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 	// Output file name derived from SQL file name
 	baseName := filepath.Base(resolvedSQLPath)
 	baseName = baseName[:len(baseName)-len(filepath.Ext(baseName))]
-	outputFile := filepath.Join(outputDir, baseName+"."+cfg.Output.Format)
+	ext := cfg.Output.Format
+	if ext == "pretty" {
+		ext = "json"
+	}
+	outputFile := filepath.Join(outputDir, baseName+"."+ext)
 
 	var data []byte
-	if cfg.Output.Format == "ndjson" {
+	switch cfg.Output.Format {
+	case "ndjson":
 		data, err = converter.ExportToNDJSON(resources)
-	} else {
+	case "pretty":
+		data, err = converter.ExportToPretty(resources)
+	default:
 		data, err = converter.ExportToJSON(resources)
 	}
 	if err != nil {
