@@ -146,70 +146,70 @@ func (fc *FHIRConverter) executeStatement(stmt string, n int, resources map[stri
 // Each resource is first built as a map, then validated by unmarshaling into the
 // matching fhir.* struct. Invalid resources are logged and skipped.
 func (fc *FHIRConverter) buildResources(resources map[string]ResourceResult, rootPaths map[string]string) []interface{} {
-		result := []interface{}{}
-		warningCounts := map[string]int{}
-		warningDetails := map[string][]string{} // resourceIDs per warning
-		for resourceID, resResult := range resources {
-			rootPath, ok := rootPaths[resourceID]
-			if !ok {
-				fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
-				continue
-			}
-
-			raw, err := buildFHIRResource(resResult, rootPath)
-			if err != nil {
-				fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
-				continue
-			}
-
-			// Debug logging: show the raw data structure before validation
-			rawJSON, _ := json.MarshalIndent(raw, "", "  ")
-			fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
-
-			// Apply concept mappings driven by FHIR profile bindings
-			applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
-
-			// Validate by round-tripping through the typed fhir.* struct.
-			validated, err := validateThroughStruct(raw, fc.logger)
-			if err != nil {
-				warnMsg := err.Error()
-				fc.logger.Warn().
-					Err(err).
-					Str("resourceID", resourceID).
-					Str("resourceType", rootPath).
-					RawJSON("raw", rawJSON).
-					Msg("FHIR validation failed — resource skipped")
-				warningCounts[warnMsg]++
-				warningDetails[warnMsg] = append(warningDetails[warnMsg], resourceID)
-				continue
-			}
-
-			// Typed structs lack a ResourceType field — wrap so it appears first in JSON.
-			// Raw maps (unknown resource types) already carry "resourceType".
-			if _, isMap := validated.(map[string]interface{}); isMap {
-				result = append(result, validated)
-			} else {
-				result = append(result, fhirOutput{resourceType: rootPath, inner: validated})
-			}
+	result := []interface{}{}
+	warningCounts := map[string]int{}
+	warningDetails := map[string][]string{} // resourceIDs per warning
+	for resourceID, resResult := range resources {
+		rootPath, ok := rootPaths[resourceID]
+		if !ok {
+			fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
+			continue
 		}
-		fc.logger.Info().Int("resources", len(result)).Msg("Conversion completed")
 
-		// Write warnings summary to a separate log file
-		if len(warningCounts) > 0 {
-			warnLogPath := "output/warnings.log"
-			var sb strings.Builder
-			sb.WriteString("Validation Warnings Summary\n==========================\n")
-			for msg, count := range warningCounts {
-				sb.WriteString(fmt.Sprintf("%d\tx: %s\n", count, msg))
-				sb.WriteString("  ResourceIDs: ")
-				sb.WriteString(strings.Join(warningDetails[msg], ", "))
-				sb.WriteString("\n\n")
-			}
-			_ = os.MkdirAll("output", 0755)
-			_ = os.WriteFile(warnLogPath, []byte(sb.String()), 0644)
-			fc.logger.Info().Str("file", warnLogPath).Msg("Wrote validation warnings summary")
+		raw, err := buildFHIRResource(resResult, rootPath)
+		if err != nil {
+			fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
+			continue
 		}
-		return result
+
+		// Debug logging: show the raw data structure before validation
+		rawJSON, _ := json.MarshalIndent(raw, "", "  ")
+		fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
+
+		// Apply concept mappings driven by FHIR profile bindings
+		applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
+
+		// Validate by round-tripping through the typed fhir.* struct.
+		validated, err := validateThroughStruct(raw, fc.logger)
+		if err != nil {
+			warnMsg := err.Error()
+			fc.logger.Warn().
+				Err(err).
+				Str("resourceID", resourceID).
+				Str("resourceType", rootPath).
+				RawJSON("raw", rawJSON).
+				Msg("FHIR validation failed — resource skipped")
+			warningCounts[warnMsg]++
+			warningDetails[warnMsg] = append(warningDetails[warnMsg], resourceID)
+			continue
+		}
+
+		// Typed structs lack a ResourceType field — wrap so it appears first in JSON.
+		// Raw maps (unknown resource types) already carry "resourceType".
+		if _, isMap := validated.(map[string]interface{}); isMap {
+			result = append(result, validated)
+		} else {
+			result = append(result, fhirOutput{resourceType: rootPath, inner: validated})
+		}
+	}
+	fc.logger.Info().Int("resources", len(result)).Msg("Conversion completed")
+
+	// Write warnings summary to a separate log file
+	if len(warningCounts) > 0 {
+		warnLogPath := "output/warnings.log"
+		var sb strings.Builder
+		sb.WriteString("Validation Warnings Summary\n==========================\n")
+		for msg, count := range warningCounts {
+			sb.WriteString(fmt.Sprintf("%d\tx: %s\n", count, msg))
+			sb.WriteString("  ResourceIDs: ")
+			sb.WriteString(strings.Join(warningDetails[msg], ", "))
+			sb.WriteString("\n\n")
+		}
+		_ = os.MkdirAll("output", 0755)
+		_ = os.WriteFile(warnLogPath, []byte(sb.String()), 0644)
+		fc.logger.Info().Str("file", warnLogPath).Msg("Wrote validation warnings summary")
+	}
+	return result
 }
 
 // splitStatements splits a SQL string on ";" into individual non-empty statements.
