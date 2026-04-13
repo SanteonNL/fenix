@@ -104,24 +104,9 @@ func coerceStringValue(obj map[string]interface{}, key, val string) {
 
 // normalizeNestedArrays recursively wraps scalar values in arrays where the FHIR struct expects arrays
 func normalizeNestedArrays(obj map[string]interface{}, typeName string) {
-	// Try to find the struct type
-	var t reflect.Type
-
-	// First try as a resource type
-	target, err := newFHIRResource(typeName)
-	if err == nil {
-		t = reflect.TypeOf(target)
-	} else {
-		// Try to find the type by looking it up from the FHIR models
-		t = findFHIRType(typeName)
-	}
-
-	if t == nil {
-		return // Unknown type, skip normalization
-	}
-
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+	t, ok := cachedFHIRType(typeName)
+	if !ok {
+		return
 	}
 
 	// For each field in the struct

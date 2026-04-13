@@ -7,10 +7,17 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
+
+// fhirTypeCache caches reflect.Type results keyed by FHIR resource/type name.
+// Reflection walks the struct field list every call — for 1000 resources with
+// 10 child nodes each that's 10 000 redundant walks on the same types.
+// The cache makes each type's reflection work happen exactly once.
+var fhirTypeCache sync.Map // string → reflect.Type
 
 // fhirOutput wraps a validated FHIR struct and ensures "resourceType" appears
 // as the first JSON field.
@@ -444,22 +451,38 @@ func ExportToJSON(resources []interface{}) ([]byte, error) {
 	return json.MarshalIndent(resources, "", "  ")
 }
 
+// cachedFHIRType returns the reflect.Type for a FHIR type name, using a
+// package-level cache so each type's struct fields are inspected only once.
+func cachedFHIRType(typeName string) (reflect.Type, bool) {
+	if v, ok := fhirTypeCache.Load(typeName); ok {
+		return v.(reflect.Type), true
+	}
+	target, err := newFHIRResource(typeName)
+	if err != nil {
+		// Unknown type — also try findFHIRType for complex sub-types (HumanName etc.)
+		t := findFHIRType(typeName)
+		if t == nil {
+			return nil, false
+		}
+		fhirTypeCache.Store(typeName, t)
+		return t, true
+	}
+	t := reflect.TypeOf(target)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	fhirTypeCache.Store(typeName, t)
+	return t, true
+}
+
 // getArrayFieldsForType inspects the FHIR struct and returns which fields are arrays
 // by looking at the struct definition and JSON tags
 func getArrayFieldsForType(resourceType string) map[string]bool {
 	arrayFields := make(map[string]bool)
 
-	// Get the struct type from validate.go's newFHIRResource
-	target, err := newFHIRResource(resourceType)
-	if err != nil {
-		// Unknown type - return empty map
+	t, ok := cachedFHIRType(resourceType)
+	if !ok {
 		return arrayFields
-	}
-
-	// Get the reflection type
-	t := reflect.TypeOf(target)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
 	}
 
 	// Iterate through struct fields
@@ -497,15 +520,9 @@ func getTypeNameFromPath(path string) string {
 	// Get the field name (last part)
 	fieldName := parts[len(parts)-1]
 
-	// Use reflection to find the actual type of this field
-	target, err := newFHIRResource(resourceType)
-	if err != nil {
+	t, ok := cachedFHIRType(resourceType)
+	if !ok {
 		return ""
-	}
-
-	t := reflect.TypeOf(target)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
 	}
 
 	// Find the struct field
@@ -602,16 +619,9 @@ func normalizeObjectArrayFields(obj map[string]interface{}, typeName string) {
 
 // getTypeNameForField returns the type of a field in a given struct
 func getTypeNameForField(structName, fieldName string) string {
-	target, err := newFHIRResource(structName)
-	if err != nil {
-		// Try to get it as a non-resource type using reflection
-		// This is a fallback for complex types like Address, HumanName, etc.
+	t, ok := cachedFHIRType(structName)
+	if !ok {
 		return ""
-	}
-
-	t := reflect.TypeOf(target)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
 	}
 
 	// Find the struct field by JSON tag
