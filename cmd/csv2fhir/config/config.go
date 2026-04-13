@@ -8,11 +8,24 @@ import (
 )
 
 type Config struct {
-	Environment string         `yaml:"environment"` // "dev" or "prod"
+	Environment string         `yaml:"environment"` // "dev" (colored output) or "prod" (JSON output)
+	LogLevel    string         `yaml:"logLevel"`    // trace, debug, info, warn, error — defaults to debug in dev, info in prod
 	Database    DatabaseConfig `yaml:"database"`
 	CSV         CSVConfig      `yaml:"csv"`
 	FHIR        FHIRConfig     `yaml:"fhir"`
 	Output      OutputConfig   `yaml:"output"`
+}
+
+// EffectiveLogLevel returns the log level to use, applying the smart default:
+// dev → debug, prod → info (unless explicitly overridden).
+func (c *Config) EffectiveLogLevel() string {
+	if c.LogLevel != "" {
+		return c.LogLevel
+	}
+	if c.Environment == "dev" {
+		return "debug"
+	}
+	return "info"
 }
 
 type DatabaseConfig struct {

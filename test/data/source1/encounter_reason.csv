@@ -1,0 +1,3 @@
+encounter_id,reason_id,reason_system,reason_code,reason_display
+e001,r001,http://snomed.info/sct,11840006,Routine checkup
+e002,r002,http://snomed.info/sct,267036007,Shortness of breath

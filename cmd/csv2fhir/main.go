@@ -52,12 +52,18 @@ func main() {
 		output := zerolog.ConsoleWriter{Out: os.Stderr}
 		output.TimeFormat = "15:04:05"
 		log = zerolog.New(output).With().Timestamp().Logger()
-		log.Info().Msg("🔧 Development mode enabled (colored output)")
 	} else {
 		// Production mode: JSON output
 		log = zerolog.New(os.Stderr).With().Timestamp().Logger()
-		log.Info().Msg("Production mode (JSON output)")
 	}
+
+	// Set global log level (dev defaults to debug, prod to info)
+	level, err := zerolog.ParseLevel(cfg.EffectiveLogLevel())
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
+	log.Info().Str("environment", cfg.Environment).Str("logLevel", level.String()).Msg("Logger initialized")
 
 	log.Info().Str("repoRoot", repoRoot).Msg("Repository root found")
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")

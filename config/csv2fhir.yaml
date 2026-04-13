@@ -1,6 +1,7 @@
 # CSV to FHIR Converter Configuration
 
 environment: dev  # dev (colored output) or prod (JSON output)
+logLevel: info   # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
 
 database:
   type: sqlite
