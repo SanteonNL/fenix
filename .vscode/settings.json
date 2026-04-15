@@ -22,8 +22,17 @@
     },
     "go.buildFlags": ["-v"],
     "terminal.integrated.env.windows": {
-        "CGO_ENABLED": "0"
+        "CGO_ENABLED": "0",
+        "PATH": "C:\\Users\\t.hetterscheid\\AppData\\Local\\Programs\\Quarto\\bin;C:\\Program Files\\R\\R-4.5.2\\bin;${env:PATH}"
     },
     "go.gopath": "C:/Users/t.hetterscheid/go",
-    "go.goroot": "C:/Program Files/Go"
+    "go.goroot": "C:/Program Files/Go",
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.parquet": "duckdb.dataFileViewer",
+        "*.csv": "duckdb.dataFileViewer",
+        "*.tsv": "duckdb.dataFileViewer",
+        "*.xlsx": "duckdb.dataFileViewer"
+    },
+    "r.lsp.promptToInstall": false
 }

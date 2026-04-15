@@ -27,7 +27,7 @@ COPY (
         } AS result
       FROM
         read_json_auto(
-          'C:\Users\t.hetterscheid\Repo\fenix/**/*Patient*.ndjson',
+          'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/**/*Patient*.ndjson',
           columns = {
             id: 'VARCHAR',
             gender: 'VARCHAR',
@@ -50,4 +50,4 @@ COPY (
     result.marital_status
   FROM
     transformed
-) TO 'C:\Users\t.hetterscheid\Repo\fenix/patient_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
+) TO 'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/patient_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);

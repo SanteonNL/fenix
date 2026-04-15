@@ -23,7 +23,7 @@ COPY (
         } AS result
       FROM
         read_json_auto(
-          'C:\Users\t.hetterscheid\Repo\fenix/**/*Encounter*.ndjson',
+          'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/**/*Encounter*.ndjson',
           columns = {
             id: 'VARCHAR',
             subject: 'STRUCT(reference VARCHAR)',
@@ -41,4 +41,4 @@ COPY (
     result.service_provider
   FROM
     transformed
-) TO 'C:\Users\t.hetterscheid\Repo\fenix/encounter_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
+) TO 'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/encounter_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);

@@ -40,7 +40,7 @@ COPY (
         } AS result
       FROM
         read_json_auto(
-          'C:\Users\t.hetterscheid\Repo\fenix/**/*Condition*.ndjson',
+          'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/**/*Condition*.ndjson',
           columns = {
             id: 'VARCHAR',
             subject: 'STRUCT(reference VARCHAR)',
@@ -70,4 +70,4 @@ COPY (
     transformed
     CROSS JOIN UNNEST(result.e_1) AS f_8 (e_1)
     CROSS JOIN UNNEST(result.e_2) AS f_11 (e_2)
-) TO 'C:\Users\t.hetterscheid\Repo\fenix/condition_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
+) TO 'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/condition_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);

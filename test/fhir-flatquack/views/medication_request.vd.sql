@@ -26,7 +26,7 @@ COPY (
         } AS result
       FROM
         read_json_auto(
-          'C:\Users\t.hetterscheid\Repo\fenix/**/*MedicationRequest*.ndjson',
+          'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/**/*MedicationRequest*.ndjson',
           columns = {
             id: 'VARCHAR',
             subject: 'STRUCT(reference VARCHAR)',
@@ -50,4 +50,4 @@ COPY (
     result.dosage_text
   FROM
     transformed
-) TO 'C:\Users\t.hetterscheid\Repo\fenix/medication_request_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
+) TO 'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/medication_request_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);

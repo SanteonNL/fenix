@@ -345,6 +345,118 @@ inner_join(
 
 ---
 
+## 7. Scopieën met voorafgaande calprotectinemeting
+
+Welk aandeel van de **scopieën** (NZA-codes 034620 / 034686 / 034690 / 035582) heeft een
+**calprotectinemeting** (LOINC 38445-3) gedaan in de N dagen ervóór?
+
+De R-chunk leest de scopieën en metingen uit de FHIR DuckDB, berekent voor elk venster
+van 1–90 dagen het aantal en percentage, en geeft dat door aan het OJS-dashboard.
+
+```{r scopie-window-prep}
+#| include: false
+library(purrr)
+
+NZA_CODES    <- c("034620", "034686", "034690", "035582")
+CALP_LOINC   <- "38445-3"
+MAX_VENSTER  <- 90L
+
+# ── Scopieën uit procedure_flat ───────────────────────────────────────────────
+scopieen <- tbl_fhir("procedure_flat") |>
+  filter(nza_code %in% NZA_CODES, status == "completed") |>
+  select(patient_ref, performed_date) |>
+  collect() |>
+  mutate(scope_date = as.Date(gsub('^"|"$', "", performed_date)))
+
+# ── Calprotectinemetingen uit observation_flat ────────────────────────────────
+calprotect <- tbl_fhir("observation_flat") |>
+  filter(loinc_code == CALP_LOINC) |>
+  select(patient_ref, effective_date, value) |>
+  collect() |>
+  mutate(meting_datum = as.Date(substr(effective_date, 1, 10)))
+
+# ── Pre-compute voor elk venster 1–MAX_VENSTER dagen ─────────────────────────
+gekoppeld <- inner_join(scopieen, calprotect, by = "patient_ref",
+                        relationship = "many-to-many")
+
+window_tbl <- map_dfr(seq_len(MAX_VENSTER), \(n) {
+  n_met <- gekoppeld |>
+    filter(meting_datum >= scope_date - n, meting_datum < scope_date) |>
+    distinct(patient_ref, scope_date) |>
+    nrow()
+
+  tibble(
+    venster_dagen = n,
+    n_met_meting  = n_met,
+    n_totaal      = nrow(scopieen),
+    pct           = round(n_met / nrow(scopieen) * 100, 1)
+  )
+})
+
+ojs_define(window_data = window_tbl)
+```
+
+```{ojs}
+//| echo: false
+data = transpose(window_data)
+
+viewof venster = Inputs.range([1, 90], {
+  value: 90,
+  step: 1,
+  label: "Tijdvenster vóór scopie (dagen)"
+})
+
+sel = data.find(d => d.venster_dagen === venster)
+
+md`Bij een venster van **${venster} dagen** hebben **${sel.n_met_meting}** van de \
+**${sel.n_totaal}** scopieën **(${sel.pct}%)** een calprotectinemeting in de voorafgaande periode.`
+
+Plot.plot({
+  width: 680,
+  height: 340,
+  marginLeft: 60,
+  x: { label: "Tijdvenster (dagen vóór scopie)", domain: [1, 90] },
+  y: {
+    label: "Scopieën met calprotectinemeting",
+    grid: true,
+    domain: [0, data[data.length - 1].n_totaal + 1]
+  },
+  marks: [
+    Plot.line(data, {
+      x: "venster_dagen",
+      y: "n_met_meting",
+      stroke: "#2166ac",
+      strokeWidth: 2.5,
+      curve: "step-after"
+    }),
+    Plot.ruleX([venster], { stroke: "#aaa", strokeDasharray: "5,4" }),
+    Plot.ruleY([sel.n_met_meting], {
+      x1: 1, x2: venster,
+      stroke: "#aaa",
+      strokeDasharray: "5,4"
+    }),
+    Plot.dot([sel], {
+      x: "venster_dagen",
+      y: "n_met_meting",
+      fill: "#d73027",
+      r: 7
+    }),
+    Plot.text([sel], {
+      x: "venster_dagen",
+      y: "n_met_meting",
+      text: d => `${d.n_met_meting}/${d.n_totaal} (${d.pct}%)`,
+      dx: 10,
+      dy: -8,
+      fill: "#d73027",
+      fontWeight: "bold",
+      fontSize: 13
+    })
+  ]
+})
+```
+
+---
+
 ## Pipeline Architecture
 
 ```

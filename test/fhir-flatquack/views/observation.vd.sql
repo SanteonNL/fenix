@@ -28,7 +28,7 @@ COPY (
         } AS result
       FROM
         read_json_auto(
-          'C:\Users\t.hetterscheid\Repo\fenix/**/*Observation*.ndjson',
+          'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/**/*Observation*.ndjson',
           columns = {
             id: 'VARCHAR',
             status: 'VARCHAR',
@@ -54,4 +54,4 @@ COPY (
     result.interpretation
   FROM
     transformed
-) TO 'C:\Users\t.hetterscheid\Repo\fenix/observation_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
+) TO 'C:\Users\t.hetterscheid\Repo\fenix\test\fhir-flatquack/observation_flat.csv' (FORMAT CSV, DELIMITER ',', HEADER);
