@@ -1,7 +1,7 @@
 # FENIX — annotations explained
 
 
-![FENIX architecture diagram](./architecture.drawio.png)
+![FENIX architecture diagram](images/architecture.drawio.png)
 
 ---
 

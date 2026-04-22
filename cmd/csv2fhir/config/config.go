@@ -51,13 +51,31 @@ type CSVConfig struct {
 
 type FHIRConfig struct {
 	SQLFile        string `yaml:"sqlFile"`        // Path to multi-statement SQL conversion file
+	Profile        string `yaml:"profile"`        // FHIR profile name or repo, e.g. "sim-on-fhir"
 	ProfilesDir    string `yaml:"profilesDir"`    // Directory with FHIR StructureDefinition .json files
 	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with flat CSV concept map files
 }
 
+// OutputConfig selects the output destination via Type ("local" or "datalake").
 type OutputConfig struct {
-	Dir    string `yaml:"dir"`
-	Format string `yaml:"format"` // json, xml, ndjson
+	Format   string            `yaml:"format"`             // json, ndjson, pretty
+	Type     string            `yaml:"type"`               // "local" (default) or "datalake"
+	Local    LocalOutputConfig `yaml:"local"`
+	DataLake *DataLakeConfig   `yaml:"datalake,omitempty"`
+}
+
+type LocalOutputConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+// DataLakeConfig configures a data gateway endpoint (e.g. dls-t.hips.santeon.nl).
+// Authentication uses a client certificate (mTLS or certificate-based OAuth2).
+type DataLakeConfig struct {
+	URL            string `yaml:"url"`            // data gateway base URL, e.g. dls-t.hips.santeon.nl
+	Path           string `yaml:"path"`           // target path inside the storage account
+	ClientID       string `yaml:"clientId"`       // client identifier for the endpoint
+	Certificate    string `yaml:"certificate"`    // path to certificate file (.pem or combined PEM)
+	CertificateKey string `yaml:"certificateKey"` // path to private key file (.pem), if separate
 }
 
 // LoadConfig loads configuration from a YAML file
@@ -78,7 +96,8 @@ func LoadConfig(filePath string) (*Config, error) {
 		},
 		Output: OutputConfig{
 			Format: "json",
-			Dir:    "output",
+			Type:   "local",
+			Local:  LocalOutputConfig{Dir: "output"},
 		},
 	}
 

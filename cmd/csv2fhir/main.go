@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"crypto/tls"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/config"
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
