@@ -15,15 +15,9 @@ GET {{base}}/Observation
     &_elements=id,code,value
 
 ### Request 4
- GET {{base}}/Group/GRP000111
+ GET {{base}}/Group
 
 ### Request 4
-GET {{base}}/Group/GRP000111/$export?_type=Person
+GET {{base}}/Group/CMS0334FHIRPCCesareanBirth/$export?_type=Person
 Prefer: respond-async
 Accept: application/fhir+json
-
-
-### r
-GET https://server.fire.ly/r4/$exportstatus?_id=174f29ef-deb4-42cb-801e-3f11f39d034c
-
-
