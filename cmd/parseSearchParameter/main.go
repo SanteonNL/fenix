@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 type Filter struct {

@@ -18,7 +18,7 @@ import (
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
 	"github.com/SanteonNL/fenix/cmd/fenix/processor"
 	"github.com/SanteonNL/fenix/cmd/fenix/types"
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )

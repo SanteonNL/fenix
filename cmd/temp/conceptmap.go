@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/SanteonNL/fenix/models/fhir" // for use of the conceptMap.go file
+	"github.com/SanteonNL/fenix/internal/models/fhir" // for use of the conceptMap.go file
 	"github.com/rs/zerolog"
 )
 

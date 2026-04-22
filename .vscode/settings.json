@@ -23,10 +23,10 @@
     "go.buildFlags": ["-v"],
     "terminal.integrated.env.windows": {
         "CGO_ENABLED": "0",
-        "PATH": "C:\\Users\\t.hetterscheid\\AppData\\Local\\Programs\\Quarto\\bin;C:\\Program Files\\R\\R-4.5.2\\bin;${env:PATH}"
+        "PATH": "C:\\Users\\t.hetterscheid\\AppData\\Local\\Programs\\Quarto\\bin;C:\\Program Files\\R\\R-4.5.2\\bin;C:\\Users\\t.hetterscheid\\sdk\\go1.25.4\\bin;${env:PATH}"
     },
     "go.gopath": "C:/Users/t.hetterscheid/go",
-    "go.goroot": "C:/Program Files/Go",
+    "go.goroot": "C:/Users/t.hetterscheid/sdk/go1.25.4",
     "workbench.editorAssociations": {
         "*.copilotmd": "vscode.markdown.preview.editor",
         "*.parquet": "duckdb.dataFileViewer",

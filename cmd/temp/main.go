@@ -14,7 +14,7 @@ import (
 	"github.com/SanteonNL/fenix/cmd/fenix/fhir/structuredefinition"
 	"github.com/SanteonNL/fenix/cmd/fenix/fhir/valueset"
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"

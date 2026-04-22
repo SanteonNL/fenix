@@ -2,7 +2,7 @@
 package processor
 
 import (
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 // Filter represents the basic filter input

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/rs/zerolog"
 )
 

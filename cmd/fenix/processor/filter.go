@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/SanteonNL/fenix/cmd/fenix/types"
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 func (p *ProcessorService) checkFilter(ctx context.Context, field reflect.Value, path string, searchType string, filter *types.Filter) (bool, error) {

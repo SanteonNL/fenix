@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 // Part 3: Filter System

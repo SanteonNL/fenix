@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/SanteonNL/fenix/util"
+	"github.com/SanteonNL/fenix/internal/util"
 	"github.com/jmoiron/sqlx"
 )
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/SanteonNL/fenix/cmd/fenix/types"
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/rs/zerolog"
 )
 
