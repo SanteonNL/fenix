@@ -1,5 +1,0 @@
-encounter_id,history_id,status,period_start,period_end
-e001,sh001,in-progress,2024-01-10T08:00:00,2024-01-10T11:45:00
-e001,sh002,DONE,2024-01-10T11:45:00,2024-01-10T12:00:00
-e002,sh003,in-progress,2024-02-15T09:00:00,2024-02-15T14:15:00
-e002,sh004,DONE,2024-02-15T14:15:00,2024-02-15T14:30:00

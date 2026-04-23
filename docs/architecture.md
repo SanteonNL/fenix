@@ -1,7 +1,7 @@
 # FENIX — annotations explained
 
 
-![FENIX architecture diagram](images/architecture.drawio.png)
+![FENIX architecture diagram](images/architecture_loading.drawio)
 
 ---
 
@@ -198,3 +198,102 @@ Governs *execution*. Required before every single run, regardless of frequency m
 > **Central approval** defines what is *allowed*.
 > **Local approval** decides what *actually runs*.
 > The hospital retains full control over when data leaves the EPD.
+
+---
+
+## ❸ Loading
+
+Loading is the step that pulls raw data from source systems into the
+**staging database**, where it becomes queryable SQL. Only after loading
+does the converter run its SQL-to-FHIR queries.
+
+![Loading layer diagram](images/architecture_loading.drawio)
+
+---
+
+### Layer 1 — Sources
+
+The origin systems: **Luscii**, **SIM**, **HIX**. These are external to FENIX
+and are never written to — they are read-only data suppliers.
+
+---
+
+### Layer 2 — Connectors
+
+How data leaves a source system:
+
+| Connector | Description |
+|---|---|
+| `API` | REST call to an external service (e.g. Luscii Vitals API) |
+| `Flat file` | CSV files on disk (e.g. SIM export) |
+| `Database` | Direct SQL connection to a source database |
+
+---
+
+### Layer 3 — Source (interface)
+
+Each connector maps to a `Source` implementation (`internal/source`).
+The `type:` field in config selects which implementation to use — this is a
+per-source choice, independent of environment.
+
+| Implementation | Config `type` | What it does |
+|---|---|---|
+| `LusciiSource` | `api` | Calls the live REST API; typed deserialisation per source |
+| `LocalSource` | `local` | Reads all files from `dir`; `.json` and `.csv` auto-detected by extension |
+
+**`LocalSource` is generic.** It handles both JSON (API-shaped) and CSV files from
+the same directory. Switching from live to local — or adding a new source like SIM —
+requires no new code, only a `dir` entry in config.
+
+```yaml
+sources:
+  luscii:
+    type: local                   # api | local — per source, not per environment
+    dir: "test/data/luscii"       # .json files → JSON parser; .csv files → CSV parser
+
+  hix_patients:                   # flat file source — same type, different format
+    type: local
+    dir: "data/hix"
+    delimiter: ";"
+
+  luscii_live:                    # switch one source to live API without touching others
+    type: api
+    base_url: "https://vitalsapi.luscii.com"
+    api_key: ""
+```
+
+Adding a new API source requires one Go file implementing the `Source` interface
+and one `case` in `buildSource()`.
+
+---
+
+### Layer 4 — Staging database
+
+All loaders write into a shared **staging database** (SQLite by default).
+The staging database is a transient, per-run store — it exists only to make
+raw source data queryable by the converter's SQL files.
+
+| Config | Behaviour |
+|---|---|
+| `path: ""` *(default)* | In-memory SQLite — fast, no file written, lost after the run |
+| `path: output/staging.db` | Persisted SQLite — survives the run, useful for debugging SQL queries |
+| `type: postgres` | PostgreSQL — for shared or production staging environments |
+
+```yaml
+database:
+  type: sqlite
+  # path: ""                    # default: in-memory
+  # path: output/staging.db     # persist for debugging
+```
+
+---
+
+### Layer 5 — Converter
+
+After loading, the converter reads `.sql` files from `queries/<sourceName>/`
+and executes each against the staging database. Each SELECT produces rows
+that are assembled into FHIR resources (see the SQL format in the help output).
+
+The **no-transformation path** (FHIR JSON connector) bypasses the staging
+database entirely — data that is already valid FHIR JSON is passed through
+directly.

@@ -1,27 +1,36 @@
 # CSV to FHIR Converter Configuration
 
-environment: dev  # dev (colored output) or prod (JSON output)
-logLevel: info   # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
+environment: dev  # dev (colored console output) | prod (JSON output)
+logLevel: info    # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
 
-database:
-  type: sqlite
-  path: data/csv2fhir.db
-  # driver: sqlite    # pure Go, geen CGO — standaard (modernc.org/sqlite)
-  # driver: sqlite3   # CGO-gebaseerd, vereist GCC/MinGW (github.com/mattn/go-sqlite3)
-
-csv:
-  inputDir: test/data/source1   # map met CSV-bestanden; bestandsnaam = tabelnaam
-  delimiter: ","
-  hasHeader: true
+staging:
+  database: sqlite        # sqlite (default) | postgres
+  path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
+  # path: data/staging.db # persist to file — useful for debugging SQL queries after a run
+  # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
+  # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
+  # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
 
 fhir:
-  # SQL-bestand met meerdere statements (gescheiden door ";")
-  # Elke statement bevraagt de geladen CSV-tabellen in SQLite
-  # Meerdere rijen met dezelfde fhir_path + parent_id worden een FHIR array
-  sqlFile: queries/hix/flat/encounter.sql
+  sqlFile: ""
   profilesDir: profiles/sim
   conceptMapsDir: config/conceptmaps/flat
 
 output:
-  dir: output
-  format: pretty   # json of ndjson
+  format: pretty          # json | ndjson | pretty
+  type: local
+  local:
+    dir: output
+
+sources:
+  luscii:
+    type: local                   # local | api — per source, independent of environment
+    dir: "test/data/luscii"       # local: directory with .json or .csv files
+    # type: api                   # switch to live API:
+    # base_url: "https://vitalsapi.luscii.com"
+    # api_key: ""                 # set via environment variable or secrets manager in production
+
+  sim:
+    type: local
+    dir: "test/data/sim"
+    delimiter: ";"

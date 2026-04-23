@@ -1,6 +1,0 @@
-patient_id,identifier_id,id_use,id_system,id_value
-p001,p001-i1,official,http://fhir.nl/fhir/NamingSystem/bsn,123456789
-p001,p001-i2,usual,http://hospital.nl/fhir/NamingSystem/pid,MST-p001
-p002,p002-i1,official,http://fhir.nl/fhir/NamingSystem/bsn,987654321
-p002,p002-i2,usual,http://hospital.nl/fhir/NamingSystem/pid,MST-p002
-p003,p003-i1,official,http://fhir.nl/fhir/NamingSystem/bsn,112233445

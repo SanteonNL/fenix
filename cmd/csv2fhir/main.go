@@ -1,18 +1,18 @@
 package main
 
 import (
-	"bytes"
-	"crypto/tls"
+	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/config"
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/loader"
+	"github.com/SanteonNL/fenix/internal/source"
+	_ "github.com/SanteonNL/fenix/internal/source/local"
+	_ "github.com/SanteonNL/fenix/internal/source/luscii"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 	_ "modernc.org/sqlite"
@@ -72,19 +72,22 @@ func main() {
 	log.Info().Str("repoRoot", repoRoot).Msg("Repository root found")
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
 
-	db, err := initializeDatabase(cfg, repoRoot, &log)
+	db, err := initializeStagingDatabase(cfg, repoRoot, &log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize database")
 	}
 	defer db.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	switch *command {
 	case "load":
-		loadCSVFiles(db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 	case "convert":
 		convertToFHIR(db, cfg, repoRoot, &log)
 	case "all":
-		loadCSVFiles(db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 		convertToFHIR(db, cfg, repoRoot, &log)
 	default:
 		log.Fatal().Str("command", *command).Msg("Unknown command")
@@ -93,26 +96,28 @@ func main() {
 	log.Info().Msg("Process completed successfully")
 }
 
-func initializeDatabase(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*sqlx.DB, error) {
-	switch cfg.Database.Type {
-	case "sqlite":
-		dbPath := resolvePath(repoRoot, cfg.Database.Path)
-		dbDir := filepath.Dir(dbPath)
-		if dbDir != "." && dbDir != "" {
-			if err := os.MkdirAll(dbDir, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create database directory: %w", err)
+func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*sqlx.DB, error) {
+	switch cfg.Staging.Database {
+	case "sqlite", "":
+		dbPath := cfg.Staging.StagingPath()
+		if dbPath != ":memory:" {
+			dbPath = resolvePath(repoRoot, dbPath)
+			if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return nil, fmt.Errorf("failed to create database directory: %w", err)
+				}
 			}
 		}
-		driver := cfg.Database.SQLiteDriver() // "sqlite" (pure Go) of "sqlite3" (CGO)
+		driver := cfg.Staging.SQLiteDriver()
 		db, err := sqlx.Connect(driver, dbPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to SQLite (driver=%s): %w", driver, err)
 		}
-		log.Info().Str("path", dbPath).Str("driver", driver).Msg("Connected to SQLite")
+		log.Info().Str("path", dbPath).Str("driver", driver).Msg("Connected to staging database")
 		return db, nil
 
 	case "postgres":
-		db, err := sqlx.Connect("postgres", cfg.Database.Connection)
+		db, err := sqlx.Connect("postgres", cfg.Staging.Connection)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 		}
@@ -120,98 +125,107 @@ func initializeDatabase(cfg *config.Config, repoRoot string, log *zerolog.Logger
 		return db, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported database type: %s", cfg.Database.Type)
-	}
-}
-
-func loadCSVFiles(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
-	if cfg.CSV.InputDir == "" {
-		log.Warn().Msg("CSV input directory not configured")
-		return
-	}
-
-	inputDir := resolvePath(repoRoot, cfg.CSV.InputDir)
-	loaderConfig := loader.LoaderConfig{
-		InputDir:  inputDir,
-		Delimiter: rune(cfg.CSV.Delimiter[0]),
-		HasHeader: cfg.CSV.HasHeader,
-	}
-	csvLoader := loader.NewCSVLoader(db, loaderConfig, *log)
-
-	if *csvFile != "" {
-		tableName := filepath.Base(*csvFile)
-		tableName = tableName[:len(tableName)-len(filepath.Ext(tableName))]
-		if err := csvLoader.LoadCSVFile(*csvFile, tableName); err != nil {
-			log.Error().Err(err).Msg("Failed to load CSV file")
-		}
-	} else {
-		if err := csvLoader.LoadAllCSVFiles(); err != nil {
-			log.Error().Err(err).Msg("Failed to load CSV files")
-		}
-	}
-
-	if tables, err := csvLoader.GetTables(); err == nil {
-		log.Info().Strs("tables", tables).Msg("Loaded tables")
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Staging.Database)
 	}
 }
 
 func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
-	// Determine which SQL file to use: flag overrides config
 	sqlPath := *sqlFile
 	if sqlPath == "" {
 		sqlPath = cfg.FHIR.SQLFile
 	}
 	if sqlPath == "" {
-		log.Fatal().Msg("No SQL file configured. Set fhir.sqlFile in config or pass -sql flag.")
+		log.Debug().Msg("No fhir.sqlFile configured, skipping generic FHIR conversion")
+		return
+	}
+	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, log)
+}
+
+// loadSources iterates all configured sources, loads each into the staging
+// database, then runs FHIR conversion for every SQL file found in
+// queries/<sourceName>/.
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	for name, sc := range cfg.Sources {
+		src := buildSource(name, sc, repoRoot, *log)
+		if err := src.Load(ctx, db); err != nil {
+			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
+			continue
+		}
+
+		queriesDir := resolvePath(repoRoot, "queries/"+name)
+		entries, err := os.ReadDir(queriesDir)
+		if err != nil {
+			log.Warn().Str("dir", queriesDir).Msg("No query directory found, skipping FHIR conversion")
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+				continue
+			}
+			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, log)
+		}
+	}
+}
+
+// buildSource constructs the Source implementation for the given config entry using the registry.
+// Converts the SourceConfig struct to a map and uses the registry to instantiate the source by type.
+func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerolog.Logger) source.Source {
+	// Convert SourceConfig to map for generic registry use
+	configMap := map[string]interface{}{
+		"type":      sc.Type,
+		"base_url":  sc.BaseURL,
+		"api_key":   sc.APIKey,
+		"dir":       resolvePath(repoRoot, sc.Dir),
+		"delimiter": sc.Delimiter,
 	}
 
-	resolvedSQLPath := resolvePath(repoRoot, sqlPath)
-	log.Info().Str("sql", resolvedSQLPath).Msg("Starting FHIR conversion")
-
-	query, err := os.ReadFile(resolvedSQLPath)
+	src, err := source.Build(sc.Type, name, configMap, log)
 	if err != nil {
-		log.Fatal().Err(err).Str("file", resolvedSQLPath).Msg("Failed to read SQL file")
+		log.Fatal().Err(err).Str("source", name).Msg("Failed to build source")
+	}
+	return src
+}
+
+// runFHIRConversion executes one SQL file against the database and writes FHIR output.
+func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, log *zerolog.Logger) {
+	log.Info().Str("sql", sqlPath).Msg("Starting FHIR conversion")
+
+	query, err := os.ReadFile(sqlPath)
+	if err != nil {
+		log.Error().Err(err).Str("file", sqlPath).Msg("Failed to read SQL file")
+		return
 	}
 
-	// Load FHIR profiles (StructureDefinitions) for valueset binding resolution
 	profileSvc := converter.NewProfileService(*log)
 	if cfg.FHIR.ProfilesDir != "" {
-		resolvedProfiles := resolvePath(repoRoot, cfg.FHIR.ProfilesDir)
-		if err := profileSvc.LoadDir(resolvedProfiles); err != nil {
-			log.Warn().Err(err).Str("dir", resolvedProfiles).Msg("Failed to load profiles")
+		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load profiles")
 		}
 	}
 
-	// Load concept maps (flat CSV files indexed by target_valueset_uri)
 	conceptMapSvc := converter.NewConceptMapService(*log)
 	if cfg.FHIR.ConceptMapsDir != "" {
-		resolvedMaps := resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)
-		if err := conceptMapSvc.LoadDir(resolvedMaps); err != nil {
-			log.Warn().Err(err).Str("dir", resolvedMaps).Msg("Failed to load concept maps")
+		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load concept maps")
 		}
 	}
 
-	fhirConverter := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
-
-	resources, err := fhirConverter.ConvertSQL(string(query))
+	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(string(query))
 	if err != nil {
 		log.Error().Err(err).Msg("Conversion failed")
 		return
 	}
 
-	outputDir := resolvePath(repoRoot, cfg.Output.Dir)
+	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		log.Fatal().Err(err).Msg("Failed to create output directory")
 	}
 
-	// Output file name derived from SQL file name
-	baseName := filepath.Base(resolvedSQLPath)
-	baseName = baseName[:len(baseName)-len(filepath.Ext(baseName))]
+	baseName := strings.TrimSuffix(filepath.Base(sqlPath), ".sql")
 	ext := cfg.Output.Format
 	if ext == "pretty" {
 		ext = "json"
 	}
-	outputFile := filepath.Join(outputDir, baseName+"."+ext)
 
 	var data []byte
 	switch cfg.Output.Format {
@@ -227,11 +241,11 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 		return
 	}
 
+	outputFile := filepath.Join(outputDir, baseName+"."+ext)
 	if err := os.WriteFile(outputFile, data, 0644); err != nil {
 		log.Error().Err(err).Str("file", outputFile).Msg("Failed to write output file")
 		return
 	}
-
 	log.Info().Str("file", outputFile).Int("resources", len(resources)).Msg("FHIR resources exported")
 }
 
@@ -286,8 +300,7 @@ Configuration (csv2fhir.yaml):
     sqlFile: queries/hix/flat/patient_1.sql
   output:
     dir: output
-    format: ndjson
-`)
+    format: ndjson`)
 }
 
 // findRepoRoot finds the fenix repository root by looking for go.mod
@@ -313,7 +326,7 @@ func findRepoRoot() (string, error) {
 	if err == nil {
 		// Start from executable directory
 		current := filepath.Dir(ex)
-		for i := 0; i < 5; i++ { // Search up 5 levels
+		for range 5 { // Search up 5 levels
 			if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
 				return current, nil
 			}

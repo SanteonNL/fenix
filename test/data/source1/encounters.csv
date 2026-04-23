@@ -1,3 +1,0 @@
-encounter_id,patient_id,status,start_time,end_time,service_provider
-e001,p001,finished,2024-01-10T08:00:00,2024-01-10T12:00:00,MST Hospital
-e002,p002,finished,2024-02-15T09:00:00,2024-02-15T14:30:00,MST Hospital
