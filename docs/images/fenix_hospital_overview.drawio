@@ -1,0 +1,137 @@
+<mxfile host="app.diagrams.net" version="21.0.0">
+  <diagram name="FENIX Hospital Overview" id="fenix-hospital-overview">
+    <mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1200" pageHeight="700" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- White background layer (keeps diagram readable on dark themes) -->
+        <mxCell id="bg" value=""
+          style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=none;"
+          vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1200" height="700" as="geometry" />
+        </mxCell>
+
+        <!-- Hospital boundary -->
+        <mxCell id="hospital" value="&lt;b style='font-size:15px'&gt;Ziekenhuis&lt;/b&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;dashed=1;dashPattern=10 5;verticalAlign=top;spacingTop=12;fontSize=15;fontStyle=1;align=left;spacingLeft=16;"
+          vertex="1" parent="1">
+          <mxGeometry x="280" y="30" width="710" height="590" as="geometry" />
+        </mxCell>
+
+        <!-- FENIX node -->
+        <mxCell id="fenix" value="&lt;b style='font-size:16px'&gt;FENIX&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:11px;font-weight:normal'&gt;FHIR Facade · Converter&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1565C0;strokeColor=#0D47A1;fontColor=#ffffff;fontSize=13;strokeWidth=2;shadow=1;"
+          vertex="1" parent="1">
+          <mxGeometry x="370" y="255" width="210" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Hospital Approval Service -->
+        <mxCell id="approval" value="&lt;b&gt;Hospital Approval Service&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Goedkeuring voor elke export&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="370" y="450" width="210" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: FENIX -> Approval (dashed, approval gate) -->
+        <mxCell id="arr-approval" value=""
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;dashed=1;dashPattern=6 3;strokeWidth=1.5;endArrow=open;endFill=0;"
+          edge="1" source="fenix" target="approval" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Source: EPD / HIX -->
+        <mxCell id="src-epd" value="&lt;b&gt;EPD / HIX&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Patientdossier (database)&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="800" y="110" width="155" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Source: Luscii -->
+        <mxCell id="src-luscii" value="&lt;b&gt;Luscii&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Vitals monitoring (REST API)&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="800" y="270" width="155" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Source: SIM -->
+        <mxCell id="src-sim" value="&lt;b&gt;SIM&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Registraties (flat file / CSV)&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="800" y="430" width="155" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: FENIX -> EPD (SQL) -->
+        <mxCell id="arr-epd" value="SQL"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#555555;fontSize=10;fontStyle=1;endArrow=block;endFill=1;startArrow=block;startFill=0;"
+          edge="1" source="fenix" target="src-epd" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: FENIX <-> Luscii (REST API) -->
+        <mxCell id="arr-luscii" value="REST API"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#555555;fontSize=10;fontStyle=1;endArrow=block;endFill=1;startArrow=block;startFill=0;"
+          edge="1" source="fenix" target="src-luscii" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: FENIX -> SIM (flat file) -->
+        <mxCell id="arr-sim" value="Flat file / CSV"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#555555;fontSize=10;fontStyle=1;endArrow=block;endFill=1;startArrow=block;startFill=0;"
+          edge="1" source="fenix" target="src-sim" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- External: HIPS Platform (primary) -->
+        <mxCell id="hips" value="&lt;b style='font-size:13px'&gt;HIPS Platform&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Health Information&lt;br/&gt;Platform Services&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;strokeWidth=2;shadow=1;"
+          vertex="1" parent="1">
+          <mxGeometry x="30" y="150" width="185" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- External: Research Platform -->
+        <mxCell id="research" value="&lt;b&gt;Research Platform&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Wetenschappelijk onderzoek&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3cd;strokeColor=#d4a017;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="30" y="305" width="185" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- External: Kwaliteitsregister -->
+        <mxCell id="quality" value="&lt;b&gt;Kwaliteitsregister&lt;/b&gt;&lt;br/&gt;&lt;font style='font-size:10px'&gt;Landelijke registraties&lt;/font&gt;"
+          style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff3cd;strokeColor=#d4a017;fontSize=11;strokeWidth=1.5;"
+          vertex="1" parent="1">
+          <mxGeometry x="30" y="440" width="185" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: HIPS <-> FENIX -->
+        <mxCell id="arr-hips" value="FHIR over HTTP"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;strokeColor=#1565C0;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#1565C0;endArrow=block;endFill=1;startArrow=block;startFill=1;"
+          edge="1" source="hips" target="fenix" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Research <-> FENIX -->
+        <mxCell id="arr-research" value="FHIR over HTTP"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#1565C0;strokeWidth=1.5;fontSize=10;fontColor=#1565C0;endArrow=block;endFill=1;startArrow=block;startFill=1;"
+          edge="1" source="research" target="fenix" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Quality <-> FENIX -->
+        <mxCell id="arr-quality" value="FHIR over HTTP"
+          style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;strokeColor=#1565C0;strokeWidth=1.5;fontSize=10;fontColor=#1565C0;endArrow=block;endFill=1;startArrow=block;startFill=1;"
+          edge="1" source="quality" target="fenix" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Legend box -->
+        <mxCell id="legend" value="&lt;b&gt;Legenda&lt;/b&gt;&lt;br/&gt;- - &lt;font color='#d6b656'&gt;Goedkeuring vereist&lt;/font&gt;&lt;br/&gt;--&gt; &lt;font color='#1565C0'&gt;FHIR request / response&lt;/font&gt;&lt;br/&gt;--&gt; &lt;font color='#555555'&gt;Interne databron query&lt;/font&gt;"
+          style="text;html=1;strokeColor=#cccccc;fillColor=#ffffff;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;rounded=1;fontSize=11;whiteSpace=wrap;"
+          vertex="1" parent="1">
+          <mxGeometry x="30" y="30" width="215" height="90" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

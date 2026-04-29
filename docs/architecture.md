@@ -1,7 +1,500 @@
+# What is FENIX?
+
+**FENIX** stands for **FHIR ENabled Node for Information Exchange**.
+
+It is a FHIR facade: an application deployed inside the hospital that presents itself as a FHIR server to the outside world. Internally, FENIX translates requests into queries against the hospital's source systems (EPD, flat files, APIs), converts the results into FHIR resources, and returns them via standard FHIR operations.
+
+The primary goal of FENIX is to enable secure, controlled data sharing with **HIPS** (Health Information Platform Services), but the same facade can serve any FHIR-compatible consumer — research platforms, quality registries, or other hospital systems.
+
+Key characteristics:
+
+- The hospital retains full data sovereignty — no data is pushed without explicit approval.
+- FENIX speaks FHIR outward but connects to non-FHIR source systems inward.
+- A dataset export request (YAML + generated FHIR resources) is the unit of governance: it defines what data may be shared, with whom, and how often.
+
+
+
+![FENIX hospital overview](images/fenix_hospital_overview.drawio.png)
+
+---
+
+### What does a FHIR request look like?
+
+A FHIR request is a plain HTTP GET to a well-known URL. The server returns JSON. No proprietary protocol, no special client — a browser or `curl` is enough.
+
+**Example: search for female patients born after 1980**
+
+```
+GET /fhir/Patient?gender=female&birthdate=gt1980-01-01
+Accept: application/fhir+json
+```
+
+The server responds with a **Bundle** — a JSON envelope that wraps one or more matching resources:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "searchset",
+  "total": 2,
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "p-1042",
+        "name": [
+          {
+            "family": "De Vries",
+            "given": ["Anna"]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1985-03-22",
+        "identifier": [
+          {
+            "system": "https://ziekenhuis.nl/patientnummer",
+            "value": "10042"
+          },
+          {
+            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
+            "value": "123456789"
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "p-2187",
+        "name": [
+          {
+            "family": "Janssen",
+            "given": ["Sophie"]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1991-07-08",
+        "identifier": [
+          {
+            "system": "https://ziekenhuis.nl/patientnummer",
+            "value": "21087"
+          },
+          {
+            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
+            "value": "987654321"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Every field has a fixed meaning defined by the FHIR standard — `birthDate`, `gender`, `identifier`, and so on are the same across every FHIR server in the world. That is what makes FHIR useful for data exchange: both sides speak the same language without custom mapping.
+
+FENIX receives this kind of request, translates the filters into queries against the hospital's source systems, and returns the result in exactly this format.
+
+---
+
+### What is a FHIR profile?
+
+The base FHIR standard defines resources like [`Patient`](https://hl7.org/fhir/patient.html) with almost everything optional — it has to, because hospitals worldwide have different requirements. A **profile** is a `StructureDefinition` that constrains a base resource to fit a specific context: it can make fields required, prohibit fields that don't apply, or restrict which values are allowed.
+
+Profiles stack. You start from the international base, derive a national profile, and then derive a hospital-specific profile from that.
+
+```
+hl7.org/fhir/Patient          ← international base (everything optional)
+        │
+        └── nl-core-Patient   ← Dutch national profile (BSN required, Dutch extensions)
+                │
+                └── ZiekenhuisPatient  ← hospital profile (further restrictions)
+```
+
+Each step only describes what *changes* from the parent — this is called the **differential**.
+
+---
+
+#### Example — base Patient StructureDefinition (international)
+
+The base `StructureDefinition` for Patient defines the rules: cardinality (`min`/`max`) and, where applicable, which codes are allowed and how strictly. Below are a few representative fields — the full definition has ~30 elements.
+
+```json
+{
+  "resourceType": "StructureDefinition",
+  "url": "http://hl7.org/fhir/StructureDefinition/Patient",
+  "name": "Patient",
+  "differential": {
+    "element": [
+      {
+        "id": "Patient.identifier",
+        "path": "Patient.identifier",
+        "min": 0,
+        "max": "*"
+      },
+      {
+        "id": "Patient.gender",
+        "path": "Patient.gender",
+        "min": 0,
+        "max": "1",
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://hl7.org/fhir/ValueSet/administrative-gender"
+        }
+      },
+      {
+        "id": "Patient.birthDate",
+        "path": "Patient.birthDate",
+        "min": 0,
+        "max": "1"
+      },
+      {
+        "id": "Patient.maritalStatus",
+        "path": "Patient.maritalStatus",
+        "min": 0,
+        "max": "1",
+        "binding": {
+          "strength": "extensible",
+          "valueSet": "http://hl7.org/fhir/ValueSet/marital-status"
+        }
+      },
+      {
+        "id": "Patient.communication.language",
+        "path": "Patient.communication.language",
+        "min": 1,
+        "max": "1",
+        "binding": {
+          "strength": "preferred",
+          "valueSet": "http://hl7.org/fhir/ValueSet/languages"
+        }
+      }
+    ]
+  }
+}
+```
+
+Key observations that explain the profiling choices below:
+- `identifier` is `0..*` — the national profile can safely raise it to `1..*`.
+- `gender` is already `required`-bound — a profile **cannot** override it with a different ValueSet.
+- `maritalStatus` is `extensible` — a profile can tighten or prohibit it.
+- `communication.language` is only `preferred` — a profile can tighten it to `required` with a custom ValueSet.
+
+---
+
+#### Deriving a national profile — making a field required
+
+The Dutch **nl-core-Patient** profile extends the base and requires every patient to have a BSN (burgerservicenummer). The `differential` below is the only thing the profile needs to declare — everything else is inherited from the base.
+
+```json
+{
+  "resourceType": "StructureDefinition",
+  "url": "http://nictiz.nl/fhir/StructureDefinition/nl-core-Patient",
+  "name": "NlCorePatient",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/Patient",
+  "differential": {
+    "element": [
+      {
+        "id": "Patient.identifier",
+        "path": "Patient.identifier",
+        "min": 1
+      },
+      {
+        "id": "Patient.identifier:bsn",
+        "path": "Patient.identifier",
+        "sliceName": "bsn",
+        "min": 1,
+        "max": "1",
+        "comment": "BSN is mandatory under Dutch law (WGBO).",
+        "type": [{ "code": "Identifier" }]
+      }
+    ]
+  }
+}
+```
+
+`min: 1` means the field is now **required**. A Patient resource that does not include a BSN identifier fails validation against this profile.
+
+---
+
+#### Deriving a hospital profile — prohibiting a field and changing a binding
+
+The hospital extends **nl-core-Patient** further. Two changes:
+
+1. `maritalStatus` is never collected here — **prohibit** it (`max: "0"`) so it cannot accidentally be sent.
+2. `communication.language` is `preferred`-bound in the base (any language code is allowed). The hospital tightens this to `required` with a local ValueSet that only contains the languages actually supported in the system.
+
+```json
+{
+  "resourceType": "StructureDefinition",
+  "url": "https://ziekenhuis.nl/fhir/StructureDefinition/ZiekenhuisPatient",
+  "name": "ZiekenhuisPatient",
+  "baseDefinition": "http://nictiz.nl/fhir/StructureDefinition/nl-core-Patient",
+  "differential": {
+    "element": [
+      {
+        "id": "Patient.maritalStatus",
+        "path": "Patient.maritalStatus",
+        "max": "0",
+        "comment": "Not collected; prohibited to prevent accidental disclosure."
+      },
+      {
+        "id": "Patient.communication.language",
+        "path": "Patient.communication.language",
+        "binding": {
+          "strength": "required",
+          "valueSet": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
+          "description": "Only nl-NL, en-GB and de-DE are registered in the EPD."
+        }
+      }
+    ]
+  }
+}
+```
+
+| Change | How | Effect |
+|---|---|---|
+| Make field required | `min: 1` | Validation fails if the field is absent |
+| Prohibit field | `max: "0"` | Validation fails if the field is present |
+| Restrict binding | `binding.strength: "required"` + custom `valueSet` | Only codes from that ValueSet are accepted |
+
+Binding strengths go from loose to strict: `example` → `preferred` → `extensible` → `required`. A profile can only tighten a binding, never loosen it.
+
+---
+
+### How does a ConceptMap connect hospital codes to profile codes?
+
+The profile says *which* codes are valid (via the `valueSet` URI in the binding). It does not say how to get there from whatever codes the hospital's source system uses internally. That translation is the job of a **ConceptMap**.
+
+```
+EPD source data          ConceptMap               FHIR output
+──────────────           ──────────────────────   ──────────────────────────────
+"NL"           ───────►  "NL" → "nl-NL"  ───────► "nl-NL"  ✓ valid per profile
+"EN"           ───────►  "EN" → "en-GB"  ───────► "en-GB"  ✓ valid per profile
+"DU"           ───────►  no mapping       ───────► error: unmapped source code
+```
+
+The link between profile and ConceptMap is the **ValueSet URI**:
+- The profile binding points to a ValueSet: `https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages`
+- The ConceptMap declares the same URI as its `targetScope`
+- FENIX resolves: *"this field requires codes from ValueSet X — find the ConceptMap whose targetScope is X and apply it"*
+
+---
+
+#### Step 1 — the ValueSet (target codes)
+
+The ValueSet lists which codes are valid in the output. This is what the profile binding references.
+
+```json
+{
+  "resourceType": "ValueSet",
+  "url": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
+  "name": "SupportedLanguages",
+  "compose": {
+    "include": [
+      {
+        "system": "urn:ietf:bcp:47",
+        "concept": [
+          { "code": "nl-NL", "display": "Dutch (Netherlands)" },
+          { "code": "en-GB", "display": "English (United Kingdom)" },
+          { "code": "de-DE", "display": "German (Germany)" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+---
+
+#### Step 2 — the ConceptMap (the translation rules)
+
+The ConceptMap maps from the EPD's internal codes (source system) to the standard BCP-47 codes that the ValueSet expects (target system). The `targetScope` matches the ValueSet URI in the profile binding — this is what ties them together.
+
+```json
+{
+  "resourceType": "ConceptMap",
+  "url": "https://ziekenhuis.nl/fhir/ConceptMap/EpdTaalNaarBcp47",
+  "name": "EpdTaalNaarBcp47",
+  "sourceScope": "https://ziekenhuis.nl/fhir/ValueSet/EpdTaalcodes",
+  "targetScope": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
+  "group": [
+    {
+      "source": "https://ziekenhuis.nl/fhir/CodeSystem/EpdTaalcodes",
+      "target": "urn:ietf:bcp:47",
+      "element": [
+        {
+          "code": "NL",
+          "display": "Nederlands",
+          "target": [
+            {
+              "code": "nl-NL",
+              "display": "Dutch (Netherlands)",
+              "relationship": "equivalent"
+            }
+          ]
+        },
+        {
+          "code": "EN",
+          "display": "Engels",
+          "target": [
+            {
+              "code": "en-GB",
+              "display": "English (United Kingdom)",
+              "relationship": "equivalent"
+            }
+          ]
+        },
+        {
+          "code": "DE",
+          "display": "Duits",
+          "target": [
+            {
+              "code": "de-DE",
+              "display": "German (Germany)",
+              "relationship": "equivalent"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `relationship` field describes how exact the translation is:
+
+| Value | Meaning |
+|---|---|
+| `equivalent` | The codes mean the same thing |
+| `source-is-narrower-than-target` | Source is more specific; target is broader |
+| `source-is-broader-than-target` | Source is broader; some detail is lost in translation |
+| `not-related-to` | No meaningful relationship — use only to document a deliberate non-mapping |
+
+---
+
+#### Step 3 — how FENIX uses it
+
+When FENIX converts a source row to a FHIR resource:
+
+1. It reads the raw value from the EPD: `"NL"`
+2. It checks the profile for `Patient.communication.language` — binding points to `https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages`
+3. It finds the ConceptMap whose `targetScope` matches that URI
+4. It looks up `"NL"` in the ConceptMap and gets `"nl-NL"`
+5. It writes `"nl-NL"` into the FHIR output — the resource now validates against the profile
+
+If no mapping exists for a source code, FENIX raises a conversion error rather than silently producing an invalid resource.
+
+---
+
+### How does a SearchParameter translate a request filter to a source field?
+
+A FHIR request carries filters as URL parameters:
+
+```
+GET /fhir/Patient?language=nl-NL
+```
+
+The parameter name `language` is just a string. The server needs to know *which field* on the Patient resource it refers to, and how to evaluate it. That definition lives in a **SearchParameter** resource.
+
+---
+
+#### The SearchParameter resource
+
+A SearchParameter ties a URL parameter name to a FHIRPath expression that points to the field(s) on the resource it searches.
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "https://ziekenhuis.nl/fhir/SearchParameter/Patient-language",
+  "code": "language",
+  "base": ["Patient"],
+  "type": "token",
+  "expression": "Patient.communication.language"
+}
+```
+
+| Field | Role |
+|---|---|
+| `code` | The URL parameter name (`?language=...`) |
+| `base` | Which resource type(s) this applies to |
+| `type` | How the value is interpreted: `token` (code), `string`, `date`, `reference`, … |
+| `expression` | FHIRPath pointing to the field on the resource |
+
+When the request `?language=nl-NL` arrives, FENIX resolves `language` → SearchParameter → `Patient.communication.language` → token filter on that field.
+
+---
+
+#### How FENIX evaluates a filter — post-conversion on Go structs
+
+FENIX does not push filters down to the source system. Instead it always converts the full source data to FHIR Go structs first, then evaluates the filter directly on those structs using the FHIRPath expression from the SearchParameter. Only matching structs are included in the response Bundle.
+
+```
+① Request arrives
+   GET /fhir/Patient?language=nl-NL
+
+② SearchParameter resolves the parameter name to a FHIRPath expression
+   "language"  →  Patient.communication.language  (type: token)
+
+③ All source rows are loaded and converted to FHIR Patient structs in Go
+   ConceptMap (forward): NL → nl-NL,  EN → en-GB,  DE → de-DE
+
+④ The FHIRPath expression is evaluated on each Go struct
+   patient.Communication[0].Language.Coding[0].Code == "nl-NL"  →  keep
+   patient.Communication[0].Language.Coding[0].Code == "en-GB"  →  drop
+
+⑤ Matching structs are wrapped in a Bundle and returned
+```
+
+Because the filter runs after conversion, it operates on FHIR codes already — no reverse ConceptMap lookup is needed. The same struct that was produced by the ConceptMap in step ③ is the one being tested in step ④.
+
+---
+
+#### Filtering by a single code
+
+```
+GET /fhir/Patient?language=nl-NL
+```
+
+SearchParameter expression `Patient.communication.language` is evaluated on every converted Patient struct. Structs where that field equals the token `nl-NL` are kept; all others are dropped before the Bundle is assembled.
+
+---
+
+#### Filtering by a ValueSet — the `:in` modifier
+
+Instead of a single code you can filter on *all codes in a ValueSet* using the `:in` modifier:
+
+```
+GET /fhir/Patient?language:in=https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages
+```
+
+This means: *keep resources whose `communication.language` is any code contained in that ValueSet.*
+
+```
+① ValueSet is expanded
+   https://.../SupportedLanguages  →  { nl-NL, en-GB, de-DE }
+
+② All source rows are converted to FHIR Patient structs (ConceptMap applied)
+
+③ FHIRPath expression evaluated on each struct
+   patient.Communication[x].Language  in  { nl-NL, en-GB, de-DE }  →  keep / drop
+```
+
+The ValueSet URI in the request is the same URI that appears as `targetScope` in the ConceptMap — the codes the ConceptMap produces are exactly the codes the ValueSet contains, so the membership check in step ③ always works cleanly.
+
+---
+
+#### Source-level pushdown — not yet implemented
+
+Evaluating filters on Go structs means all source rows are always loaded and converted, even those that will be dropped. For large datasets, pushing the filter down to the source query (SQL `WHERE` clause or API query parameter) before conversion would be more efficient.
+
+This is a planned optimisation. When implemented, it will be configurable per source — sources that support it can use pushdown; others fall back to the post-conversion path described above. Pushdown requires a reverse ConceptMap lookup (FHIR filter code → source code) that is not needed on the current path.
+
+---
+
 # FENIX — annotations explained
 
 
-![FENIX architecture diagram](images/architecture_loading.drawio)
+
+
+![FENIX architecture diagram](images/architecture.drawio.png)
 
 ---
 
