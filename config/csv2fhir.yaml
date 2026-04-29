@@ -24,11 +24,10 @@ output:
 
 sources:
   luscii:
-    type: local                   # local | api — per source, independent of environment
-    dir: "test/data/luscii"       # local: directory with .json or .csv files
-    # type: api                   # switch to live API:
-    # base_url: "https://vitalsapi.luscii.com"
-    # api_key: ""                 # set via environment variable or secrets manager in production
+    type: luscii
+    dir: "test/data/luscii"       # local: typed Flattener, same table structure as live API
+    # base_url: "https://vitalsapi.luscii.com"  # switch to live API: set base_url, remove dir
+    # api_key: ""                               # set via environment variable or secrets manager
 
   sim:
     type: local

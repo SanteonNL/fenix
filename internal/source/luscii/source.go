@@ -2,30 +2,39 @@ package luscii
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/SanteonNL/fenix/internal/loader"
-	"github.com/SanteonNL/fenix/internal/models/luscii/client"
+	lusciiclient "github.com/SanteonNL/fenix/internal/models/luscii/client"
+	lusciimodels "github.com/SanteonNL/fenix/internal/models/luscii"
 	"github.com/SanteonNL/fenix/internal/source"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
 
-// Source loads patient data from the Luscii Vitals REST API into the staging database.
+// Source loads Luscii patient data into the staging database.
+// Both modes produce identical table structure via the typed Flattener:
+//   - local: reads JSON files from dir directly (no HTTP)
+//   - api:   calls the live Luscii REST API
 type Source struct {
-	baseURL string
+	dir     string // non-empty → local mode
+	baseURL string // non-empty → api mode
 	apiKey  string
 	log     zerolog.Logger
 }
 
-func New(baseURL, apiKey string, log zerolog.Logger) *Source {
-	return &Source{baseURL: baseURL, apiKey: apiKey, log: log}
-}
-
 func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
-	c := client.New(s.baseURL, s.apiKey)
+	var patients []lusciimodels.PatientTransformer
+	var err error
 
-	patients, err := c.GetPatients()
+	if s.dir != "" {
+		patients, err = s.readLocal()
+	} else {
+		patients, err = lusciiclient.New(s.baseURL, s.apiKey).GetPatients()
+	}
 	if err != nil {
 		return err
 	}
@@ -34,25 +43,38 @@ func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
 	for i, p := range patients {
 		records[i] = p
 	}
-
 	return loader.New(db, s.log).Load("luscii_patients", &loader.Flattener{}, records)
 }
 
-// Constructor for registry-based source instantiation.
-func constructor(name string, config map[string]interface{}, log zerolog.Logger) (source.Source, error) {
-	baseURL, ok := config["base_url"].(string)
-	if !ok || baseURL == "" {
-		return nil, fmt.Errorf("luscii source %q: missing or invalid 'base_url'", name)
+// readLocal reads patients.json from dir and deserialises into typed structs,
+// producing the same table structure as the live API path.
+func (s *Source) readLocal() ([]lusciimodels.PatientTransformer, error) {
+	path := filepath.Join(s.dir, "patients.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("luscii local: %w", err)
+	}
+	var wrapper struct {
+		Data []lusciimodels.PatientTransformer `json:"data"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("luscii local: parse patients.json: %w", err)
+	}
+	return wrapper.Data, nil
+}
+
+func constructor(name string, cfg map[string]interface{}, log zerolog.Logger) (source.Source, error) {
+	dir, _ := cfg["dir"].(string)
+	baseURL, _ := cfg["base_url"].(string)
+
+	if dir == "" && baseURL == "" {
+		return nil, fmt.Errorf("luscii source %q: set either 'dir' (local) or 'base_url' (api)", name)
 	}
 
-	apiKey, ok := config["api_key"].(string)
-	if !ok {
-		apiKey = ""
-	}
-
-	return New(baseURL, apiKey, log), nil
+	apiKey, _ := cfg["api_key"].(string)
+	return &Source{dir: dir, baseURL: baseURL, apiKey: apiKey, log: log}, nil
 }
 
 func init() {
-	source.Register("api", constructor)
+	source.Register("luscii", constructor)
 }
