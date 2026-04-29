@@ -520,6 +520,8 @@ oncology-active-2024.yaml          ← human authors this
 ```yaml
 # dataset-export-request: oncology-active-2024.yaml
 
+implementation-guide: "https://ig.santeon.nl/sim-on-fhir|0.1.0"  # profiles applied to both cohort filters and exported resources
+
 cohort:
   id: oncology-active-2024
   name: Active oncology patients 2024
@@ -537,6 +539,8 @@ export-query:
   - resource: Condition
     params: "code=363346000&clinical-status=active"
   - resource: MedicationStatement
+    params: "status=active"
+  - resource: CarePlan
     params: "status=active"
 
 frequency:
@@ -629,6 +633,73 @@ to the `Group/[id]/$export` operation parameters defined in the Bulk Data Access
 > `_typeFilter` is the standard Bulk Data IG parameter that scopes which resources
 > within a type are included — it is the FHIR representation of the `export-query` entries.
 > `Patient` has no filter so it appears only in `_type`, not in `_typeFilter`.
+
+---
+
+### Profile validation
+
+Before a converted resource is written to the export output, FENIX validates it against a FHIR profile. Two ways to specify which profile to use:
+
+---
+
+#### Option A — Implementation Guide (top-level, covers cohort and export)
+
+Set `implementation-guide` at the top level of the request YAML. FENIX fetches the IG's package and finds the matching `StructureDefinition` for each resource type — applied to both the `cohort` filters and the `export-query` resources.
+
+```yaml
+implementation-guide: "https://ig.santeon.nl/careplan"
+
+cohort:
+  ...
+
+export-query:
+  ...
+```
+
+Use this when all (or most) resources in the request are profiled by the same IG. It avoids repeating a profile URL on every entry and ensures cohort filters and exported resources are validated consistently.
+
+The IG used for Santeon exports is the **Santeon CarePlan Implementation Guide**:
+
+| Field | Value |
+|---|---|
+| Canonical URL | `https://ig.santeon.nl/careplan` |
+| Publisher | Santeon |
+| Version | 0.1.0 |
+| FHIR version | R4 (4.0.1) |
+
+---
+
+#### Option B — per-resource profile (targeted override)
+
+Set `profile` on an individual `export-query` entry. Use this when a resource needs a profile from outside the IG, or when no IG applies.
+
+```yaml
+export-query:
+  - resource: CarePlan
+    params: "status=active"
+    profile: "https://ig.santeon.nl/careplan/StructureDefinition/santeon-careplan"
+```
+
+The **SanteonCarePlan** profile (`https://ig.santeon.nl/careplan/StructureDefinition/santeon-careplan`) mandates `status`, `intent`, `category`, `subject`, `period.start`, and `period.end`, and prohibits base elements not present in Santeon's data dictionary.
+
+---
+
+#### Combining both
+
+A per-resource `profile` always overrides the IG for that specific resource. All other resources fall back to the top-level IG.
+
+```yaml
+implementation-guide: "https://ig.santeon.nl/careplan"
+
+export-query:
+  - resource: Patient
+    params: ""
+  - resource: CarePlan
+    params: "status=active"
+    profile: "https://other.ig/StructureDefinition/other-careplan"  # overrides IG for this entry only
+```
+
+When neither an IG nor a per-resource `profile` is set, FENIX validates against the base FHIR R4 resource definition only.
 
 ---
 
