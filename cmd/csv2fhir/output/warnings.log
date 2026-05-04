@@ -1,5 +1,0 @@
-Validation Warnings Summary
-==========================
-2	x: Patient validation failed: unknown AdministrativeGender code `asd`
-  ResourceIDs: p002, p001
-

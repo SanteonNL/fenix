@@ -90,14 +90,14 @@ func TranslateCode(conceptMap fhir.ConceptMap, sourceCode *string, typeIsCode bo
 }
 
 func LoadConceptMaps(log zerolog.Logger) error {
-	files, err := os.ReadDir("config/conceptmaps")
+	files, err := os.ReadDir("terminology/conceptmaps")
 	if err != nil {
 		return fmt.Errorf("failed to read conceptmaps directory: %v", err)
 	}
 
 	for _, file := range files {
 		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
-			filePath := filepath.Join("config/conceptmaps", file.Name())
+			filePath := filepath.Join("terminology/conceptmaps", file.Name())
 			conceptMap, err := ReadFHIRResource(filePath, fhir.UnmarshalConceptMap)
 			if err != nil {
 				return fmt.Errorf("failed to read Conceptmap from file: %v", err)

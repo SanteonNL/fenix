@@ -13,6 +13,7 @@ import (
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
+	_ "github.com/SanteonNL/fenix/internal/source/sqlserver"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 	_ "modernc.org/sqlite"
@@ -170,13 +171,20 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 // buildSource constructs the Source implementation for the given config entry using the registry.
 // Converts the SourceConfig struct to a map and uses the registry to instantiate the source by type.
 func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerolog.Logger) source.Source {
+	stagingDir := sc.StagingDir
+	if stagingDir == "" {
+		stagingDir = "queries/" + name + "/staging"
+	}
+
 	// Convert SourceConfig to map for generic registry use
 	configMap := map[string]interface{}{
-		"type":      sc.Type,
-		"base_url":  sc.BaseURL,
-		"api_key":   sc.APIKey,
-		"dir":       resolvePath(repoRoot, sc.Dir),
-		"delimiter": sc.Delimiter,
+		"type":              sc.Type,
+		"base_url":          sc.BaseURL,
+		"api_key":           sc.APIKey,
+		"dir":               resolvePath(repoRoot, sc.Dir),
+		"delimiter":         sc.Delimiter,
+		"connection_string": sc.ConnectionString,
+		"staging_dir":       resolvePath(repoRoot, stagingDir),
 	}
 
 	src, err := source.Build(sc.Type, name, configMap, log)

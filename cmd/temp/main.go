@@ -94,7 +94,7 @@ func main() {
 	}
 
 	// Create a new ResourceLoader
-	rl := NewResourceLoader("config", log)
+	rl := NewResourceLoader("terminology", log)
 
 	// Load resources
 	if err := rl.LoadResources(); err != nil {
@@ -137,7 +137,7 @@ func main() {
 	}
 
 	// Initialize the repository and service
-	conceptmapRepo := conceptmap.NewConceptMapRepository("config/conceptmaps/fhir", log)
+	conceptmapRepo := conceptmap.NewConceptMapRepository("terminology/conceptmaps/fhir", log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize ConceptMap repository")
 	}
@@ -149,7 +149,7 @@ func main() {
 	converter := conceptmap.NewConceptMapConverter(log, conceptMapService)
 	// Basic usage - will use default "active" status
 	// Convert CSV to FHIR ConceptMap
-	inputFile := "config/conceptmaps/flat/conceptmap_TommyMeetMethodeLijst_validated.csv"
+	inputFile := "terminology/conceptmaps/flat/conceptmap_TommyMeetMethodeLijst_validated.csv"
 	file, err := os.Open(inputFile)
 	if err != nil {
 		log.Fatal().Err(err).Str("file", inputFile).Msg("Failed to open input file")
@@ -163,7 +163,7 @@ func main() {
 	}
 
 	// Save the converted ConceptMap using the service
-	outputPath := "config/conceptmaps/fhir/conceptmap_converted2.json"
+	outputPath := "terminology/conceptmaps/fhir/conceptmap_converted2.json"
 	if err := conceptMapService.SaveConceptMap(outputPath, conceptMapFHIR); err != nil {
 		log.Fatal().Err(err).Msg("Failed to save ConceptMap")
 	}
@@ -177,7 +177,7 @@ func main() {
 	searchParamService := searchparameter.NewSearchParameterService(searchParamRepo, log)
 
 	// Load initial data
-	err = searchParamRepo.LoadSearchParametersFromFile("searchParameter/search-parameter.json")
+	err = searchParamRepo.LoadSearchParametersFromFile("terminology/searchparameter/search-parameter.json")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load SearchParameters")
 	}
@@ -185,7 +185,7 @@ func main() {
 	searchParamRepo.DumpAllParameters()
 
 	// Load structure definitions
-	err = structDefRepo.LoadStructureDefinitions("profiles/sim")
+	err = structDefRepo.LoadStructureDefinitions("terminology/profiles/sim")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load StructureDefinitions")
 	}

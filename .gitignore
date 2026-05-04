@@ -35,4 +35,4 @@ output/temp/*.json
 output/temp/*.json
 
 
-config/conceptmaps/fhir/converted/
+terminology/conceptmaps/fhir/converted/

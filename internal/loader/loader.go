@@ -8,6 +8,23 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// rowID extracts the "id" field from a flattened row as a string.
+// Named string types (e.g. UuidSchema) don't satisfy .(string), so we
+// use fmt.Sprint to cover any underlying-string type.
+func rowID(row map[string]interface{}) string {
+	v := row["id"]
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return fmt.Sprint(v)
+}
+
 // Loader writes flattened structs into relational SQL tables.
 //
 // Each struct becomes one main-table row. Slice fields become rows in a child
@@ -72,7 +89,7 @@ func (l *Loader) Load(tableName string, f *Flattener, records []interface{}) err
 
 	fk := fkCol(tableName)
 	for _, fr := range flattened {
-		parentID, _ := fr.Row["id"].(string)
+		parentID := rowID(fr.Row)
 
 		if err := l.insert(tableName, cols, fr.Row); err != nil {
 			l.logger.Error().Err(err).Str("table", tableName).Msg("insert failed")

@@ -46,8 +46,8 @@ func main() {
 
 	// Define paths
 	baseDir := "."                                                // Current directory
-	inputDir := filepath.Join(baseDir, "config/conceptmaps/flat") // ./csv directory for input files
-	repoDir := filepath.Join(baseDir, "config/conceptmaps")       // ./fhir directory for repository
+	inputDir := filepath.Join(baseDir, "terminology/conceptmaps/flat") // ./csv directory for input files
+	repoDir := filepath.Join(baseDir, "terminology/conceptmaps")       // ./fhir directory for repository
 
 	// Initialize repository
 	repository := conceptmap.NewConceptMapRepository(repoDir, log)
@@ -165,7 +165,7 @@ func main() {
 	structureDefRepo := structuredefinition.NewStructureDefinitionRepository(log)
 
 	// Load existing StructureDefinitions
-	if err := structureDefRepo.LoadStructureDefinitions("profiles\\sim"); err != nil {
+	if err := structureDefRepo.LoadStructureDefinitions("terminology\\profiles\\sim"); err != nil {
 		log.Error().Err(err).Msg("Failed to load existing StructureDefinitions")
 		os.Exit(1)
 	}
@@ -175,7 +175,7 @@ func main() {
 
 	// Initialize repository for SearchParameters
 	searchParamRepo := searchparameter.NewSearchParameterRepository(log)
-	searchParamRepo.LoadSearchParametersFromFile("searchParameter\\search-parameter.json")
+	searchParamRepo.LoadSearchParametersFromFile("terminology\\searchparameter\\search-parameter.json")
 
 	// Initialize SearchParameter service with the repository
 	searchParamService := searchparameter.NewSearchParameterService(searchParamRepo, log)

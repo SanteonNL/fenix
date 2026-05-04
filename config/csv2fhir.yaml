@@ -5,16 +5,16 @@ logLevel: info    # trace, debug, info, warn, error — omit to use default (deb
 
 staging:
   database: sqlite        # sqlite (default) | postgres
-  path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
-  # path: data/staging.db # persist to file — useful for debugging SQL queries after a run
+  #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
+  path: output/staging.db # persist to file — useful for debugging SQL queries after a run
   # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
   # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
   # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
 
 fhir:
   sqlFile: ""
-  profilesDir: profiles/sim
-  conceptMapsDir: config/conceptmaps/flat
+  profilesDir: terminology/profiles/sim
+  conceptMapsDir: terminology/conceptmaps/flat
 
 output:
   format: pretty          # json | ndjson | pretty
@@ -23,11 +23,13 @@ output:
     dir: output
 
 sources:
+  hix-test:
+    type: sqlserver
+    connection_string: "server=localhost;user id=sa;password=HixTest_Pass1!;database=hix;encrypt=disable"
+
   luscii:
     type: luscii
     dir: "test/data/luscii"       # local: typed Flattener, same table structure as live API
-    # base_url: "https://vitalsapi.luscii.com"  # switch to live API: set base_url, remove dir
-    # api_key: ""                               # set via environment variable or secrets manager
 
   sim:
     type: local
