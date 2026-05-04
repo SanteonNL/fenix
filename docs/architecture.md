@@ -1,3 +1,48 @@
+# Contents
+
+- [What is FENIX?](#what-is-fenix)
+  - [The driving use case — Cumuluz IBD within HEALTH-RI](#the-driving-use-case--cumuluz-ibd-within-health-ri)
+  - [What does a FHIR request look like?](#what-does-a-fhir-request-look-like)
+  - [FHIR Async Bulk Export — how it works](#fhir-async-bulk-export--how-it-works)
+  - [What is a FHIR profile?](#what-is-a-fhir-profile)
+  - [What is a ConceptMap?](#what-is-a-conceptmap)
+  - [Why FENIX profiles against base FHIR R4 — the Dutch and European model landscape](#why-fenix-profiles-against-base-fhir-r4--the-dutch-and-european-model-landscape)
+    - [The three layers of healthcare information modelling](#the-three-layers-of-healthcare-information-modelling)
+    - [The European FHIR profile landscape](#the-european-fhir-profile-landscape)
+    - [The Dutch FHIR profile landscape](#the-dutch-fhir-profile-landscape)
+    - [Decision — profile against base FHIR R4 for now](#decision--profile-against-base-fhir-r4-for-now)
+- [FENIX — annotations explained](#fenix--annotations-explained)
+  - [❶ Dataset export request](#-dataset-export-request)
+    - [The YAML — source of truth](#the-yaml--source-of-truth)
+    - [Generated — Group.json](#generated--groupjson-cohort-as-fhir-group)
+    - [Generated — Parameters.json](#generated--parametersjson-export-query-as-fhir-export-parameters)
+    - [Profile validation](#profile-validation)
+    - [All three files committed together](#all-three-files-committed-together)
+    - [How the export runs — async bulk vs synchronous Bundle](#how-the-export-runs--async-bulk-vs-synchronous-bundle)
+  - [❷ Approval](#-approval)
+    - [Central approval — GitHub PR](#central-approval--github-pr)
+    - [Local approval — Hospital Approval Service](#local-approval--hospital-approval-service)
+  - [❸ Loading](#-loading)
+    - [Layer 1 — Sources](#layer-1--sources)
+    - [Layer 2 — Connectors](#layer-2--connectors)
+    - [Layer 3 — Source interface](#layer-3--source-interface)
+    - [Layer 4 — Staging database](#layer-4--staging-database)
+    - [Layer 5 — Converter](#layer-5--converter)
+  - [❹ How FENIX handles a live FHIR request](#-how-fenix-handles-a-live-fhir-request)
+    - [How does a SearchParameter translate a request filter to a source field?](#how-does-a-searchparameter-translate-a-request-filter-to-a-source-field)
+  - [❺ De-identification](#-de-identification)
+    - [Pipeline position](#pipeline-position)
+    - [Two-layer configuration](#two-layer-configuration)
+    - [Execution order per resource](#execution-order-per-resource)
+    - [Key management](#key-management)
+    - [FLARE — the background service](#flare--the-background-service)
+  - [❻ ConceptMap resolution](#-conceptmap-resolution)
+    - [Step 1 — the ValueSet](#step-1--the-valueset-target-codes)
+    - [Step 2 — the ConceptMap](#step-2--the-conceptmap-translation-rules)
+    - [Step 3 — how FENIX resolves it at runtime](#step-3--how-fenix-resolves-it-at-runtime)
+
+---
+
 # What is FENIX?
 
 **FENIX** stands for **FHIR ENabled Node for Information Exchange**.
@@ -12,7 +57,39 @@ Key characteristics:
 - FENIX speaks FHIR outward but connects to non-FHIR source systems inward.
 - A dataset export request (YAML + generated FHIR resources) is the unit of governance: it defines what data may be shared, with whom, and how often.
 
+---
 
+#### The driving use case — Cumuluz IBD within HEALTH-RI
+
+The concrete goal that drives FENIX is to supply hospital data for the **Cumuluz IBD use case** — the first secondary use case being piloted within [HEALTH-RI](https://health-ri.nl).
+
+**[HEALTH-RI](https://health-ri.nl)** is the Dutch national health research infrastructure — the full stack of facilities, governance, and tooling required to conduct health research at scale. This includes a **Health Data Access Body (HDAB)** for governed access to sensitive health data, and environments where research use cases can be deployed, integrated, and tested against real hospital data.
+
+Within HEALTH-RI, **PLUGIN** is the component being piloted for federated learning — a model in which algorithms travel to the data rather than the data travelling to a central location. PLUGIN allows a use case to train or validate across multiple hospital datasets without any raw patient data leaving the institution.
+
+**Cumuluz IBD** is the first secondary use case: using Inflammatory Bowel Disease patient data from hospitals for research and analysis. Secondary use means the data was originally collected for care delivery, and is now — with proper governance — made available for a research purpose. To be meaningful in a HEALTH-RI/PLUGIN context it needs structured, FHIR-formatted patient data from participating hospitals: IBD diagnoses, medication, lab results, care plans.
+
+FENIX is the bridge that makes hospital data available in that format:
+
+```
+Hospital EPD / source systems
+        │
+        └── FENIX (FHIR facade)
+              │  translates source data to FHIR on request
+              │  enforces dataset export request governance
+              ▼
+        HIPS / HEALTH-RI
+              │
+              └── PLUGIN (federated learning pilot)
+                    │
+                    └── Cumuluz IBD use case
+                          ← consumes FHIR-formatted IBD data
+                          ← first secondary use case tested within HEALTH-RI
+```
+
+This use case is also the reason FENIX starts with base FHIR R4 profiles rather than waiting for a stable Dutch or European profile layer — see [Why FENIX profiles against base FHIR R4](#why-fenix-profiles-against-base-fhir-r4--the-dutch-and-european-model-landscape).
+
+---
 
 ![FENIX hospital overview](images/fenix_hospital_overview.drawio.png)
 
@@ -92,6 +169,83 @@ The server responds with a **Bundle** — a JSON envelope that wraps one or more
 Every field has a fixed meaning defined by the FHIR standard — `birthDate`, `gender`, `identifier`, and so on are the same across every FHIR server in the world. That is what makes FHIR useful for data exchange: both sides speak the same language without custom mapping.
 
 FENIX receives this kind of request, translates the filters into queries against the hospital's source systems, and returns the result in exactly this format.
+
+---
+
+### FHIR Async Bulk Export — how it works
+
+A regular FHIR search returns a **Bundle** synchronously: one HTTP call, one JSON response, everything in memory. This works for small result sets but breaks down for bulk exports — thousands of patients across multiple resource types won't fit in a single round-trip without timeouts or memory exhaustion.
+
+The [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) defines an asynchronous three-step pattern instead.
+
+---
+
+#### Step 1 — kick off
+
+The client sends a `POST` to the `$export` operation on a Group resource. The `Prefer: respond-async` header tells the server not to wait:
+
+```
+POST /fhir/Group/oncology-active-2024/$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+The server responds immediately with `202 Accepted` and a `Content-Location` header pointing to a status endpoint. No data is returned yet — the server starts processing in the background.
+
+```
+HTTP/1.1 202 Accepted
+Content-Location: /fhir/$export-status/run-f3a1c8
+```
+
+---
+
+#### Step 2 — poll for completion
+
+The client polls the status URL periodically.
+
+While still running, the server returns `202` with a progress hint:
+
+```
+HTTP/1.1 202 Accepted
+X-Progress: "processing 3 of 5 resource types"
+```
+
+When complete, the server returns `200` with a **manifest** — a JSON list of download URLs, one per resource type:
+
+```json
+{
+  "transactionTime": "2024-03-15T02:00:00Z",
+  "output": [
+    { "type": "Patient",   "url": "/fhir/$export-files/run-f3a1c8/Patient.ndjson" },
+    { "type": "Condition", "url": "/fhir/$export-files/run-f3a1c8/Condition.ndjson" }
+  ]
+}
+```
+
+---
+
+#### Step 3 — download NDJSON
+
+Each file is downloaded separately. The format is **NDJSON** (newline-delimited JSON): one complete FHIR resource per line, no wrapping array, no commas between lines:
+
+```
+{"resourceType":"Patient","id":"a3f2c1...","birthDate":"1975-03-01",...}
+{"resourceType":"Patient","id":"9b1e4d...","birthDate":"1962-07-01",...}
+```
+
+This is streamable — the client reads line by line without loading the full file into memory.
+
+---
+
+| | Synchronous Bundle | Async bulk (`$export`) |
+|---|---|---|
+| Response | Single JSON response | NDJSON files, one per resource type |
+| Size limit | Breaks above ~10k resources | No practical limit |
+| Client model | Wait for response | Kick off → poll → download |
+| Memory | All resources in memory at once | Streamed file by file |
+| FHIR standard | Core FHIR | [Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) |
+
+For how FENIX implements this pattern end-to-end — including FLARE's role in kicking off, polling, and forwarding to HIPS — see [How the export runs](#how-the-export-runs--async-bulk-vs-synchronous-bundle).
 
 ---
 
@@ -259,9 +413,9 @@ Binding strengths go from loose to strict: `example` → `preferred` → `extens
 
 ---
 
-### How does a ConceptMap connect hospital codes to profile codes?
+### What is a ConceptMap?
 
-The profile says *which* codes are valid (via the `valueSet` URI in the binding). It does not say how to get there from whatever codes the hospital's source system uses internally. That translation is the job of a **ConceptMap**.
+A **ConceptMap** defines how codes from one system translate to codes in another. A profile says *which* codes are valid in the output (via its ValueSet binding); a ConceptMap says *how to get there* from whatever codes the hospital's source system uses internally.
 
 ```
 EPD source data          ConceptMap               FHIR output
@@ -271,95 +425,9 @@ EPD source data          ConceptMap               FHIR output
 "DU"           ───────►  no mapping       ───────► error: unmapped source code
 ```
 
-The link between profile and ConceptMap is the **ValueSet URI**:
-- The profile binding points to a ValueSet: `https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages`
-- The ConceptMap declares the same URI as its `targetScope`
-- FENIX resolves: *"this field requires codes from ValueSet X — find the ConceptMap whose targetScope is X and apply it"*
+The profile and ConceptMap are linked by the **ValueSet URI**: the profile binding points to a ValueSet, and the ConceptMap declares the same URI as its `targetScope`. This is how FENIX resolves which ConceptMap to apply to which field.
 
----
-
-#### Step 1 — the ValueSet (target codes)
-
-The ValueSet lists which codes are valid in the output. This is what the profile binding references.
-
-```json
-{
-  "resourceType": "ValueSet",
-  "url": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
-  "name": "SupportedLanguages",
-  "compose": {
-    "include": [
-      {
-        "system": "urn:ietf:bcp:47",
-        "concept": [
-          { "code": "nl-NL", "display": "Dutch (Netherlands)" },
-          { "code": "en-GB", "display": "English (United Kingdom)" },
-          { "code": "de-DE", "display": "German (Germany)" }
-        ]
-      }
-    ]
-  }
-}
-```
-
----
-
-#### Step 2 — the ConceptMap (the translation rules)
-
-The ConceptMap maps from the EPD's internal codes (source system) to the standard BCP-47 codes that the ValueSet expects (target system). The `targetScope` matches the ValueSet URI in the profile binding — this is what ties them together.
-
-```json
-{
-  "resourceType": "ConceptMap",
-  "url": "https://ziekenhuis.nl/fhir/ConceptMap/EpdTaalNaarBcp47",
-  "name": "EpdTaalNaarBcp47",
-  "sourceScope": "https://ziekenhuis.nl/fhir/ValueSet/EpdTaalcodes",
-  "targetScope": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
-  "group": [
-    {
-      "source": "https://ziekenhuis.nl/fhir/CodeSystem/EpdTaalcodes",
-      "target": "urn:ietf:bcp:47",
-      "element": [
-        {
-          "code": "NL",
-          "display": "Nederlands",
-          "target": [
-            {
-              "code": "nl-NL",
-              "display": "Dutch (Netherlands)",
-              "relationship": "equivalent"
-            }
-          ]
-        },
-        {
-          "code": "EN",
-          "display": "Engels",
-          "target": [
-            {
-              "code": "en-GB",
-              "display": "English (United Kingdom)",
-              "relationship": "equivalent"
-            }
-          ]
-        },
-        {
-          "code": "DE",
-          "display": "Duits",
-          "target": [
-            {
-              "code": "de-DE",
-              "display": "German (Germany)",
-              "relationship": "equivalent"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-The `relationship` field describes how exact the translation is:
+Each mapping carries a `relationship` that describes how exact the translation is:
 
 | Value | Meaning |
 |---|---|
@@ -368,124 +436,122 @@ The `relationship` field describes how exact the translation is:
 | `source-is-broader-than-target` | Source is broader; some detail is lost in translation |
 | `not-related-to` | No meaningful relationship — use only to document a deliberate non-mapping |
 
----
-
-#### Step 3 — how FENIX uses it
-
-When FENIX converts a source row to a FHIR resource:
-
-1. It reads the raw value from the EPD: `"NL"`
-2. It checks the profile for `Patient.communication.language` — binding points to `https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages`
-3. It finds the ConceptMap whose `targetScope` matches that URI
-4. It looks up `"NL"` in the ConceptMap and gets `"nl-NL"`
-5. It writes `"nl-NL"` into the FHIR output — the resource now validates against the profile
-
-If no mapping exists for a source code, FENIX raises a conversion error rather than silently producing an invalid resource.
+For how FENIX resolves ConceptMaps at runtime — with full ValueSet, ConceptMap, and conversion examples — see [❻ ConceptMap resolution](#-conceptmap-resolution).
 
 ---
 
-### How does a SearchParameter translate a request filter to a source field?
+### Why FENIX profiles against base FHIR R4 — the Dutch and European model landscape
 
-A FHIR request carries filters as URL parameters:
+#### The three layers of healthcare information modelling
+
+Healthcare information modelling runs through three distinct layers. The top layers define *what* must be captured; the bottom layer defines *how*.
 
 ```
-GET /fhir/Patient?language=nl-NL
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 1 — Conceptual models           technology-agnostic      │
+│  ZIBs (NL)  ·  EHDS regulation text (EU)                       │
+│  No FHIR, no database, no wire format — pure information model  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ expressed as
+┌──────────────────────────▼──────────────────────────────────────┐
+│  Layer 2 — FHIR Logical Models         still technology-agnostic│
+│  StructureDefinition (kind: logical)                            │
+│  EHDS EHRxF logical models (EU)                                 │
+│  Machine-readable but not yet an implementation profile         │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ implemented as
+┌──────────────────────────▼──────────────────────────────────────┐
+│  Layer 3 — FHIR Profiles               implementation           │
+│  StructureDefinition (kind: resource)                           │
+│  EU Core · NL Core · hospital profiles                          │
+│  Constrain base FHIR resources — deployable software artefacts  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-The parameter name `language` is just a string. The server needs to know *which field* on the Patient resource it refers to, and how to evaluate it. That definition lives in a **SearchParameter** resource.
+**Layer 1 — Conceptual models**
+
+[ZIBs (Zorginformatiebouwstenen)](https://zibs.nl/wiki/ZIB_Publicatie_2020(NL)) are the Dutch national standard for clinical information models. A ZIB defines *what* information should be captured — its structure, data types, and clinical meaning — without specifying *how* it is stored or exchanged. No FHIR, no database schema, no wire format.
+
+The [EHDS (European Health Data Space)](https://health.ec.europa.eu/ehealth-digital-health-and-care/european-health-data-space_en) regulation operates at the same level of abstraction. The EHDS imposes requirements on member states for health data exchange but does not itself mandate a specific technical format — it works at the policy and concept level.
+
+**Layer 2 — FHIR Logical Models**
+
+A FHIR Logical Model is *expressed* in FHIR syntax (`StructureDefinition` with `kind: logical`) but is not yet an implementation profile. It makes a conceptual model machine-readable without binding it to a specific resource type or implementation. This is the bridge layer.
+
+The [EHDS EHRxF (Electronic Health Record Exchange Format)](https://www.xt-ehr.eu/fhir/models/en/) mandate translates EHDS policy requirements into FHIR Logical Models. Like ZIBs, these models define *what* must be captured — they are technology-agnostic in the sense that they do not mandate how a system stores or serves the data.
+
+**Layer 3 — FHIR Profiles**
+
+This is where conceptual and logical models become deployable software artefacts. A FHIR profile (`StructureDefinition` with `kind: resource`) constrains a base FHIR resource — making fields required, prohibiting unused fields, restricting value sets — as shown in the profile examples above.
 
 ---
 
-#### The SearchParameter resource
+#### The European FHIR profile landscape
 
-A SearchParameter ties a URL parameter name to a FHIRPath expression that points to the field(s) on the resource it searches.
+Not all European FHIR profiles originate from EHDS. Several streams exist in parallel, each with different governance and timelines:
 
-```json
-{
-  "resourceType": "SearchParameter",
-  "url": "https://ziekenhuis.nl/fhir/SearchParameter/Patient-language",
-  "code": "language",
-  "base": ["Patient"],
-  "type": "token",
-  "expression": "Patient.communication.language"
-}
-```
+| Stream | Published by | Relation to EHDS |
+|---|---|---|
+| [HL7 Europe base profiles](https://build.fhir.org/ig/hl7-eu/base/) | HL7 Europe | Influenced by EHDS; serves as the EU Core foundation |
+| [EHRxF profiles](https://www.xt-ehr.eu/fhir/models/en/) | HL7 Europe / EC | Directly mandated by EHDS; derived from EHRxF logical models |
+| [IPS (International Patient Summary)](https://build.fhir.org/ig/HL7/fhir-ips/) | HL7 International | Predates EHDS; now being aligned with EHRxF requirements |
+| [HL7 Europe laboratory IG](https://build.fhir.org/ig/hl7-eu/laboratory/) | HL7 Europe | Domain-specific; developed partly in EHDS context |
+| MyHealth@EU profiles | EU / eHN | Specifically for cross-border exchange; aligned with EHDS |
 
-| Field | Role |
-|---|---|
-| `code` | The URL parameter name (`?language=...`) |
-| `base` | Which resource type(s) this applies to |
-| `type` | How the value is interpreted: `token` (code), `string`, `date`, `reference`, … |
-| `expression` | FHIRPath pointing to the field on the resource |
-
-When the request `?language=nl-NL` arrives, FENIX resolves `language` → SearchParameter → `Patient.communication.language` → token filter on that field.
+Together these converge into what can be called the **EU Core** — the European FHIR profile layer that sits directly above base FHIR R4.
 
 ---
 
-#### How FENIX evaluates a filter — post-conversion on Go structs
+#### The Dutch FHIR profile landscape
 
-FENIX does not push filters down to the source system. Instead it always converts the full source data to FHIR Go structs first, then evaluates the filter directly on those structs using the FHIRPath expression from the SearchParameter. Only matching structs are included in the response Bundle.
+Nictiz has built the Dutch [nl-core profiles](https://simplifier.net/nictiz-r4-zib2020) based on ZIBs. These are in production use across Dutch healthcare today.
+
+The EHDS mandate changes the foundation for future Dutch profiles. Nictiz will need to publish a **new NL Core derived from EU Core, not from ZIBs**. This is not an update to the current NL Core — it will be a new profile layer, because its parent changes from base FHIR R4 to EU Core.
+
+ZIBs remain relevant as a clinical concept layer, but the FHIR profile chain will change:
 
 ```
-① Request arrives
-   GET /fhir/Patient?language=nl-NL
+Current chain:
 
-② SearchParameter resolves the parameter name to a FHIRPath expression
-   "language"  →  Patient.communication.language  (type: token)
+hl7.org/fhir/R4 (base)
+        │
+        └── nl-core (Nictiz)     ← based on ZIBs
+                │
+                └── Hospital profiles
 
-③ All source rows are loaded and converted to FHIR Patient structs in Go
-   ConceptMap (forward): NL → nl-NL,  EN → en-GB,  DE → de-DE
 
-④ The FHIRPath expression is evaluated on each Go struct
-   patient.Communication[0].Language.Coding[0].Code == "nl-NL"  →  keep
-   patient.Communication[0].Language.Coding[0].Code == "en-GB"  →  drop
+Future chain (expected):
 
-⑤ Matching structs are wrapped in a Bundle and returned
+hl7.org/fhir/R4 (base)
+        │
+        └── EU Core (HL7 Europe) ← based on EHDS EHRxF logical models
+                │
+                └── new NL Core (Nictiz)  ← based on EU Core, not ZIBs
+                        │
+                        └── Hospital profiles
 ```
 
-Because the filter runs after conversion, it operates on FHIR codes already — no reverse ConceptMap lookup is needed. The same struct that was produced by the ConceptMap in step ③ is the one being tested in step ④.
+In addition, VWS, Nictiz, and Cumuluz are developing the **Gezondheids Informatie Model (GIM)** — a new Dutch health information model intended to align Dutch clinical concepts with the European framework. How GIM relates to ZIBs, EU Core, and a future NL Core is not yet defined.
 
 ---
 
-#### Filtering by a single code
+#### Decision — profile against base FHIR R4 for now
 
-```
-GET /fhir/Patient?language=nl-NL
-```
+**Context:** Three overlapping developments make the Dutch FHIR profile landscape unstable:
 
-SearchParameter expression `Patient.communication.language` is evaluated on every converted Patient struct. Structs where that field equals the token `nl-NL` are kept; all others are dropped before the Bundle is assembled.
+1. **EU Core is still maturing.** The HL7 Europe profiles are under active development as the EHDS EHRxF mandate is being formalised.
+2. **NL Core will be rebuilt, not updated.** A new NL Core derived from EU Core does not yet exist. Building on the current ZIB-based NL Core means inheriting a layer that will be replaced.
+3. **GIM is in development.** The relationship between GIM, ZIBs, EU Core, and a future NL Core is undefined.
 
----
+**Decision:** FENIX profiles its resources directly against **base FHIR R4**, not against NL Core or any intermediate national layer.
 
-#### Filtering by a ValueSet — the `:in` modifier
+This is a **temporary, pragmatic choice**. The goal is to learn and build now, without coupling to a profile layer that is about to be replaced. When a stable NL Core aligned with EU Core is published — and when GIM's relationship to that layer is clear — we will migrate.
 
-Instead of a single code you can filter on *all codes in a ValueSet* using the `:in` modifier:
+**What this means in practice:**
 
-```
-GET /fhir/Patient?language:in=https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages
-```
-
-This means: *keep resources whose `communication.language` is any code contained in that ValueSet.*
-
-```
-① ValueSet is expanded
-   https://.../SupportedLanguages  →  { nl-NL, en-GB, de-DE }
-
-② All source rows are converted to FHIR Patient structs (ConceptMap applied)
-
-③ FHIRPath expression evaluated on each struct
-   patient.Communication[x].Language  in  { nl-NL, en-GB, de-DE }  →  keep / drop
-```
-
-The ValueSet URI in the request is the same URI that appears as `targetScope` in the ConceptMap — the codes the ConceptMap produces are exactly the codes the ValueSet contains, so the membership check in step ③ always works cleanly.
-
----
-
-#### Source-level pushdown — not yet implemented
-
-Evaluating filters on Go structs means all source rows are always loaded and converted, even those that will be dropped. For large datasets, pushing the filter down to the source query (SQL `WHERE` clause or API query parameter) before conversion would be more efficient.
-
-This is a planned optimisation. When implemented, it will be configurable per source — sources that support it can use pushdown; others fall back to the post-conversion path described above. Pushdown requires a reverse ConceptMap lookup (FHIR filter code → source code) that is not needed on the current path.
+- Profiles in dataset export requests (`implementation-guide` / `profile` fields) reference base FHIR R4 or Santeon-specific profiles built directly on R4.
+- We track the [EHDS EHRxF IG](https://www.xt-ehr.eu/fhir/models/en/) and [HL7 Europe base IG](https://build.fhir.org/ig/hl7-eu/base/) to stay informed about what the future NL Core will look like.
+- When Nictiz publishes an EU-Core-aligned NL Core, we insert a national profile layer between base R4 and our hospital profiles — changing `baseDefinition` chains, not the data model itself.
 
 ---
 
@@ -548,6 +614,22 @@ frequency:
   cron: ~                  # only set when mode is scheduled, e.g. "0 2 * * *"
   cohort-refresh: dynamic  # dynamic = re-evaluate who is in scope each run
                            # snapshot = patient list frozen at first run
+
+de-identification:
+  base: "https://ig.santeon.nl/sim-on-fhir/de-identification"  # standard ruleset from the IG
+  # no overrides — standard rules apply as-is
+```
+
+For use cases that require stricter age generalisation, the `de-identification` block can override individual rules. The geboortezorg (maternity care) use case, for example, clamps age to 0–45 instead of the standard 18–85:
+
+```yaml
+de-identification:
+  base: "https://ig.santeon.nl/sim-on-fhir/de-identification"
+  rules:
+    - path: "Patient.birthDate"   # replaces the standard clamp-age for this export
+      action: clamp-age
+      min-age: 0
+      max-age: 45
 ```
 
 ---
@@ -720,6 +802,87 @@ The FHIR JSON is what FENIX actually loads at runtime.
 
 ---
 
+### How the export runs — async bulk vs synchronous Bundle
+
+A regular FHIR request returns a **Bundle** synchronously: one HTTP call, one JSON response, everything in memory. This works for small result sets but breaks down for bulk exports of thousands of patients across multiple resource types.
+
+FENIX uses the [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) instead. This is an **asynchronous** protocol: kick off the export, poll until it is ready, then download the output as NDJSON files — one file per resource type.
+
+| | Synchronous Bundle | Async bulk (`$export`) |
+|---|---|---|
+| Response | Single JSON response | NDJSON files, one per resource type |
+| Size limit | Breaks above ~10k resources | No practical limit |
+| Client model | Wait for response | Kick off → poll → download |
+| Memory | All resources in memory at once | Streamed file by file |
+| FHIR standard | Core FHIR | [Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) |
+
+---
+
+#### Step 1 — kick off the export
+
+FLARE sends a `POST` to the `$export` operation on the Group resource. The `Prefer` header signals that the client expects an async response:
+
+```
+POST /fhir/Group/oncology-active-2024/$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+FENIX responds immediately with `202 Accepted` and a `Content-Location` header pointing to a status endpoint. No data is returned yet — FENIX starts processing in the background.
+
+```
+HTTP/1.1 202 Accepted
+Content-Location: /fhir/$export-status/run-f3a1c8
+```
+
+---
+
+#### Step 2 — poll for completion
+
+FLARE polls the status URL periodically:
+
+```
+GET /fhir/$export-status/run-f3a1c8
+```
+
+While the export is still running, FENIX returns `202` with a progress indicator:
+
+```
+HTTP/1.1 202 Accepted
+X-Progress: "processing 3 of 5 resource types"
+```
+
+When complete, FENIX returns `200` with a manifest listing the output files:
+
+```json
+{
+  "transactionTime": "2024-03-15T02:00:00Z",
+  "requiresAccessToken": false,
+  "output": [
+    { "type": "Patient",             "url": "/fhir/$export-files/run-f3a1c8/Patient.ndjson" },
+    { "type": "Observation",         "url": "/fhir/$export-files/run-f3a1c8/Observation.ndjson" },
+    { "type": "Condition",           "url": "/fhir/$export-files/run-f3a1c8/Condition.ndjson" },
+    { "type": "MedicationStatement", "url": "/fhir/$export-files/run-f3a1c8/MedicationStatement.ndjson" }
+  ]
+}
+```
+
+---
+
+#### Step 3 — download the NDJSON files
+
+Each file in `output` is downloaded separately. Each line is one complete FHIR resource — no wrapping array, no commas between lines:
+
+```
+# Patient.ndjson
+{"resourceType":"Patient","id":"a3f2c1...","birthDate":"1975-03-01",...}
+{"resourceType":"Patient","id":"9b1e4d...","birthDate":"1962-07-01",...}
+```
+
+The files are already de-identified at this point. FENIX applied the de-identification rules on the Go structs before writing the NDJSON — FLARE receives output that is safe to forward to HIPS without further transformation. See [❹ De-identification](#-de-identification).
+
+---
+
 ## ❷ Approval
 
 Approval happens at two levels: **central** (GitHub, once per version) and
@@ -861,3 +1024,354 @@ that are assembled into FHIR resources (see the SQL format in the help output).
 The **no-transformation path** (FHIR JSON connector) bypasses the staging
 database entirely — data that is already valid FHIR JSON is passed through
 directly.
+
+---
+
+## ❹ How FENIX handles a live FHIR request
+
+This section covers the real-time request path — what happens when a FHIR consumer sends a search request to FENIX, as opposed to triggering a batch export.
+
+### How does a SearchParameter translate a request filter to a source field?
+
+A FHIR request carries filters as URL parameters:
+
+```
+GET /fhir/Patient?language=nl-NL
+```
+
+The parameter name `language` is just a string. The server needs to know *which field* on the Patient resource it refers to, and how to evaluate it. That definition lives in a **SearchParameter** resource.
+
+---
+
+#### The SearchParameter resource
+
+A SearchParameter ties a URL parameter name to a FHIRPath expression that points to the field(s) on the resource it searches.
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "https://ziekenhuis.nl/fhir/SearchParameter/Patient-language",
+  "code": "language",
+  "base": ["Patient"],
+  "type": "token",
+  "expression": "Patient.communication.language"
+}
+```
+
+| Field | Role |
+|---|---|
+| `code` | The URL parameter name (`?language=...`) |
+| `base` | Which resource type(s) this applies to |
+| `type` | How the value is interpreted: `token` (code), `string`, `date`, `reference`, … |
+| `expression` | FHIRPath pointing to the field on the resource |
+
+When the request `?language=nl-NL` arrives, FENIX resolves `language` → SearchParameter → `Patient.communication.language` → token filter on that field.
+
+---
+
+#### How FENIX evaluates a filter — post-conversion on Go structs
+
+FENIX does not push filters down to the source system. Instead it always converts the full source data to FHIR Go structs first, then evaluates the filter directly on those structs using the FHIRPath expression from the SearchParameter. Only matching structs are included in the response Bundle.
+
+```
+① Request arrives
+   GET /fhir/Patient?language=nl-NL
+
+② SearchParameter resolves the parameter name to a FHIRPath expression
+   "language"  →  Patient.communication.language  (type: token)
+
+③ All source rows are loaded and converted to FHIR Patient structs in Go
+   ConceptMap (forward): NL → nl-NL,  EN → en-GB,  DE → de-DE
+
+④ The FHIRPath expression is evaluated on each Go struct
+   patient.Communication[0].Language.Coding[0].Code == "nl-NL"  →  keep
+   patient.Communication[0].Language.Coding[0].Code == "en-GB"  →  drop
+
+⑤ Matching structs are wrapped in a Bundle and returned
+```
+
+Because the filter runs after conversion, it operates on FHIR codes already — no reverse ConceptMap lookup is needed. The same struct that was produced by the ConceptMap in step ③ is the one being tested in step ④.
+
+---
+
+#### Filtering by a single code
+
+```
+GET /fhir/Patient?language=nl-NL
+```
+
+SearchParameter expression `Patient.communication.language` is evaluated on every converted Patient struct. Structs where that field equals the token `nl-NL` are kept; all others are dropped before the Bundle is assembled.
+
+---
+
+#### Filtering by a ValueSet — the `:in` modifier
+
+Instead of a single code you can filter on *all codes in a ValueSet* using the `:in` modifier:
+
+```
+GET /fhir/Patient?language:in=https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages
+```
+
+This means: *keep resources whose `communication.language` is any code contained in that ValueSet.*
+
+```
+① ValueSet is expanded
+   https://.../SupportedLanguages  →  { nl-NL, en-GB, de-DE }
+
+② All source rows are converted to FHIR Patient structs (ConceptMap applied)
+
+③ FHIRPath expression evaluated on each struct
+   patient.Communication[x].Language  in  { nl-NL, en-GB, de-DE }  →  keep / drop
+```
+
+The ValueSet URI in the request is the same URI that appears as `targetScope` in the ConceptMap — the codes the ConceptMap produces are exactly the codes the ValueSet contains, so the membership check in step ③ always works cleanly.
+
+---
+
+#### Source-level pushdown — not yet implemented
+
+Evaluating filters on Go structs means all source rows are always loaded and converted, even those that will be dropped. For large datasets, pushing the filter down to the source query (SQL `WHERE` clause or API query parameter) before conversion would be more efficient.
+
+This is a planned optimisation. When implemented, it will be configurable per source — sources that support it can use pushdown; others fall back to the post-conversion path described above. Pushdown requires a reverse ConceptMap lookup (FHIR filter code → source code) that is not needed on the current path.
+
+---
+
+## ❺ De-identification
+
+FENIX exports patient data for secondary use — research purposes for which the data was not originally collected. Before that data leaves the hospital, identifiers must be removed or transformed so that the data cannot be traced back to an individual without additional information held by the hospital. This is **pseudonymisation** under GDPR: the data is de-identified, but the hospital retains a key that allows re-identification if legally required.
+
+---
+
+### Pipeline position
+
+De-identification runs on the Go structs, after filtering and before serialisation to NDJSON. Working on typed structs means the full resource shape is available — no string parsing over raw JSON.
+
+```
+source data
+    → staging DB → SQL queries
+    → Go structs
+    → filter (FHIRPath / search params)
+    → ❹ de-identify              ← here
+    → serialize to NDJSON
+    → write output files
+    → serve download links
+```
+
+FLARE, which downloads and forwards to HIPS, receives already-de-identified NDJSON.
+
+---
+
+### Two-layer configuration
+
+Rules are configured at two levels that compose at runtime.
+
+**Layer 1 — IG standard set (`de-identification.json`)**
+
+Each Implementation Guide package ships a `de-identification.json` — a plain JSON file versioned alongside the IG, not a `StructureDefinition`. It defines the default ruleset for all exports using that IG:
+
+```json
+{
+  "id": "de-identification-default",
+  "version": "0.1.0",
+  "rules": [
+    {
+      "path": "Patient.id",
+      "action": "hash",
+      "algorithm": "hmac-sha256",
+      "propagate-to": ["*.subject", "*.patient"]
+    },
+    {
+      "path": "Patient.identifier",
+      "action": "hash",
+      "algorithm": "hmac-sha256"
+    },
+    {
+      "path": "**.ofType(date)",
+      "action": "shift",
+      "max-days": 15
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "first-of-month"
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "clamp-age",
+      "min-age": 18,
+      "max-age": 85
+    }
+  ]
+}
+```
+
+`propagate-to` on `Patient.id` limits reference updates to `*.subject` and `*.patient` only — not every `Reference` field in every resource.
+
+**Layer 2 — per-export override (YAML)**
+
+The `de-identification` block in the dataset export request YAML can override individual rules. See [The YAML — source of truth](#the-yaml--source-of-truth) for full examples.
+
+Override semantics:
+
+| Scenario | Behaviour |
+|---|---|
+| Same `path` as a standard rule | Per-export rule **replaces** the standard rule for that path |
+| `action: none` | Standard rule for that path is **disabled** |
+| New `path` not in the standard set | Rule is **added** on top of the standard set |
+
+---
+
+### Execution order per resource
+
+Rules are applied from most specific path to most general — `Patient.birthDate` takes precedence over `**.ofType(date)`:
+
+```
+① hash Patient.id
+     → rewrite *.subject and *.patient references across all resources in the export
+
+② hash Patient.identifier (all slices)
+
+③ Patient.birthDate (specific rules win, applied in order):
+     first-of-month  →  clamp-age (min/max)
+
+④ all other date fields (general rule):
+     shift ± N days, consistent per patient
+```
+
+The per-patient shift is derived deterministically so that temporal relationships between resources are preserved within one run:
+
+```
+shift_days = HMAC(env_key + run_id, patient_id) mod 31 − 15
+```
+
+`run_id` is a UUID generated once per export run — consistent per patient within that run, different across runs.
+
+---
+
+### Key management
+
+The HMAC key never appears in the YAML, in generated FHIR artefacts, or in Git:
+
+```
+FENIX_DEIDENT_KEY=<base64-encoded secret>   # .env — stays inside the hospital
+```
+
+The hospital retains this key. A privacy officer with access to the key and the source data can reverse the pseudonymisation for any individual patient if legally required.
+
+---
+
+### FLARE — the background service
+
+**FLARE** (FENIX Local Approval, Run, and Export) runs locally alongside FENIX and handles the full export lifecycle — from polling for approved requests to forwarding de-identified data to HIPS.
+
+```
+FLARE (local, next to FENIX)
+        │
+        ├── ① polls GitHub repo for new / updated export requests
+        │         reads YAML + FHIR artefacts after central approval (PR merge)
+        │
+        ├── ② presents local approval step to hospital staff
+        │         (Hospital Approval Service — see ❷ Approval)
+        │
+        ├── ③ fires approved export at FENIX
+        │         POST /fhir/Group/[id]/$export
+        │
+        ├── ④ polls FENIX until export is complete
+        │         GET [Content-Location header from 202 response]
+        │
+        └── ⑤ downloads de-identified NDJSON → forwards to HIPS
+```
+
+FENIX does not push data anywhere. It produces output and serves links. FLARE is the only component that retrieves those files and moves data onward — keeping FENIX stateless with respect to the destination.
+
+---
+
+## ❻ ConceptMap resolution
+
+When FENIX converts a source row to a FHIR resource, it needs to translate the hospital's internal codes to the standard codes required by the profile. The ConceptMap is the artefact that defines those translation rules. See [What is a ConceptMap?](#what-is-a-conceptmap) for a conceptual overview.
+
+---
+
+### Step 1 — the ValueSet (target codes)
+
+The profile binding points to a ValueSet that lists all valid output codes. FENIX uses the ValueSet URI as the key to find the right ConceptMap.
+
+```json
+{
+  "resourceType": "ValueSet",
+  "url": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
+  "name": "SupportedLanguages",
+  "compose": {
+    "include": [
+      {
+        "system": "urn:ietf:bcp:47",
+        "concept": [
+          { "code": "nl-NL", "display": "Dutch (Netherlands)" },
+          { "code": "en-GB", "display": "English (United Kingdom)" },
+          { "code": "de-DE", "display": "German (Germany)" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Step 2 — the ConceptMap (translation rules)
+
+The ConceptMap maps from the EPD's internal codes to the standard codes the ValueSet expects. Its `targetScope` matches the ValueSet URI in the profile binding — that is how FENIX links the two.
+
+```json
+{
+  "resourceType": "ConceptMap",
+  "url": "https://ziekenhuis.nl/fhir/ConceptMap/EpdTaalNaarBcp47",
+  "name": "EpdTaalNaarBcp47",
+  "sourceScope": "https://ziekenhuis.nl/fhir/ValueSet/EpdTaalcodes",
+  "targetScope": "https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages",
+  "group": [
+    {
+      "source": "https://ziekenhuis.nl/fhir/CodeSystem/EpdTaalcodes",
+      "target": "urn:ietf:bcp:47",
+      "element": [
+        {
+          "code": "NL",
+          "display": "Nederlands",
+          "target": [{ "code": "nl-NL", "display": "Dutch (Netherlands)", "relationship": "equivalent" }]
+        },
+        {
+          "code": "EN",
+          "display": "Engels",
+          "target": [{ "code": "en-GB", "display": "English (United Kingdom)", "relationship": "equivalent" }]
+        },
+        {
+          "code": "DE",
+          "display": "Duits",
+          "target": [{ "code": "de-DE", "display": "German (Germany)", "relationship": "equivalent" }]
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### Step 3 — how FENIX resolves it at runtime
+
+When FENIX converts a source row to a FHIR resource:
+
+1. It reads the raw value from the EPD: `"NL"`
+2. It checks the profile for `Patient.communication.language` — the binding points to `https://ziekenhuis.nl/fhir/ValueSet/SupportedLanguages`
+3. It finds the ConceptMap whose `targetScope` matches that URI
+4. It looks up `"NL"` in the ConceptMap and gets `"nl-NL"`
+5. It writes `"nl-NL"` into the FHIR output — the resource now validates against the profile
+
+```
+① EPD value:  "NL"
+② Profile binding → https://.../SupportedLanguages
+③ ConceptMap targetScope matches → EpdTaalNaarBcp47
+④ Lookup "NL" → "nl-NL"
+⑤ FHIR output: "nl-NL"  ✓ valid
+```
+
+If no mapping exists for a source code, FENIX raises a conversion error rather than silently producing an invalid resource.
