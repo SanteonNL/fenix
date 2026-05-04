@@ -133,7 +133,7 @@ func resolveEnvVars(data []byte) ([]byte, error) {
 func validateEnvVars(data []byte) error {
 	// Load .env file if it exists (doesn't fail if missing)
 	_ = godotenv.Load("config/.env")
-	
+
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 	matches := re.FindAllStringSubmatch(string(data), -1)
 
