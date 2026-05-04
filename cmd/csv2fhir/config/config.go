@@ -87,7 +87,9 @@ type OutputConfig struct {
 }
 
 type LocalOutputConfig struct {
-	Dir string `yaml:"dir"`
+	Dir          string `yaml:"dir"`          // Output directory
+	UseTimestamp bool   `yaml:"useTimestamp"` // Create timestamped subdirectories (default: true)
+	ArchiveCount int    `yaml:"archiveCount"` // Number of previous runs to keep in archive (0 = keep all, default: 5)
 }
 
 // DataLakeConfig configures a data gateway endpoint (e.g. dls-t.hips.santeon.nl).
@@ -104,7 +106,7 @@ type DataLakeConfig struct {
 // Supports all string fields in the configuration structure.
 func resolveEnvVars(data []byte) ([]byte, error) {
 	// Load .env file if it exists (doesn't fail if missing)
-	_ = godotenv.Load()
+	_ = godotenv.Load("config/.env")
 
 	// Pattern to match ${VAR_NAME}
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
@@ -129,6 +131,9 @@ func resolveEnvVars(data []byte) ([]byte, error) {
 // validateEnvVars checks that all ${ENV_VAR_NAME} placeholders in the config
 // have corresponding environment variables set. This helps catch missing secrets early.
 func validateEnvVars(data []byte) error {
+	// Load .env file if it exists (doesn't fail if missing)
+	_ = godotenv.Load("config/.env")
+	
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 	matches := re.FindAllStringSubmatch(string(data), -1)
 
@@ -157,7 +162,7 @@ func LoadConfig(filePath string) (*Config, error) {
 	}
 
 	// Load environment variables from .env file (if it exists)
-	_ = godotenv.Load()
+	_ = godotenv.Load("config/.env")
 
 	// Validate that all required environment variables are present
 	if err := validateEnvVars(data); err != nil {
@@ -179,7 +184,11 @@ func LoadConfig(filePath string) (*Config, error) {
 		Output: OutputConfig{
 			Format: "json",
 			Type:   "local",
-			Local:  LocalOutputConfig{Dir: "output"},
+			Local: LocalOutputConfig{
+				Dir:          "output",
+				UseTimestamp: true, // Default: create timestamped subdirectories
+				ArchiveCount: 5,    // Default: keep last 5 runs in archive
+			},
 		},
 	}
 

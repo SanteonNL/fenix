@@ -21,11 +21,13 @@ output:
   type: local
   local:
     dir: output
+    useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
+    archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
 
 sources:
   hix-test:
     type: sqlserver
-    connection_string: "server=localhost;user id=sa;password=HixTest_Pass1!;database=hix;encrypt=disable"
+    connection_string: "server=localhost;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=disable"
 
   luscii:
     type: luscii

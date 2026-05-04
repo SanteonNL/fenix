@@ -10,6 +10,7 @@ import (
 
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/config"
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
+	"github.com/SanteonNL/fenix/cmd/csv2fhir/output"
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
@@ -20,7 +21,7 @@ import (
 )
 
 var (
-	configPath = flag.String("config", "config/csv2fhir.yaml", "Path to configuration file")
+	configPath = flag.String("config", "config/config.yaml", "Path to configuration file")
 	sqlFile    = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
 	csvFile    = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
 	command    = flag.String("cmd", "all", "Command: load, convert, all")
@@ -79,17 +80,27 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize output manager
+	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+	var outputMgr *output.Manager
+	if cfg.Output.Local.UseTimestamp {
+		outputMgr, err = output.NewManager(outputDir, cfg.Output.Local.ArchiveCount, &log)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to initialize output manager")
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	switch *command {
 	case "load":
-		loadSources(ctx, db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
 	case "convert":
-		convertToFHIR(db, cfg, repoRoot, &log)
+		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "all":
-		loadSources(ctx, db, cfg, repoRoot, &log)
-		convertToFHIR(db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	default:
 		log.Fatal().Str("command", *command).Msg("Unknown command")
 	}
@@ -130,7 +141,7 @@ func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog
 	}
 }
 
-func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
 	sqlPath := *sqlFile
 	if sqlPath == "" {
 		sqlPath = cfg.FHIR.SQLFile
@@ -139,13 +150,13 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 		log.Debug().Msg("No fhir.sqlFile configured, skipping generic FHIR conversion")
 		return
 	}
-	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, log)
+	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
 }
 
 // loadSources iterates all configured sources, loads each into the staging
 // database, then runs FHIR conversion for every SQL file found in
 // queries/<sourceName>/.
-func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
 	for name, sc := range cfg.Sources {
 		src := buildSource(name, sc, repoRoot, *log)
 		if err := src.Load(ctx, db); err != nil {
@@ -163,7 +174,7 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 				continue
 			}
-			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, log)
+			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, outputMgr, log)
 		}
 	}
 }
@@ -195,7 +206,7 @@ func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerol
 }
 
 // runFHIRConversion executes one SQL file against the database and writes FHIR output.
-func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, log *zerolog.Logger) {
+func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
 	log.Info().Str("sql", sqlPath).Msg("Starting FHIR conversion")
 
 	query, err := os.ReadFile(sqlPath)
@@ -224,11 +235,6 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		return
 	}
 
-	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		log.Fatal().Err(err).Msg("Failed to create output directory")
-	}
-
 	baseName := strings.TrimSuffix(filepath.Base(sqlPath), ".sql")
 	ext := cfg.Output.Format
 	if ext == "pretty" {
@@ -249,11 +255,28 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		return
 	}
 
-	outputFile := filepath.Join(outputDir, baseName+"."+ext)
-	if err := os.WriteFile(outputFile, data, 0644); err != nil {
-		log.Error().Err(err).Str("file", outputFile).Msg("Failed to write output file")
-		return
+	// Write output file using manager if available, otherwise write directly
+	var outputFile string
+	if outputMgr != nil {
+		// Use timestamped output manager
+		outputFile, err = outputMgr.WriteFile(baseName+"."+ext, data)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to write output file")
+			return
+		}
+	} else {
+		// Write directly to output directory
+		outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			log.Fatal().Err(err).Msg("Failed to create output directory")
+		}
+		outputFile = filepath.Join(outputDir, baseName+"."+ext)
+		if err := os.WriteFile(outputFile, data, 0644); err != nil {
+			log.Error().Err(err).Str("file", outputFile).Msg("Failed to write output file")
+			return
+		}
 	}
+
 	log.Info().Str("file", outputFile).Int("resources", len(resources)).Msg("FHIR resources exported")
 }
 
