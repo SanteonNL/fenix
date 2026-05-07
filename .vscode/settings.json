@@ -27,6 +27,11 @@
     },
     "go.gopath": "C:/Users/t.hetterscheid/go",
     "go.goroot": "C:/Users/t.hetterscheid/sdk/go1.25.4",
+    "files.associations": {
+        "queries/generic/*.sql": "plaintext",
+        "queries/hix/*.sql": "plaintext",
+        "queries/hix/**/*.sql": "plaintext"
+    },
     "workbench.editorAssociations": {
         "*.copilotmd": "vscode.markdown.preview.editor",
         "*.parquet": "duckdb.dataFileViewer",

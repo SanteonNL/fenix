@@ -1,48 +1,3 @@
-# Contents
-
-- [What is FENIX?](#what-is-fenix)
-  - [The driving use case — Cumuluz IBD within HEALTH-RI](#the-driving-use-case--cumuluz-ibd-within-health-ri)
-  - [What does a FHIR request look like?](#what-does-a-fhir-request-look-like)
-  - [FHIR Async Bulk Export — how it works](#fhir-async-bulk-export--how-it-works)
-  - [What is a FHIR profile?](#what-is-a-fhir-profile)
-  - [What is a ConceptMap?](#what-is-a-conceptmap)
-  - [Why FENIX profiles against base FHIR R4 — the Dutch and European model landscape](#why-fenix-profiles-against-base-fhir-r4--the-dutch-and-european-model-landscape)
-    - [The three layers of healthcare information modelling](#the-three-layers-of-healthcare-information-modelling)
-    - [The European FHIR profile landscape](#the-european-fhir-profile-landscape)
-    - [The Dutch FHIR profile landscape](#the-dutch-fhir-profile-landscape)
-    - [Decision — profile against base FHIR R4 for now](#decision--profile-against-base-fhir-r4-for-now)
-- [FENIX — annotations explained](#fenix--annotations-explained)
-  - [❶ Dataset export request](#-dataset-export-request)
-    - [The YAML — source of truth](#the-yaml--source-of-truth)
-    - [Generated — Group.json](#generated--groupjson-cohort-as-fhir-group)
-    - [Generated — Parameters.json](#generated--parametersjson-export-query-as-fhir-export-parameters)
-    - [Profile validation](#profile-validation)
-    - [All three files committed together](#all-three-files-committed-together)
-    - [How the export runs — async bulk vs synchronous Bundle](#how-the-export-runs--async-bulk-vs-synchronous-bundle)
-  - [❷ Approval](#-approval)
-    - [Central approval — GitHub PR](#central-approval--github-pr)
-    - [Local approval — Hospital Approval Service](#local-approval--hospital-approval-service)
-  - [❸ Loading](#-loading)
-    - [Layer 1 — Sources](#layer-1--sources)
-    - [Layer 2 — Connectors](#layer-2--connectors)
-    - [Layer 3 — Source interface](#layer-3--source-interface)
-    - [Layer 4 — Staging database](#layer-4--staging-database)
-    - [Layer 5 — Converter](#layer-5--converter)
-  - [❹ How FENIX handles a live FHIR request](#-how-fenix-handles-a-live-fhir-request)
-    - [How does a SearchParameter translate a request filter to a source field?](#how-does-a-searchparameter-translate-a-request-filter-to-a-source-field)
-  - [❺ De-identification](#-de-identification)
-    - [Pipeline position](#pipeline-position)
-    - [Two-layer configuration](#two-layer-configuration)
-    - [Execution order per resource](#execution-order-per-resource)
-    - [Key management](#key-management)
-    - [FLARE — the background service](#flare--the-background-service)
-  - [❻ ConceptMap resolution](#-conceptmap-resolution)
-    - [Step 1 — the ValueSet](#step-1--the-valueset-target-codes)
-    - [Step 2 — the ConceptMap](#step-2--the-conceptmap-translation-rules)
-    - [Step 3 — how FENIX resolves it at runtime](#step-3--how-fenix-resolves-it-at-runtime)
-
----
-
 # What is FENIX?
 
 **FENIX** stands for **FHIR ENabled Node for Information Exchange**.
@@ -56,6 +11,10 @@ Key characteristics:
 - The hospital retains full data sovereignty — no data is pushed without explicit approval.
 - FENIX speaks FHIR outward but connects to non-FHIR source systems inward.
 - A dataset export request (YAML + generated FHIR resources) is the unit of governance: it defines what data may be shared, with whom, and how often.
+
+---
+
+![FENIX hospital overview](images/fenix_hospital_overview.drawio.png)
 
 ---
 
@@ -80,172 +39,59 @@ Hospital EPD / source systems
               ▼
         HIPS / HEALTH-RI
               │
-              └── PLUGIN (federated learning pilot)
-                    │
-                    └── Cumuluz IBD use case
-                          ← consumes FHIR-formatted IBD data
-                          ← first secondary use case tested within HEALTH-RI
-```
-
-This use case is also the reason FENIX starts with base FHIR R4 profiles rather than waiting for a stable Dutch or European profile layer — see [Why FENIX profiles against base FHIR R4](#why-fenix-profiles-against-base-fhir-r4--the-dutch-and-european-model-landscape).
-
----
-
-![FENIX hospital overview](images/fenix_hospital_overview.drawio.png)
-
----
-
-### What does a FHIR request look like?
-
-A FHIR request is a plain HTTP GET to a well-known URL. The server returns JSON. No proprietary protocol, no special client — a browser or `curl` is enough.
-
-**Example: search for female patients born after 1980**
-
-```
-GET /fhir/Patient?gender=female&birthdate=gt1980-01-01
-Accept: application/fhir+json
-```
-
-The server responds with a **Bundle** — a JSON envelope that wraps one or more matching resources:
-
-```json
-{
-  "resourceType": "Bundle",
-  "type": "searchset",
-  "total": 2,
-  "entry": [
-    {
-      "resource": {
-        "resourceType": "Patient",
-        "id": "p-1042",
-        "name": [
-          {
-            "family": "De Vries",
-            "given": ["Anna"]
-          }
-        ],
-        "gender": "female",
-        "birthDate": "1985-03-22",
-        "identifier": [
-          {
-            "system": "https://ziekenhuis.nl/patientnummer",
-            "value": "10042"
-          },
-          {
-            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
-            "value": "123456789"
-          }
-        ]
-      }
-    },
-    {
-      "resource": {
-        "resourceType": "Patient",
-        "id": "p-2187",
-        "name": [
-          {
-            "family": "Janssen",
-            "given": ["Sophie"]
-          }
-        ],
-        "gender": "female",
-        "birthDate": "1991-07-08",
-        "identifier": [
-          {
-            "system": "https://ziekenhuis.nl/patientnummer",
-            "value": "21087"
-          },
-          {
-            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
-            "value": "987654321"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-Every field has a fixed meaning defined by the FHIR standard — `birthDate`, `gender`, `identifier`, and so on are the same across every FHIR server in the world. That is what makes FHIR useful for data exchange: both sides speak the same language without custom mapping.
-
-FENIX receives this kind of request, translates the filters into queries against the hospital's source systems, and returns the result in exactly this format.
-
----
-
-### FHIR Async Bulk Export — how it works
-
-A regular FHIR search returns a **Bundle** synchronously: one HTTP call, one JSON response, everything in memory. This works for small result sets but breaks down for bulk exports — thousands of patients across multiple resource types won't fit in a single round-trip without timeouts or memory exhaustion.
-
-The [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) defines an asynchronous three-step pattern instead.
-
----
-
-#### Step 1 — kick off
-
-The client sends a `POST` to the `$export` operation on a Group resource. The `Prefer: respond-async` header tells the server not to wait:
-
-```
-POST /fhir/Group/oncology-active-2024/$export
-Prefer: respond-async
-Accept: application/fhir+json
-```
-
-The server responds immediately with `202 Accepted` and a `Content-Location` header pointing to a status endpoint. No data is returned yet — the server starts processing in the background.
-
-```
-HTTP/1.1 202 Accepted
-Content-Location: /fhir/$export-status/run-f3a1c8
+              │
+              └── Cumuluz IBD use case
+                    ← consumes FHIR-formatted IBD data
+                    ← first secondary use case tested within HEALTH-RI
 ```
 
 ---
 
-#### Step 2 — poll for completion
+# FENIX — Architecture
 
-The client polls the status URL periodically.
+![FENIX architecture diagram](images/architecture.drawio.png)
 
-While still running, the server returns `202` with a progress hint:
-
-```
-HTTP/1.1 202 Accepted
-X-Progress: "processing 3 of 5 resource types"
-```
-
-When complete, the server returns `200` with a **manifest** — a JSON list of download URLs, one per resource type:
-
-```json
-{
-  "transactionTime": "2024-03-15T02:00:00Z",
-  "output": [
-    { "type": "Patient",   "url": "/fhir/$export-files/run-f3a1c8/Patient.ndjson" },
-    { "type": "Condition", "url": "/fhir/$export-files/run-f3a1c8/Condition.ndjson" }
-  ]
-}
-```
+| Annotation | Section |
+|---|---|
+| ❶ | [SIM on FHIR](#❶-sim-on-fhir) |
+| ❷ | [Dataset export request](#❷-dataset-export-request) |
+| ❸ | [Approval](#❸-approval) |
+| ❹ | [Loading](#❹-loading) |
+| ❺ | [How FENIX handles a live FHIR request](#❺-how-fenix-handles-a-live-fhir-request) |
+| ❻ | [De-identification](#❻-de-identification) |
+| ❼ | [ConceptMap resolution](#❼-conceptmap-resolution) |
 
 ---
 
-#### Step 3 — download NDJSON
+## ❶ SIM on FHIR
 
-Each file is downloaded separately. The format is **NDJSON** (newline-delimited JSON): one complete FHIR resource per line, no wrapping array, no commas between lines:
+The first annotation in the diagram points to **SIM on FHIR** — the box that sits at the top of the architecture alongside the data sources. It governs the shape of every resource FENIX produces.
 
+**SIM on FHIR** (Santeon Informatie Model on FHIR) is the Santeon FHIR Implementation Guide for secondary use of hospital data. It defines the FHIR profiles, value sets, ConceptMaps, and de-identification rules that FENIX applies when exporting patient data.
+
+| | |
+|---|---|
+| Repository | [github.com/SanteonNL/sim-on-fhir](https://github.com/SanteonNL/sim-on-fhir) |
+| Published IG | [sim-on-fhir IG](https://dlswesanhipsp04.z6.web.core.windows.net/ig/en/index.html) |
+| FHIR version | R4 (4.0.1) |
+
+Every dataset export request references this IG:
+
+```yaml
+implementation-guide: "https://ig.santeon.nl/sim-on-fhir|0.1.0"
 ```
-{"resourceType":"Patient","id":"a3f2c1...","birthDate":"1975-03-01",...}
-{"resourceType":"Patient","id":"9b1e4d...","birthDate":"1962-07-01",...}
-```
 
-This is streamable — the client reads line by line without loading the full file into memory.
+This single reference tells FENIX which profiles to validate converted resources against, which ConceptMaps to apply for code translation, and which de-identification rules govern the output by default. The IG is the shared contract between FENIX and the data consumer — if a resource validates against a profile published in the IG, both sides agree on exactly which fields are present and what the codes mean.
 
 ---
 
-| | Synchronous Bundle | Async bulk (`$export`) |
-|---|---|---|
-| Response | Single JSON response | NDJSON files, one per resource type |
-| Size limit | Breaks above ~10k resources | No practical limit |
-| Client model | Wait for response | Kick off → poll → download |
-| Memory | All resources in memory at once | Streamed file by file |
-| FHIR standard | Core FHIR | [Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) |
+### What is an Implementation Guide?
 
-For how FENIX implements this pattern end-to-end — including FLARE's role in kicking off, polling, and forwarding to HIPS — see [How the export runs](#how-the-export-runs--async-bulk-vs-synchronous-bundle).
+A **FHIR Implementation Guide (IG)** is a versioned package that bundles everything a specific use case needs on top of base FHIR: profiles, value sets, ConceptMaps, search parameters, and operational rules — distributed as a single `package.tgz` that any FHIR tooling can download and reference by canonical URL.
+
+Think of it as the contract between producer and consumer: if a server claims conformance to an IG, both sides know exactly which fields are required, which codes are valid, and which operations are supported.
+
+FENIX treats the IG reference in a dataset export request as a dependency declaration: at validation time it fetches the package, finds the matching `StructureDefinition` for each resource type, and validates the converted output against those constraints.
 
 ---
 
@@ -413,33 +259,6 @@ Binding strengths go from loose to strict: `example` → `preferred` → `extens
 
 ---
 
-### What is a ConceptMap?
-
-A **ConceptMap** defines how codes from one system translate to codes in another. A profile says *which* codes are valid in the output (via its ValueSet binding); a ConceptMap says *how to get there* from whatever codes the hospital's source system uses internally.
-
-```
-EPD source data          ConceptMap               FHIR output
-──────────────           ──────────────────────   ──────────────────────────────
-"NL"           ───────►  "NL" → "nl-NL"  ───────► "nl-NL"  ✓ valid per profile
-"EN"           ───────►  "EN" → "en-GB"  ───────► "en-GB"  ✓ valid per profile
-"DU"           ───────►  no mapping       ───────► error: unmapped source code
-```
-
-The profile and ConceptMap are linked by the **ValueSet URI**: the profile binding points to a ValueSet, and the ConceptMap declares the same URI as its `targetScope`. This is how FENIX resolves which ConceptMap to apply to which field.
-
-Each mapping carries a `relationship` that describes how exact the translation is:
-
-| Value | Meaning |
-|---|---|
-| `equivalent` | The codes mean the same thing |
-| `source-is-narrower-than-target` | Source is more specific; target is broader |
-| `source-is-broader-than-target` | Source is broader; some detail is lost in translation |
-| `not-related-to` | No meaningful relationship — use only to document a deliberate non-mapping |
-
-For how FENIX resolves ConceptMaps at runtime — with full ValueSet, ConceptMap, and conversion examples — see [❻ ConceptMap resolution](#-conceptmap-resolution).
-
----
-
 ### Why FENIX profiles against base FHIR R4 — the Dutch and European model landscape
 
 #### The three layers of healthcare information modelling
@@ -555,16 +374,167 @@ This is a **temporary, pragmatic choice**. The goal is to learn and build now, w
 
 ---
 
-# FENIX — annotations explained
+## Understanding FHIR requests
 
-
-
-
-![FENIX architecture diagram](images/architecture.drawio.png)
+Before diving into the dataset export request, it helps to understand what a FHIR request looks like and how bulk export works — these concepts underpin everything in ❷ and ❸.
 
 ---
 
-## ❶ Dataset export request
+### What does a FHIR request look like?
+
+A FHIR request is a plain HTTP GET to a well-known URL. The server returns JSON. No proprietary protocol, no special client — a browser or `curl` is enough.
+
+**Example: search for female patients born after 1980**
+
+```
+GET /fhir/Patient?gender=female&birthdate=gt1980-01-01
+Accept: application/fhir+json
+```
+
+The server responds with a **Bundle** — a JSON envelope that wraps one or more matching resources:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "searchset",
+  "total": 2,
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "p-1042",
+        "name": [
+          {
+            "family": "De Vries",
+            "given": ["Anna"]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1985-03-22",
+        "identifier": [
+          {
+            "system": "https://ziekenhuis.nl/patientnummer",
+            "value": "10042"
+          },
+          {
+            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
+            "value": "123456789"
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "p-2187",
+        "name": [
+          {
+            "family": "Janssen",
+            "given": ["Sophie"]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1991-07-08",
+        "identifier": [
+          {
+            "system": "https://ziekenhuis.nl/patientnummer",
+            "value": "21087"
+          },
+          {
+            "system": "http://fhir.nl/fhir/NamingSystem/bsn",
+            "value": "987654321"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Every field has a fixed meaning defined by the FHIR standard — `birthDate`, `gender`, `identifier`, and so on are the same across every FHIR server in the world. That is what makes FHIR useful for data exchange: both sides speak the same language without custom mapping.
+
+FENIX receives this kind of request, translates the filters into queries against the hospital's source systems, and returns the result in exactly this format.
+
+---
+
+### FHIR Async Bulk Export — how it works
+
+A regular FHIR search returns a **Bundle** synchronously: one HTTP call, one JSON response, everything in memory. This works for small result sets but breaks down for bulk exports — thousands of patients across multiple resource types won't fit in a single round-trip without timeouts or memory exhaustion.
+
+The [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) defines an asynchronous three-step pattern instead.
+
+---
+
+#### Step 1 — kick off
+
+The client sends a `POST` to the `$export` operation on a Group resource. The `Prefer: respond-async` header tells the server not to wait:
+
+```
+POST /fhir/Group/oncology-active-2024/$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+The server responds immediately with `202 Accepted` and a `Content-Location` header pointing to a status endpoint. No data is returned yet — the server starts processing in the background.
+
+```
+HTTP/1.1 202 Accepted
+Content-Location: /fhir/$export-status/run-f3a1c8
+```
+
+---
+
+#### Step 2 — poll for completion
+
+The client polls the status URL periodically.
+
+While still running, the server returns `202` with a progress hint:
+
+```
+HTTP/1.1 202 Accepted
+X-Progress: "processing 3 of 5 resource types"
+```
+
+When complete, the server returns `200` with a **manifest** — a JSON list of download URLs, one per resource type:
+
+```json
+{
+  "transactionTime": "2024-03-15T02:00:00Z",
+  "output": [
+    { "type": "Patient",   "url": "/fhir/$export-files/run-f3a1c8/Patient.ndjson" },
+    { "type": "Condition", "url": "/fhir/$export-files/run-f3a1c8/Condition.ndjson" }
+  ]
+}
+```
+
+---
+
+#### Step 3 — download NDJSON
+
+Each file is downloaded separately. The format is **NDJSON** (newline-delimited JSON): one complete FHIR resource per line, no wrapping array, no commas between lines:
+
+```
+{"resourceType":"Patient","id":"a3f2c1...","birthDate":"1975-03-01",...}
+{"resourceType":"Patient","id":"9b1e4d...","birthDate":"1962-07-01",...}
+```
+
+This is streamable — the client reads line by line without loading the full file into memory.
+
+---
+
+| | Synchronous Bundle | Async bulk (`$export`) |
+|---|---|---|
+| Response | Single JSON response | NDJSON files, one per resource type |
+| Size limit | Breaks above ~10k resources | No practical limit |
+| Client model | Wait for response | Kick off → poll → download |
+| Memory | All resources in memory at once | Streamed file by file |
+| FHIR standard | Core FHIR | [Bulk Data Access IG](https://hl7.org/fhir/uv/bulkdata/) |
+
+For how FENIX implements this pattern end-to-end — including FLARE's role in kicking off, polling, and forwarding to HIPS — see [How the export runs](#how-the-export-runs--async-bulk-vs-synchronous-bundle).
+
+---
+
+## ❷ Dataset export request
 
 The **dataset export request** is the single approved artifact that drives FENIX.
 The YAML is the **human-authored source of truth**. From it, FENIX generates the
@@ -729,7 +699,7 @@ Before a converted resource is written to the export output, FENIX validates it 
 Set `implementation-guide` at the top level of the request YAML. FENIX fetches the IG's package and finds the matching `StructureDefinition` for each resource type — applied to both the `cohort` filters and the `export-query` resources.
 
 ```yaml
-implementation-guide: "https://ig.santeon.nl/careplan"
+implementation-guide: "https://ig.santeon.nl/sim-on-fhir"
 
 cohort:
   ...
@@ -740,48 +710,14 @@ export-query:
 
 Use this when all (or most) resources in the request are profiled by the same IG. It avoids repeating a profile URL on every entry and ensures cohort filters and exported resources are validated consistently.
 
-The IG used for Santeon exports is the **Santeon CarePlan Implementation Guide**:
+The IG used for Santeon exports is the **SIM on FHIR Implementation Guide**:
 
 | Field | Value |
 |---|---|
-| Canonical URL | `https://ig.santeon.nl/careplan` |
+| Canonical URL | `https://ig.santeon.nl/sim-on-fhir` |
 | Publisher | Santeon |
 | Version | 0.1.0 |
 | FHIR version | R4 (4.0.1) |
-
----
-
-#### Option B — per-resource profile (targeted override)
-
-Set `profile` on an individual `export-query` entry. Use this when a resource needs a profile from outside the IG, or when no IG applies.
-
-```yaml
-export-query:
-  - resource: CarePlan
-    params: "status=active"
-    profile: "https://ig.santeon.nl/careplan/StructureDefinition/santeon-careplan"
-```
-
-The **SanteonCarePlan** profile (`https://ig.santeon.nl/careplan/StructureDefinition/santeon-careplan`) mandates `status`, `intent`, `category`, `subject`, `period.start`, and `period.end`, and prohibits base elements not present in Santeon's data dictionary.
-
----
-
-#### Combining both
-
-A per-resource `profile` always overrides the IG for that specific resource. All other resources fall back to the top-level IG.
-
-```yaml
-implementation-guide: "https://ig.santeon.nl/careplan"
-
-export-query:
-  - resource: Patient
-    params: ""
-  - resource: CarePlan
-    params: "status=active"
-    profile: "https://other.ig/StructureDefinition/other-careplan"  # overrides IG for this entry only
-```
-
-When neither an IG nor a per-resource `profile` is set, FENIX validates against the base FHIR R4 resource definition only.
 
 ---
 
@@ -879,11 +815,11 @@ Each file in `output` is downloaded separately. Each line is one complete FHIR r
 {"resourceType":"Patient","id":"9b1e4d...","birthDate":"1962-07-01",...}
 ```
 
-The files are already de-identified at this point. FENIX applied the de-identification rules on the Go structs before writing the NDJSON — FLARE receives output that is safe to forward to HIPS without further transformation. See [❹ De-identification](#-de-identification).
+The files are already de-identified at this point. FENIX applied the de-identification rules on the Go structs before writing the NDJSON — FLARE receives output that is safe to forward to HIPS without further transformation. See [❻ De-identification](#-de-identification).
 
 ---
 
-## ❷ Approval
+## ❸ Approval
 
 Approval happens at two levels: **central** (GitHub, once per version) and
 **local** (Hospital Approval Service, before every run).
@@ -928,7 +864,150 @@ Governs *execution*. Required before every single run, regardless of frequency m
 
 ---
 
-## ❸ Loading
+### FLARE — GitHub approval polling and network access
+
+FENIX is deployed inside the hospital network. In most hospital IT environments outbound connections are permitted but inbound connections from external platforms are not — no external system can reach FENIX directly. This means FENIX cannot be triggered by HIPS or any platform component from the outside.
+
+**FLARE** (FENIX Local Approval, Run, and Export) solves this by inverting the connection direction. FLARE runs locally alongside FENIX and initiates every connection itself — all traffic is outbound from inside the hospital:
+
+```
+Hospital network
+    FLARE (local agent — all connections outbound)
+        │
+        ├── ① polls GitHub repo for new / merged export requests
+        │         reads YAML + FHIR artefacts after central approval (PR merge)
+        │
+        ├── ② presents local approval step to hospital staff
+        │         (Hospital Approval Service — see Local approval above)
+        │
+        ├── ③ fires approved export at FENIX (localhost)
+        │         POST /fhir/Group/[id]/$export
+        │
+        ├── ④ polls FENIX until export is complete (localhost)
+        │         GET [Content-Location header from 202 response]
+        │
+        └── ⑤ downloads de-identified NDJSON → forwards to HIPS (outbound)
+
+FENIX itself never accepts an inbound connection from outside the hospital.
+```
+
+No inbound firewall port needs to be opened for FENIX. FENIX remains stateless with respect to the destination — it produces output and serves download links; FLARE is the only component that retrieves those files and moves data outward.
+
+---
+
+### Broader landscape — Cumuluz interactions
+
+In the current design FLARE is a FENIX-specific agent. In the broader landscape of the **Cumuluz adapter** within HEALTH-RI, the same interaction pattern — *poll for approved requests → trigger export → retrieve data → forward* — is precisely the kind of orchestration that a **Cumuluz interaction service** could implement natively.
+
+Rather than deploying a separate FLARE binary alongside every FENIX instance, the Cumuluz platform could provide a generic interaction component that:
+
+- speaks FHIR Async Bulk Export (`POST /$export` → poll `Content-Location` → download NDJSON)
+- connects to any FENIX endpoint via outbound-only calls (same firewall-friendly pattern)
+- handles the approval lifecycle as a Cumuluz-governed workflow
+
+This would make FLARE's role a specialisation of a general Cumuluz interaction capability. FENIX stays unchanged — it receives standard FHIR bulk export calls regardless of who initiates them — while the orchestration logic lives in the Cumuluz layer and can be reused across any FHIR-compliant node, not just FENIX.
+
+---
+
+## End-to-end: dataset export request to FHIR bulk export
+
+This section ties ❷, ❸, and ❻ together into a single walkthrough — from authoring the YAML to HIPS receiving de-identified NDJSON.
+
+---
+
+### Step 1 — author and generate
+
+A human authors a YAML file that defines the cohort, the export query, de-identification rules, and the Implementation Guide to validate against. Running `fenix generate` produces two FHIR artifacts from that YAML:
+
+```
+oncology-active-2024.yaml          ← human authors this
+        │
+        └── fenix generate
+              ├── Group.json        ← cohort as FHIR Group (Bulk Cohort profile)
+              └── Parameters.json   ← export query as FHIR $export parameters
+```
+
+All three files are committed together in a Git PR. The YAML is the human-readable source of truth; the JSON is what FENIX loads at runtime.
+
+---
+
+### Step 2 — central + local approval
+
+Before any data moves, two approval gates must clear:
+
+1. **Central (GitHub PR)** — a data steward and privacy officer review and merge the YAML and generated FHIR JSON. This locks the audit trail and makes the request available to FLARE.
+2. **Local (Hospital Approval Service)** — before every single run, a staff member explicitly confirms execution. This step is required regardless of frequency mode (`on-demand` or `scheduled`).
+
+---
+
+### Step 3 — FLARE orchestrates the bulk export
+
+FLARE runs locally alongside FENIX inside the hospital. It never accepts inbound connections — every call is outbound:
+
+```
+① polls GitHub repo
+      reads merged YAML + Group.json + Parameters.json after central approval
+
+② presents local approval to hospital staff
+      waits for confirmation before proceeding
+
+③ kicks off the export at FENIX (localhost)
+      POST /fhir/Group/oncology-active-2024/$export
+      Prefer: respond-async
+      → 202 Accepted + Content-Location: /fhir/$export-status/run-f3a1c8
+
+④ polls FENIX until complete (localhost)
+      GET /fhir/$export-status/run-f3a1c8
+      → 202 while running (X-Progress header)
+      → 200 + manifest JSON when done
+
+⑤ downloads de-identified NDJSON from manifest
+      GET /fhir/$export-files/run-f3a1c8/Patient.ndjson
+      GET /fhir/$export-files/run-f3a1c8/Observation.ndjson
+      ...
+
+⑥ forwards NDJSON to HIPS (outbound)
+```
+
+---
+
+### Step 4 — what FENIX does during the export
+
+While FLARE is polling, FENIX runs the full internal pipeline:
+
+```
+POST /fhir/Group/[id]/$export received
+    → resolve cohort (evaluate member-filter expressions → patient list)
+    → for each resource type in _type / _typeFilter:
+        load from source → staging DB → SQL queries
+        → convert to FHIR Go structs
+        → apply ConceptMap translations        (❼)
+        → filter by _typeFilter params
+        → de-identify                          (❻)
+            hash Patient.id + propagate references
+            shift all dates ± N days (consistent per patient per run)
+            clamp / generalise Patient.birthDate
+        → serialize to NDJSON
+    → write files
+    → serve download manifest
+```
+
+De-identification runs on the typed Go structs, before serialization. FLARE therefore receives output that is already safe to forward — no further transformation is needed at the boundary.
+
+---
+
+### Why this design
+
+| Constraint | Solution |
+|---|---|
+| Hospital blocks inbound connections | FLARE inverts the direction — all calls are outbound from inside the hospital |
+| Hospital must retain data sovereignty | Local approval required before every run; FENIX never pushes data anywhere |
+| Bulk export too large for a synchronous response | FHIR Async Bulk (`$export` → poll → NDJSON) handles arbitrary sizes without memory limits |
+| Data must be de-identified before leaving | De-identification runs inside FENIX on Go structs, before FLARE downloads the NDJSON |
+
+---
+
+## ❹ Loading
 
 Loading is the step that pulls raw data from source systems into the
 **staging database**, where it becomes queryable SQL. Only after loading
@@ -1019,7 +1098,7 @@ database:
 
 After loading, the converter reads `.sql` files from `queries/<sourceName>/`
 and executes each against the staging database. Each SELECT produces rows
-that are assembled into FHIR resources (see the SQL format in the help output).
+that are assembled into FHIR resources.
 
 The **no-transformation path** (FHIR JSON connector) bypasses the staging
 database entirely — data that is already valid FHIR JSON is passed through
@@ -1027,7 +1106,178 @@ directly.
 
 ---
 
-## ❹ How FENIX handles a live FHIR request
+#### SQL row format
+
+Every SELECT must return these four reserved columns plus any number of field columns:
+
+| Column | Role |
+|---|---|
+| `resource_id` | Groups rows into one root resource (e.g. `patient_id`) |
+| `id` | This row's own key; child rows reference it via `parent_id` |
+| `parent_id` | Id of the parent row; empty string `''` for root rows |
+| `fhir_path` | FHIR path at this level: `"Patient"`, `"Patient.name"`, `"Patient.name.coding"` |
+| any other column | Leaf field value at this path level |
+
+A query file may contain multiple statements separated by `;`. Each statement handles one depth level. The converter assembles the tree by matching each row's `parent_id` to its parent's `id`. Multiple rows with the same `fhir_path` + `parent_id` become a FHIR array automatically.
+
+Dot-notation in column aliases (e.g. `"subject.reference"`) creates an inline nested object without needing a separate statement.
+
+---
+
+#### Example — Patient (two levels)
+
+```sql
+-- Statement 1: root Patient
+SELECT
+    patient_id  AS resource_id,
+    patient_id  AS id,
+    ''          AS parent_id,
+    'Patient'   AS fhir_path,
+    gender,
+    birth_date  AS birthDate,
+    active
+FROM patients;
+
+-- Statement 2: Patient.name[]
+-- Two rows for the same patient_id → Patient.name becomes an array of 2 elements.
+SELECT
+    patient_id  AS resource_id,
+    name_id     AS id,
+    patient_id  AS parent_id,         -- ← links to Statement 1
+    'Patient.name' AS fhir_path,
+    name_use    AS "use",
+    family,
+    given
+FROM patient_names;
+```
+
+Produces:
+
+```json
+{
+  "resourceType": "Patient",
+  "gender": "male",
+  "birthDate": "1980-01-01",
+  "name": [
+    { "use": "official", "family": "Jansen",    "given": ["Jan"] },
+    { "use": "maiden",   "family": "Pietersen", "given": ["Jan"] }
+  ]
+}
+```
+
+---
+
+#### Example — Encounter (three levels: root → type → coding)
+
+```sql
+-- Statement 1: root Encounter
+-- Dot-notation columns ("period.start", "subject.reference") create inline nested objects.
+SELECT
+    encounter_id                   AS resource_id,
+    encounter_id                   AS id,
+    ''                             AS parent_id,
+    'Encounter'                    AS fhir_path,
+    status,
+    start_time                     AS "period.start",
+    end_time                       AS "period.end",
+    'Patient/' || patient_id       AS "subject.reference"
+FROM encounters;
+
+-- Statement 2: Encounter.type[]
+SELECT
+    encounter_id  AS resource_id,
+    type_id       AS id,
+    encounter_id  AS parent_id,       -- ← parent is the root Encounter
+    'Encounter.type' AS fhir_path,
+    type_text     AS text
+FROM encounter_type;
+
+-- Statement 3: Encounter.type[i].coding[]
+-- parent_id points to type_id (level 2), not encounter_id.
+SELECT
+    t.encounter_id   AS resource_id,
+    tc.coding_id     AS id,
+    tc.type_id       AS parent_id,    -- ← parent is an Encounter.type row
+    'Encounter.type.coding' AS fhir_path,
+    tc.coding_system AS "system",
+    tc.coding_code   AS code,
+    tc.coding_display AS display
+FROM encounter_type_coding tc
+JOIN encounter_type t ON t.type_id = tc.type_id;
+```
+
+Produces:
+
+```json
+{
+  "resourceType": "Encounter",
+  "status": "finished",
+  "period": { "start": "2024-01-01", "end": "2024-01-02" },
+  "subject": { "reference": "Patient/p001" },
+  "type": [{
+    "text": "Consult",
+    "coding": [{ "system": "http://snomed.info/sct", "code": "11429006", "display": "Consultation" }]
+  }]
+}
+```
+
+---
+
+#### Example — Observation (category → coding, plus dot-notation)
+
+```sql
+-- Statement 1: root Observation
+-- Dot-notation: "valueQuantity.value" and "valueQuantity.unit" create a nested object inline.
+SELECT
+    observation_id                 AS resource_id,
+    observation_id                 AS id,
+    ''                             AS parent_id,
+    'Observation'                  AS fhir_path,
+    status,
+    effective_date                 AS effectiveDateTime,
+    'Patient/' || patient_id       AS "subject.reference",
+    value_value                    AS "valueQuantity.value",
+    value_unit                     AS "valueQuantity.unit"
+FROM observations;
+
+-- Statement 2: Observation.category[]
+SELECT
+    observation_id  AS resource_id,
+    category_id     AS id,
+    observation_id  AS parent_id,
+    'Observation.category' AS fhir_path,
+    category_text   AS text
+FROM observation_category;
+
+-- Statement 3: Observation.category[i].coding[]
+SELECT
+    c.observation_id  AS resource_id,
+    cc.coding_id      AS id,
+    cc.category_id    AS parent_id,   -- ← parent is an Observation.category row
+    'Observation.category.coding' AS fhir_path,
+    cc.coding_system  AS "system",
+    cc.coding_code    AS code,
+    cc.coding_display AS display
+FROM observation_category_coding cc
+JOIN observation_category c ON c.category_id = cc.category_id;
+```
+
+---
+
+#### How parent_id links the levels
+
+```
+SQL statement 1    fhir_path="Patient"               id=p001  parent_id=""
+SQL statement 2    fhir_path="Patient.name"           id=n1    parent_id=p001   ← child of p001
+                   fhir_path="Patient.name"           id=n2    parent_id=p001   ← sibling → array[1]
+SQL statement 3    fhir_path="Encounter.type.coding"  id=c1    parent_id=t1     ← child of type row t1
+```
+
+The depth can be arbitrarily deep — each level sets `parent_id` to the `id` of its parent statement's row.
+
+---
+
+## ❺ Request
 
 This section covers the real-time request path — what happens when a FHIR consumer sends a search request to FENIX, as opposed to triggering a batch export.
 
@@ -1136,7 +1386,7 @@ This is a planned optimisation. When implemented, it will be configurable per so
 
 ---
 
-## ❺ De-identification
+## ❻ De-identification
 
 FENIX exports patient data for secondary use — research purposes for which the data was not originally collected. Before that data leaves the hospital, identifiers must be removed or transformed so that the data cannot be traced back to an individual without additional information held by the hospital. This is **pseudonymisation** under GDPR: the data is de-identified, but the hospital retains a key that allows re-identification if legally required.
 
@@ -1151,7 +1401,7 @@ source data
     → staging DB → SQL queries
     → Go structs
     → filter (FHIRPath / search params)
-    → ❹ de-identify              ← here
+    → ❻ de-identify              ← here
     → serialize to NDJSON
     → write output files
     → serve download links
@@ -1270,7 +1520,7 @@ FLARE (local, next to FENIX)
         │         reads YAML + FHIR artefacts after central approval (PR merge)
         │
         ├── ② presents local approval step to hospital staff
-        │         (Hospital Approval Service — see ❷ Approval)
+        │         (Hospital Approval Service — see ❸ Approval)
         │
         ├── ③ fires approved export at FENIX
         │         POST /fhir/Group/[id]/$export
@@ -1285,9 +1535,32 @@ FENIX does not push data anywhere. It produces output and serves links. FLARE is
 
 ---
 
-## ❻ ConceptMap resolution
+## ❼ ConceptMap resolution
 
-When FENIX converts a source row to a FHIR resource, it needs to translate the hospital's internal codes to the standard codes required by the profile. The ConceptMap is the artefact that defines those translation rules. See [What is a ConceptMap?](#what-is-a-conceptmap) for a conceptual overview.
+When FENIX converts a source row to a FHIR resource, it needs to translate the hospital's internal codes to the standard codes required by the profile. The ConceptMap is the artefact that defines those translation rules.
+
+### What is a ConceptMap?
+
+A **ConceptMap** defines how codes from one system translate to codes in another. A profile says *which* codes are valid in the output (via its ValueSet binding); a ConceptMap says *how to get there* from whatever codes the hospital's source system uses internally.
+
+```
+EPD source data          ConceptMap               FHIR output
+──────────────           ──────────────────────   ──────────────────────────────
+"NL"           ───────►  "NL" → "nl-NL"  ───────► "nl-NL"  ✓ valid per profile
+"EN"           ───────►  "EN" → "en-GB"  ───────► "en-GB"  ✓ valid per profile
+"DU"           ───────►  no mapping       ───────► error: unmapped source code
+```
+
+The profile and ConceptMap are linked by the **ValueSet URI**: the profile binding points to a ValueSet, and the ConceptMap declares the same URI as its `targetScope`. This is how FENIX resolves which ConceptMap to apply to which field.
+
+Each mapping carries a `relationship` that describes how exact the translation is:
+
+| Value | Meaning |
+|---|---|
+| `equivalent` | The codes mean the same thing |
+| `source-is-narrower-than-target` | Source is more specific; target is broader |
+| `source-is-broader-than-target` | Source is broader; some detail is lost in translation |
+| `not-related-to` | No meaningful relationship — use only to document a deliberate non-mapping |
 
 ---
 

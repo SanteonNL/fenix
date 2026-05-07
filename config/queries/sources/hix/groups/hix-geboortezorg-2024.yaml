@@ -1,0 +1,24 @@
+# Geboortezorg overrides for the HIX source.
+# Groups are source-specific — a separate geboortezorg file can exist under luscii/groups/
+# with completely different overrides if needed.
+
+group: geboortezorg-2024
+
+resources:
+  Observation:
+    # Injected as {{.extra_where}} into EVERY Observation query for this group.
+    where: "category = 'geboortezorg'"
+
+    queries:
+      # Replace the entire SQL file for the "lab-results" query.
+      - name: lab-results
+        sql: queries/hix/geboortezorg/hix_geboortezorg_observation_lab.sql
+
+      # Partial replacement: inject a test-patient JOIN into the "main" query
+      # without touching the rest of the SQL. Useful for scoping to test data.
+      - name: main
+        replace:
+          - from: "FROM hix_observations"
+            to: |
+              FROM hix_observations
+              JOIN test_patients tp ON tp.patient_id = hix_observations.patient_id

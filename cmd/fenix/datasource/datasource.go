@@ -130,13 +130,19 @@ func (svc *DataSourceService) ReadResources(resourceType, patientID string) ([]R
 	if err != nil {
 		return nil, err
 	}
+	return svc.ExecuteSQL(resourceType, query, patientID)
+}
 
-	// Replace parameter in query
-	query = strings.ReplaceAll(query,
-		fmt.Sprintf(":%s.id", resourceType),
-		fmt.Sprintf("'%s'", patientID))
+// ExecuteSQL executes the provided SQL string directly and returns the results.
+// If patientID is non-empty it substitutes :<resourceType>.id in the query.
+func (svc *DataSourceService) ExecuteSQL(resourceType, sql, patientID string) ([]ResourceResult, error) {
+	if patientID != "" {
+		sql = strings.ReplaceAll(sql,
+			fmt.Sprintf(":%s.id", resourceType),
+			fmt.Sprintf("'%s'", patientID))
+	}
 
-	rows, err := svc.db.Queryx(query)
+	rows, err := svc.db.Queryx(sql)
 	if err != nil {
 		return nil, fmt.Errorf("error executing query: %w", err)
 	}

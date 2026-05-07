@@ -8,9 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"net/http"
+
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/config"
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
+	"github.com/SanteonNL/fenix/cmd/csv2fhir/fhirserver"
 	"github.com/SanteonNL/fenix/cmd/csv2fhir/output"
+	"github.com/SanteonNL/fenix/cmd/csv2fhir/querycompiler"
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
@@ -21,11 +25,16 @@ import (
 )
 
 var (
-	configPath = flag.String("config", "config/config.yaml", "Path to configuration file")
-	sqlFile    = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
-	csvFile    = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
-	command    = flag.String("cmd", "all", "Command: load, convert, all")
-	help       = flag.Bool("help", false, "Show help message")
+	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
+	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
+	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
+	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
+	help           = flag.Bool("help", false, "Show help message")
+	servePort      = flag.String("port", "8080", "HTTP port for the FHIR API server (used with -cmd serve)")
+	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
+	sourceName     = flag.String("source", "hix", "Query compiler source name (used with -cmd serve)")
+	groupID        = flag.String("group", "", "Query compiler group ID override (used with -cmd serve)")
+	dataSource     = flag.String("data-source", "", "Source name from config to connect to directly, bypassing the staging DB (used with -cmd serve)")
 )
 
 func main() {
@@ -101,6 +110,11 @@ func main() {
 	case "all":
 		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
+	case "serve-all":
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		fallthrough
+	case "serve":
+		startFHIRServer(db, cfg, repoRoot, &log)
 	default:
 		log.Fatal().Str("command", *command).Msg("Unknown command")
 	}
@@ -278,6 +292,63 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 	}
 
 	log.Info().Str("file", outputFile).Int("resources", len(resources)).Msg("FHIR resources exported")
+}
+
+// connectSourceDirectly opens a database connection directly to the named source in cfg.Sources,
+// bypassing the SQLite staging DB. Only "sqlserver" sources are supported.
+func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger) *sqlx.DB {
+	sc, ok := cfg.Sources[name]
+	if !ok {
+		log.Fatal().Str("source", name).Msg("Source not found in config")
+	}
+	if sc.Type != "sqlserver" {
+		log.Fatal().Str("source", name).Str("type", sc.Type).Msg("Direct connection only supported for sqlserver sources")
+	}
+	db, err := sqlx.Connect("sqlserver", sc.ConnectionString)
+	if err != nil {
+		log.Fatal().Err(err).Str("source", name).Msg("Failed to connect directly to SQL Server")
+	}
+	log.Info().Str("source", name).Msg("Connected directly to SQL Server")
+	return db
+}
+
+// startFHIRServer starts the FHIR API server. It blocks until the server exits.
+func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	db := stagingDB
+	if *dataSource != "" {
+		db = connectSourceDirectly(*dataSource, cfg, log)
+		defer db.Close()
+	}
+
+	configDir := resolvePath(repoRoot, *queryConfigDir)
+	compiler, err := querycompiler.New(configDir, repoRoot)
+	if err != nil {
+		log.Fatal().Err(err).Str("configDir", configDir).Msg("Failed to initialise query compiler")
+	}
+
+	profileSvc := converter.NewProfileService(*log)
+	if cfg.FHIR.ProfilesDir != "" {
+		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load profiles")
+		}
+	}
+
+	conceptMapSvc := converter.NewConceptMapService(*log)
+	if cfg.FHIR.ConceptMapsDir != "" {
+		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load concept maps")
+		}
+	}
+
+	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
+	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, *log)
+
+	addr := ":" + *servePort
+	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")
+	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
+		log.Fatal().Err(err).Msg("FHIR API server stopped")
+	}
 }
 
 func printHelp() {

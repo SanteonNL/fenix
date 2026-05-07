@@ -96,6 +96,32 @@ func (p *ProcessorService) ProcessResources(ctx context.Context, ds *datasource.
 	return processedResources, nil
 }
 
+// ProcessPreloadedResources processes already-fetched resource results without re-querying the database.
+func (p *ProcessorService) ProcessPreloadedResources(ctx context.Context, results []datasource.ResourceResult, resourceType string, filter []*types.Filter) ([]interface{}, error) {
+	err := p.outputManager.WriteToJSON(results, "temp_result")
+	if err != nil {
+		return nil, fmt.Errorf("failed to write resources to JSON: %w", err)
+	}
+
+	var processedResources []interface{}
+	for _, result := range results {
+		p.processedPaths = make(map[string]bool)
+		p.result = result
+		p.resourceType = resourceType
+
+		processed, err := p.ProcessSingleResource(result, filter)
+		if err != nil {
+			p.log.Error().Err(err).Msg("Error processing resource")
+			continue
+		}
+		if processed != nil {
+			processedResources = append(processedResources, processed)
+		}
+	}
+
+	return processedResources, nil
+}
+
 // ProcessSingleResource processes a single resource
 func (p *ProcessorService) ProcessSingleResource(result datasource.ResourceResult, filter []*types.Filter) (interface{}, error) {
 	// Create resource
