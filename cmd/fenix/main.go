@@ -7,14 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"net/http"
 
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/config"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/fhirserver"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/output"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/querycompiler"
+	"github.com/SanteonNL/fenix/cmd/fenix/config"
+	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/cmd/fenix/fhirserver"
+	"github.com/SanteonNL/fenix/cmd/fenix/output"
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
@@ -30,7 +31,7 @@ var (
 	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
 	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
 	help           = flag.Bool("help", false, "Show help message")
-	servePort      = flag.String("port", "8080", "HTTP port for the FHIR API server (used with -cmd serve)")
+	servePort      = flag.String("port", "127.0.0.1:8080", "Address for the FHIR API server (used with -cmd serve)")
 	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
 	sourceName     = flag.String("source", "hix", "Query compiler source name (used with -cmd serve)")
 	groupID        = flag.String("group", "", "Query compiler group ID override (used with -cmd serve)")
@@ -304,7 +305,16 @@ func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger)
 	if sc.Type != "sqlserver" {
 		log.Fatal().Str("source", name).Str("type", sc.Type).Msg("Direct connection only supported for sqlserver sources")
 	}
-	db, err := sqlx.Connect("sqlserver", sc.ConnectionString)
+	var db *sqlx.DB
+	var err error
+	for attempt := 1; attempt <= 10; attempt++ {
+		db, err = sqlx.Connect("sqlserver", sc.ConnectionString)
+		if err == nil {
+			break
+		}
+		log.Warn().Err(err).Int("attempt", attempt).Str("source", name).Msg("SQL Server not ready, retrying in 5s...")
+		time.Sleep(5 * time.Second)
+	}
 	if err != nil {
 		log.Fatal().Err(err).Str("source", name).Msg("Failed to connect directly to SQL Server")
 	}
@@ -344,7 +354,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
 	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, *log)
 
-	addr := ":" + *servePort
+	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatal().Err(err).Msg("FHIR API server stopped")
@@ -354,10 +364,10 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 func printHelp() {
 	fmt.Println(`CSV to FHIR Converter
 
-Usage: csv2fhir [options]
+Usage: fenix [options]
 
 Options:
-  -config string   Path to configuration file (default "config/csv2fhir.yaml")
+  -config string   Path to configuration file (default "config/config.yaml")
   -sql    string   SQL file with multi-statement conversion queries
   -file   string   Specific CSV file to load (optional)
   -cmd    string   load | convert | all  (default "all")
@@ -390,10 +400,10 @@ Example (patient_1.sql):
          'Patient.name' AS fhir_path, name_use AS "use", family, given
   FROM patient_names;
 
-Configuration (csv2fhir.yaml):
+Configuration (config.yaml):
   database:
     type: sqlite
-    path: data/csv2fhir.db
+    path: data/fenix.db
   csv:
     inputDir: data/csv
     delimiter: ","

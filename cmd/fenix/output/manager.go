@@ -84,14 +84,13 @@ func (m *Manager) archiveOldRuns() error {
 		}
 	}
 
-	// Sort in descending order (newest first)
-	sort.Strings(runDirs)
-	sort.Slice(runDirs, func(i, j int) bool {
-		return runDirs[i] > runDirs[j]
-	})
-
-	// Keep the current run (first one), archive the rest
-	runsToArchive := runDirs[1:]
+	currentName := filepath.Base(m.currentRunDir)
+	var runsToArchive []string
+	for _, dirName := range runDirs {
+		if dirName != currentName {
+			runsToArchive = append(runsToArchive, dirName)
+		}
+	}
 
 	for _, dirName := range runsToArchive {
 		srcPath := filepath.Join(m.baseDir, dirName)

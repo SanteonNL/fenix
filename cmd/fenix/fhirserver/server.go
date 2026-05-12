@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/converter"
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/querycompiler"
+	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 	"github.com/rs/zerolog"
 )
 
 // Server serves FHIR search requests by compiling SQL via the query compiler
-// and converting the results using the csv2fhir FHIRConverter.
+// and converting the results using the fenix FHIRConverter.
 //
 // Endpoint: GET /r4/{resourceType}?<fhir-params>
 // Response: FHIR Bundle (searchset)

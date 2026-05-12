@@ -11,7 +11,11 @@ SELECT
     CONVERT(VARCHAR(10), birth_date, 120) AS birthDate,
     active
 FROM {{.patient_table}}
-{{- if .extra_where}} WHERE {{.extra_where}}{{end}};
+WHERE 1=1
+{{- if .birthDate_from}} AND birth_date >= '{{.birthDate_from}}'{{end}}
+{{- if .birthDate_to}}   AND birth_date <= '{{.birthDate_to}}'{{end}}
+{{- if .gender}}         AND gender = '{{.gender}}'{{end}}
+{{- if .extra_where}}    AND {{.extra_where}}{{end}};
 
 -- ── Statement 2: Name ─────────────────────────────────────────────────────
 SELECT

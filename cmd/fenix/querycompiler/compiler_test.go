@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SanteonNL/fenix/cmd/csv2fhir/querycompiler"
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 )
 
 const (

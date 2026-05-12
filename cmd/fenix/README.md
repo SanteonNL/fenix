@@ -15,12 +15,12 @@ A command-line tool to load CSV files into a database and intelligently convert 
 
 ### 1. Configuration
 
-Create or edit `config/csv2fhir.yaml`:
+Create or edit `config/fenix.yaml`:
 
 ```yaml
 database:
   type: sqlite
-  path: data/csv2fhir.db
+  path: data/fenix.db
 
 csv:
   inputDir: data/csv
@@ -57,13 +57,13 @@ id,patient_id,code,loinc_code,value,unit,effective_date,status
 
 ```bash
 # Load CSV and convert to FHIR
-go run ./cmd/csv2fhir -config config/csv2fhir.yaml -cmd all
+go run ./cmd/fenix -config config/fenix.yaml -cmd all
 
 # Only load CSV
-go run ./cmd/csv2fhir -cmd load
+go run ./cmd/fenix -cmd load
 
 # Only convert
-go run ./cmd/csv2fhir -cmd convert
+go run ./cmd/fenix -cmd convert
 ```
 
 ## Intelligent Column Naming
@@ -190,21 +190,21 @@ The converter includes an intelligent `MappingEngine` that:
 ```yaml
 database:
   type: sqlite
-  path: data/csv2fhir.db
+  path: data/fenix.db
 ```
 
 #### PostgreSQL
 ```yaml
 database:
   type: postgres
-  connection: "postgres://user:password@localhost:5432/csv2fhir?sslmode=disable"
+  connection: "postgres://user:password@localhost:5432/fenix?sslmode=disable"
 ```
 
 #### MySQL
 ```yaml
 database:
   type: mysql
-  connection: "user:password@tcp(localhost:3306)/csv2fhir"
+  connection: "user:password@tcp(localhost:3306)/fenix"
 ```
 
 ### CSV Configuration
@@ -236,7 +236,7 @@ output:
 
 ```
 -config string
-    Path to configuration file (default "config/csv2fhir.yaml")
+    Path to configuration file (default "config/fenix.yaml")
 
 -file string
     Specific CSV file to load (optional, loads all if not specified)
@@ -252,19 +252,19 @@ output:
 
 ```bash
 # Load all CSV files and convert to FHIR (automatic mapping)
-go run ./cmd/csv2fhir
+go run ./cmd/fenix
 
 # Load specific CSV file
-go run ./cmd/csv2fhir -file patients.csv -cmd load
+go run ./cmd/fenix -file patients.csv -cmd load
 
 # Convert existing tables to FHIR
-go run ./cmd/csv2fhir -cmd convert
+go run ./cmd/fenix -cmd convert
 
 # Use custom configuration
-go run ./cmd/csv2fhir -config config/custom.yaml
+go run ./cmd/fenix -config config/custom.yaml
 
 # Verbose logging
-DEBUG=true go run ./cmd/csv2fhir
+DEBUG=true go run ./cmd/fenix
 ```
 
 ## Output
@@ -288,8 +288,8 @@ The tool uses structured logging (zerolog) and outputs logs to stdout.
 
 Example log output:
 ```
-{"level":"info","time":"2024-04-07T10:30:00Z","message":"Configuration loaded","config":"config/csv2fhir.yaml"}
-{"level":"info","time":"2024-04-07T10:30:01Z","message":"Connected to SQLite database","path":"data/csv2fhir.db"}
+{"level":"info","time":"2024-04-07T10:30:00Z","message":"Configuration loaded","config":"config/fenix.yaml"}
+{"level":"info","time":"2024-04-07T10:30:01Z","message":"Connected to SQLite database","path":"data/fenix.db"}
 {"level":"info","time":"2024-04-07T10:30:02Z","message":"Loading CSV file","file":"data/csv/patients.csv","table":"patients"}
 {"level":"info","time":"2024-04-07T10:30:02Z","message":"Derived FHIR mappings from columns","count":10}
 {"level":"debug","time":"2024-04-07T10:30:02Z","message":"Mapping","column":"first_name","fhirPath":"Patient.name[0].given[0]","dataType":"string"}
@@ -308,7 +308,7 @@ Example log output:
 - Verify resource type configuration
 
 ### Database connection error
-- Verify database configuration in `config/csv2fhir.yaml`
+- Verify database configuration in `config/fenix.yaml`
 - Ensure database is running and accessible
 - Check connection string format
 

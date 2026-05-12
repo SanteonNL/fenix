@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -102,11 +103,14 @@ type DataLakeConfig struct {
 	CertificateKey string `yaml:"certificateKey"` // path to private key file (.pem), if separate
 }
 
+// loadDotEnv loads the .env file co-located with the config file.
+func loadDotEnv(configFilePath string) {
+	_ = godotenv.Load(filepath.Join(filepath.Dir(configFilePath), ".env"))
+}
+
 // resolveEnvVars replaces ${ENV_VAR_NAME} patterns with environment variable values.
 // Supports all string fields in the configuration structure.
 func resolveEnvVars(data []byte) ([]byte, error) {
-	// Load .env file if it exists (doesn't fail if missing)
-	_ = godotenv.Load("config/.env")
 
 	// Pattern to match ${VAR_NAME}
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
@@ -131,9 +135,6 @@ func resolveEnvVars(data []byte) ([]byte, error) {
 // validateEnvVars checks that all ${ENV_VAR_NAME} placeholders in the config
 // have corresponding environment variables set. This helps catch missing secrets early.
 func validateEnvVars(data []byte) error {
-	// Load .env file if it exists (doesn't fail if missing)
-	_ = godotenv.Load("config/.env")
-
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 	matches := re.FindAllStringSubmatch(string(data), -1)
 
@@ -161,10 +162,8 @@ func LoadConfig(filePath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Load environment variables from .env file (if it exists)
-	_ = godotenv.Load("config/.env")
+	loadDotEnv(filePath)
 
-	// Validate that all required environment variables are present
 	if err := validateEnvVars(data); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}

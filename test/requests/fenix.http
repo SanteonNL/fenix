@@ -1,10 +1,10 @@
 @base = http://localhost:8080/r4
 
-# csv2fhir FHIR API — http test file
+# fenix FHIR API — http test file
 #
 # Start the server against the hix-test SQL Server (docker-compose):
 #   cd test/hix-test && docker-compose up -d && cd ../..
-#   go run ./cmd/csv2fhir/. -cmd serve -source hix-test -data-source hix-test -port 8080
+#   go run ./cmd/fenix/. -cmd serve -source hix-test -data-source hix-test -port 8080
 #
 # Pushdown params per resource (from config/queries/sources/hix-test/hix-test.yaml):
 #   Patient     : birthdate, gender

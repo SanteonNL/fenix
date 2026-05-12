@@ -27,7 +27,7 @@ output:
 sources:
   hix-test:
     type: sqlserver
-    connection_string: "server=localhost;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=disable"
+    connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
 
   luscii:
     type: luscii

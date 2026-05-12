@@ -52,12 +52,12 @@ sqlcmd -S localhost -U sa -P "YourStrongPassword123!" -d hix_test -Q "SELECT COU
 From the repository root:
 
 ```bash
-go run ./cmd/csv2fhir -cmd all
+go run ./cmd/fenix -cmd all
 ```
 
 Or with explicit config:
 ```bash
-go run ./cmd/csv2fhir -config config/csv2fhir.yaml -cmd all
+go run ./cmd/fenix -config config/fenix.yaml -cmd all
 ```
 
 This will:
@@ -108,7 +108,7 @@ FHIR Resources (output/)
 
 ### Configuration
 
-The hix-test source is configured in `config/csv2fhir.yaml`:
+The hix-test source is configured in `config/fenix.yaml`:
 
 ```yaml
 sources:
@@ -203,7 +203,7 @@ docker-compose up -d
 If a staging query fails, check:
 1. The SQL Server is running and accessible
 2. The table name in the SQL file matches the `.sql` filename
-3. The connection string in `csv2fhir.yaml` is correct
+3. The connection string in `fenix.yaml` is correct
 
 ## Performance Notes
 

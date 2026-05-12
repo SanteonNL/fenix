@@ -21,7 +21,12 @@ SELECT
     gender,
     birth_date      AS birthDate,
     active
-FROM patients;
+FROM patients
+WHERE 1=1
+{{- if .birthDate_from}} AND birth_date >= '{{.birthDate_from}}'{{end}}
+{{- if .birthDate_to}}   AND birth_date <= '{{.birthDate_to}}'{{end}}
+{{- if .gender}}         AND gender = '{{.gender}}'{{end}}
+{{- if .extra_where}}    AND {{.extra_where}}{{end}};
 
 -- ── Statement 2: Naam ─────────────────────────────────────────────────────
 -- patient_names.csv kolommen: patient_id, name_id, name_use, family, given

@@ -16,7 +16,7 @@ resources:
   Patient:
     queries:
       - name: main
-        sql: queries/hix-test/patient.sql
+        sql: queries/hix-test/hix_patient.sql
         pushdown: [birthdate, gender]
 
   Observation:
