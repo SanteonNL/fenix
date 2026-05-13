@@ -1,0 +1,21 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "condition_codes",
+  "resource": "Condition",
+  "description": "Flat table of all codes per condition — one row per coding entry, join to condition_flat on condition_id",
+  "select": [
+    {
+      "column": [
+        { "name": "condition_id", "path": "id", "type": "id" }
+      ]
+    },
+    {
+      "forEach": "code.coding",
+      "column": [
+        { "name": "system",  "path": "system",  "type": "uri" },
+        { "name": "code",    "path": "code",    "type": "code" },
+        { "name": "display", "path": "display", "type": "string" }
+      ]
+    }
+  ]
+}

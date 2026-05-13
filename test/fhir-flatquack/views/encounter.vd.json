@@ -2,7 +2,7 @@
   "resourceType": "ViewDefinition",
   "name": "encounter_flat",
   "resource": "Encounter",
-  "description": "Flattened view of Encounters",
+  "description": "Flattened view of Encounters — one row per encounter, code systems as separate columns",
   "select": [
     {
       "column": [
@@ -11,6 +11,20 @@
         { "name": "status", "path": "status", "type": "code" },
         { "name": "encounter_type", "path": "type.text", "type": "string" },
         { "name": "service_provider", "path": "serviceProvider.display", "type": "string" }
+      ]
+    },
+    {
+      "forEach": "type.coding.where(system = 'http://snomed.info/sct')",
+      "column": [
+        { "name": "snomed_code",    "path": "code",    "type": "code" },
+        { "name": "snomed_display", "path": "display", "type": "string" }
+      ]
+    },
+    {
+      "forEach": "type.coding.where(system = 'http://terminology.hl7.org/CodeSystem/v3-ActCode')",
+      "column": [
+        { "name": "act_code",    "path": "code",    "type": "code" },
+        { "name": "act_display", "path": "display", "type": "string" }
       ]
     }
   ]

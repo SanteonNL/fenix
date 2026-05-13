@@ -2,7 +2,7 @@
   "resourceType": "ViewDefinition",
   "name": "condition_flat",
   "resource": "Condition",
-  "description": "Flattened view of Conditions — Option A: one row per condition, multiple code systems as separate columns",
+  "description": "Flattened view of Conditions — core fields, join to condition_codes on id",
   "select": [
     {
       "column": [
@@ -14,20 +14,6 @@
         { "name": "condition_display", "path": "code.text", "type": "string" },
         { "name": "onset_date", "path": "onsetDateTime", "type": "dateTime" },
         { "name": "recorded_date", "path": "recordedDate", "type": "date" }
-      ]
-    },
-    {
-      "forEach": "code.coding.where(system = 'http://snomed.info/sct')",
-      "column": [
-        { "name": "snomed_code",    "path": "code",    "type": "code" },
-        { "name": "snomed_display", "path": "display", "type": "string" }
-      ]
-    },
-    {
-      "forEach": "code.coding.where(system = 'http://hl7.org/fhir/sid/icd-10')",
-      "column": [
-        { "name": "icd10_code",    "path": "code",    "type": "code" },
-        { "name": "icd10_display", "path": "display", "type": "string" }
       ]
     }
   ]
