@@ -1,0 +1,7 @@
+source: zbj-test
+
+resources:
+  Patient:
+    queries:
+      - name: main
+        sql: queries/zbj-test/zbj_patient.sql

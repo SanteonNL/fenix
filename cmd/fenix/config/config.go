@@ -25,15 +25,21 @@ type SourcesConfig map[string]SourceConfig
 
 // SourceConfig configures one external data source.
 // type: "api" calls the live REST API; "local" reads files from a local directory;
-// "sqlserver" queries an external SQL Server and loads results into staging.
+// "sqlserver" queries an external SQL Server and loads results into staging;
+// "sftp" downloads CSV/JSON files from a remote SFTP server.
 type SourceConfig struct {
-	Type             string `yaml:"type"`              // "api" | "local" | "sqlserver"
+	Type             string `yaml:"type"`              // "api" | "local" | "sqlserver" | "sftp"
 	BaseURL          string `yaml:"base_url"`          // api: REST base URL
 	APIKey           string `yaml:"api_key"`           // api: Bearer token
 	Dir              string `yaml:"dir"`               // local: directory containing data files (.json or .csv)
-	Delimiter        string `yaml:"delimiter"`         // local/csv: field delimiter, default ","
+	Delimiter        string `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
 	ConnectionString string `yaml:"connection_string"` // sqlserver: connection string for SQL Server
 	StagingDir       string `yaml:"staging_dir"`       // sqlserver: directory containing staging SQL queries
+	Host             string `yaml:"host"`              // sftp: hostname or IP
+	Port             int    `yaml:"port"`              // sftp: port, default 22
+	Username         string `yaml:"username"`          // sftp: login username
+	KeyFile          string `yaml:"key_file"`          // sftp: path to SSH private key file
+	RemoteDir        string `yaml:"remote_dir"`        // sftp: remote directory to download files from
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:

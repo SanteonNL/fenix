@@ -19,6 +19,7 @@ import (
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
+	_ "github.com/SanteonNL/fenix/internal/source/sftp"
 	_ "github.com/SanteonNL/fenix/internal/source/sqlserver"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
@@ -211,6 +212,11 @@ func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerol
 		"delimiter":         sc.Delimiter,
 		"connection_string": sc.ConnectionString,
 		"staging_dir":       resolvePath(repoRoot, stagingDir),
+		"host":              sc.Host,
+		"port":              sc.Port,
+		"username":          sc.Username,
+		"key_file":          resolvePath(repoRoot, sc.KeyFile),
+		"remote_dir":        sc.RemoteDir,
 	}
 
 	src, err := source.Build(sc.Type, name, configMap, log)

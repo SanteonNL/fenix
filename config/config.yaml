@@ -37,3 +37,12 @@ sources:
     type: local
     dir: "test/data/sim"
     delimiter: ";"
+
+  zbj-test:
+    type: sftp
+    host: "${ZBJ_SFTP_HOST}"       # e.g. <storage-account>.blob.core.windows.net
+    port: 22
+    username: "${ZBJ_SFTP_USER}"   # Azure format: <storage-account>.<container>.<local-user>
+    key_file: "C:\\Users\\t.hetterscheid\\.ssh\\zbj-test-svc-id_rsa"
+    remote_dir: "/"
+    delimiter: ";"
