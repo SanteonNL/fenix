@@ -23,23 +23,33 @@ type Config struct {
 // SourcesConfig maps source name (e.g. "luscii") to its configuration.
 type SourcesConfig map[string]SourceConfig
 
+// EndpointConfig configures one API endpoint for sources that support a list of endpoints (e.g. luscii).
+type EndpointConfig struct {
+	Path       string `yaml:"path"`        // URL path, e.g. /v1/export/patients
+	Table      string `yaml:"table"`       // target staging table name
+	SinceParam string `yaml:"since_param"` // query param for start date (enables incremental loading)
+	EndParam   string `yaml:"end_param"`   // query param for end date (appended alongside since_param)
+	IDField    string `yaml:"id_field"`    // response field used as PK for upsert deduplication
+}
+
 // SourceConfig configures one external data source.
 // type: "api" calls the live REST API; "local" reads files from a local directory;
 // "sqlserver" queries an external SQL Server and loads results into staging;
 // "sftp" downloads CSV/JSON files from a remote SFTP server.
 type SourceConfig struct {
-	Type             string `yaml:"type"`              // "api" | "local" | "sqlserver" | "sftp"
-	BaseURL          string `yaml:"base_url"`          // api: REST base URL
-	APIKey           string `yaml:"api_key"`           // api: Bearer token
-	Dir              string `yaml:"dir"`               // local: directory containing data files (.json or .csv)
-	Delimiter        string `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
-	ConnectionString string `yaml:"connection_string"` // sqlserver: connection string for SQL Server
-	StagingDir       string `yaml:"staging_dir"`       // sqlserver: directory containing staging SQL queries
-	Host             string `yaml:"host"`              // sftp: hostname or IP
-	Port             int    `yaml:"port"`              // sftp: port, default 22
-	Username         string `yaml:"username"`          // sftp: login username
-	KeyFile          string `yaml:"key_file"`          // sftp: path to SSH private key file
-	RemoteDir        string `yaml:"remote_dir"`        // sftp: remote directory to download files from
+	Type             string           `yaml:"type"`              // "api" | "local" | "sqlserver" | "sftp"
+	BaseURL          string           `yaml:"base_url"`          // api: REST base URL
+	APIKey           string           `yaml:"api_key"`           // api: Bearer token
+	Dir              string           `yaml:"dir"`               // local: directory containing data files (.json or .csv)
+	Delimiter        string           `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
+	ConnectionString string           `yaml:"connection_string"` // sqlserver: connection string for SQL Server
+	StagingDir       string           `yaml:"staging_dir"`       // sqlserver: directory containing staging SQL queries
+	Host             string           `yaml:"host"`              // sftp: hostname or IP
+	Port             int              `yaml:"port"`              // sftp: port, default 22
+	Username         string           `yaml:"username"`          // sftp: login username
+	KeyFile          string           `yaml:"key_file"`          // sftp: path to SSH private key file
+	RemoteDir        string           `yaml:"remote_dir"`        // sftp: remote directory to download files from
+	Endpoints        []EndpointConfig `yaml:"endpoints"`         // luscii: list of API endpoints to fetch
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:

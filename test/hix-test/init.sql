@@ -68,7 +68,8 @@ CREATE TABLE hix_observations (
     obs_date        DATE,
     obs_value       VARCHAR(100),
     obs_unit        VARCHAR(50),
-    obs_type        VARCHAR(20)   -- 'GENERAL' | 'LAB' | 'VITAL'
+    obs_type        VARCHAR(20),  -- 'GENERAL' | 'LAB' | 'VITAL'
+    updated_at      DATETIME DEFAULT GETDATE()
 );
 
 CREATE TABLE hix_obs_category (
@@ -105,7 +106,8 @@ CREATE TABLE hix_lab_results (
     result_value    VARCHAR(100),
     result_unit     VARCHAR(50),
     loinc_code      VARCHAR(20),
-    loinc_display   VARCHAR(200)
+    loinc_display   VARCHAR(200),
+    updated_at      DATETIME DEFAULT GETDATE()
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +122,8 @@ CREATE TABLE hix_vitals (
     vital_value     VARCHAR(100),
     vital_unit      VARCHAR(50),
     loinc_code      VARCHAR(20),
-    loinc_display   VARCHAR(200)
+    loinc_display   VARCHAR(200),
+    updated_at      DATETIME DEFAULT GETDATE()
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────

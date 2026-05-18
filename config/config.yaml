@@ -25,13 +25,20 @@ output:
     archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
 
 sources:
-  hix-test:
-    type: sqlserver
-    connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
+  # hix-test:
+  #   type: sqlserver
+  #   connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
 
   luscii:
     type: luscii
-    dir: "test/data/luscii"       # local: typed Flattener, same table structure as live API
+    base_url: https://vitalsapi.luscii.com
+    api_key: ${LUSCII_API_KEY}
+    endpoints:
+      - path: /v1/patients
+        table: luscii_patients
+        since_param: startDate
+        end_param: endDate
+        id_field: id
 
   sim:
     type: local

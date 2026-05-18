@@ -173,8 +173,10 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 // database, then runs FHIR conversion for every SQL file found in
 // queries/<sourceName>/.
 func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	watermarkPath := computeWatermarkPath(cfg, repoRoot)
+
 	for name, sc := range cfg.Sources {
-		src := buildSource(name, sc, repoRoot, *log)
+		src := buildSource(name, sc, repoRoot, watermarkPath, *log)
 		if err := src.Load(ctx, db); err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
 			continue
@@ -195,12 +197,34 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 	}
 }
 
+// computeWatermarkPath returns the path for the incremental watermark file,
+// placed next to the staging DB. Returns "" for in-memory databases.
+func computeWatermarkPath(cfg *config.Config, repoRoot string) string {
+	dbPath := cfg.Staging.StagingPath()
+	if dbPath == ":memory:" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(resolvePath(repoRoot, dbPath)), ".watermark.json")
+}
+
 // buildSource constructs the Source implementation for the given config entry using the registry.
 // Converts the SourceConfig struct to a map and uses the registry to instantiate the source by type.
-func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerolog.Logger) source.Source {
+func buildSource(name string, sc config.SourceConfig, repoRoot string, watermarkPath string, log zerolog.Logger) source.Source {
 	stagingDir := sc.StagingDir
 	if stagingDir == "" {
 		stagingDir = "queries/" + name + "/staging"
+	}
+
+	// Convert endpoints slice to []map[string]interface{} for generic registry use.
+	endpointsRaw := make([]interface{}, len(sc.Endpoints))
+	for i, ep := range sc.Endpoints {
+		endpointsRaw[i] = map[string]interface{}{
+			"path":        ep.Path,
+			"table":       ep.Table,
+			"since_param": ep.SinceParam,
+			"end_param":   ep.EndParam,
+			"id_field":    ep.IDField,
+		}
 	}
 
 	// Convert SourceConfig to map for generic registry use
@@ -212,11 +236,13 @@ func buildSource(name string, sc config.SourceConfig, repoRoot string, log zerol
 		"delimiter":         sc.Delimiter,
 		"connection_string": sc.ConnectionString,
 		"staging_dir":       resolvePath(repoRoot, stagingDir),
+		"watermark_path":    watermarkPath,
 		"host":              sc.Host,
 		"port":              sc.Port,
 		"username":          sc.Username,
 		"key_file":          resolvePath(repoRoot, sc.KeyFile),
 		"remote_dir":        sc.RemoteDir,
+		"endpoints":         endpointsRaw,
 	}
 
 	src, err := source.Build(sc.Type, name, configMap, log)
