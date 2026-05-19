@@ -1,0 +1,38 @@
+source: hix-test
+
+substitutions:
+  patient_table:                    patients
+  patient_names_table:              patient_names
+  patient_telecom_table:            patient_telecom
+  patient_address_table:            patient_address
+  patient_identifier_table:         patient_identifier
+  encounter_table:                  encounters
+  encounter_type_table:             encounter_type
+  encounter_type_coding_table:      encounter_type_coding
+  encounter_reason_table:           encounter_reason
+  encounter_status_history_table:   encounter_status_history
+
+resources:
+  Patient:
+    queries:
+      - name: main
+        sql: queries/hix-test/hix_patient.sql
+        pushdown: [birthdate, gender]
+
+  Observation:
+    queries:
+      - name: main
+        sql: queries/hix-test/hix_observation_main.sql
+        pushdown: [date, status, code, category]
+      - name: lab-results
+        sql: queries/hix-test/hix_observation_lab.sql
+        pushdown: [date, code]
+      - name: vital-signs
+        sql: queries/hix-test/hix_observation_vitals.sql
+        pushdown: [date, status]
+
+  Encounter:
+    queries:
+      - name: main
+        sql: queries/hix-test/hix_encounter_main.sql
+        pushdown: [date, status]

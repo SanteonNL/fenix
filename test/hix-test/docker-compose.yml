@@ -1,0 +1,21 @@
+services:
+  hix-test-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: hix-test-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "HixTest_Pass1!"
+      MSSQL_PID: "Developer"
+      SA_PASSWORD: "HixTest_Pass1!"
+    ports:
+      - "1433:1433"
+    volumes:
+      - ./setup.sh:/var/opt/mssql/setup.sh
+      - ./init.sql:/var/opt/mssql/init.sql
+    command: /bin/bash /var/opt/mssql/setup.sh
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "HixTest_Pass1!", "-Q", "SELECT 1 FROM hix.dbo.patients", "-C"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

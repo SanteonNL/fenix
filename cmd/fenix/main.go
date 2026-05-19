@@ -2,250 +2,514 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/api"
-	"github.com/SanteonNL/fenix/cmd/fenix/datasource"
-	"github.com/SanteonNL/fenix/cmd/fenix/fhir/conceptmap"
-	"github.com/SanteonNL/fenix/cmd/fenix/fhir/fhirpathinfo"
-	"github.com/SanteonNL/fenix/cmd/fenix/fhir/searchparameter"
-	"github.com/SanteonNL/fenix/cmd/fenix/fhir/structuredefinition"
-	"github.com/SanteonNL/fenix/cmd/fenix/fhir/valueset"
+	"net/http"
+
+	"github.com/SanteonNL/fenix/cmd/fenix/config"
+	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/cmd/fenix/fhirserver"
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
-	"github.com/SanteonNL/fenix/cmd/fenix/processor"
-	"github.com/SanteonNL/fenix/cmd/fenix/types"
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/source"
+	_ "github.com/SanteonNL/fenix/internal/source/local"
+	_ "github.com/SanteonNL/fenix/internal/source/luscii"
+	_ "github.com/SanteonNL/fenix/internal/source/sftp"
+	_ "github.com/SanteonNL/fenix/internal/source/sqlserver"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
+	_ "modernc.org/sqlite"
+)
+
+var (
+	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
+	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
+	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
+	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
+	help           = flag.Bool("help", false, "Show help message")
+	servePort      = flag.String("port", "127.0.0.1:8080", "Address for the FHIR API server (used with -cmd serve)")
+	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
+	sourceName     = flag.String("source", "hix", "Query compiler source name (used with -cmd serve)")
+	groupID        = flag.String("group", "", "Query compiler group ID override (used with -cmd serve)")
+	dataSource     = flag.String("data-source", "", "Source name from config to connect to directly, bypassing the staging DB (used with -cmd serve)")
 )
 
 func main() {
-	startTime := time.Now()
+	flag.Parse()
 
-	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
-
-	outputMgr, err := output.NewOutputManager("output/temp", log)
-
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create output manager")
+	if *help {
+		printHelp()
+		return
 	}
 
-	log = outputMgr.GetLogger()
-
-	log.Debug().Msg("Starting fenix")
-
-	// Th	// Initialize database connection
-	db, err := sqlx.Connect("postgres", "postgres://postgres:mysecretpassword@localhost:5432/tsl_employee?sslmode=disable")
+	// Find repository root
+	repoRoot, err := findRepoRoot()
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
-	}
-
-	// Define paths
-	baseDir := "."                                                // Current directory
-	inputDir := filepath.Join(baseDir, "config/conceptmaps/flat") // ./csv directory for input files
-	repoDir := filepath.Join(baseDir, "config/conceptmaps")       // ./fhir directory for repository
-
-	// Initialize repository
-	repository := conceptmap.NewConceptMapRepository(repoDir, log)
-
-	// Load existing concept maps
-	if err := repository.LoadConceptMaps(); err != nil {
-		log.Error().Err(err).Msg("Failed to load existing concept maps")
+		fmt.Fprintf(os.Stderr, "Failed to find repository root: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Initialize services and converter
-	conceptMapService := conceptmap.NewConceptMapService(repository, log)
-	conceptMapConverter := conceptmap.NewConceptMapConverter(log, conceptMapService)
-
-	// Process the input directory
-	log.Info().
-		Str("input_dir", inputDir).
-		Str("repo_dir", repoDir).
-		Msg("Starting conversion of CSV files")
-
-	// Set usePrefix to true to add 'conceptmap_converted_' prefix to ValueSet URIs
-	if err := conceptMapConverter.ConvertFolderToFHIR(inputDir, repository, true); err != nil {
-		log.Error().Err(err).Msg("Conversion process failed")
+	// Resolve config path
+	resolvedConfigPath := resolveConfigPath(*configPath)
+	cfg, err := config.LoadConfig(resolvedConfigPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration from %s: %v\n", resolvedConfigPath, err)
 		os.Exit(1)
 	}
 
-	log.Info().Msg("Successfully completed conversion process")
-
-	dataSourceService := datasource.NewDataSourceService(db, log)
-	// Load queries
-	//err = dataSourceService.LoadQueryFile("queries/hix/flat/Observation_hix_metingen_metingen.sql")
-	err = dataSourceService.LoadQueryFile("queries/hix/flat/patient_1.sql")
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to load query file")
-	}
-
-	// // Read resources
-	// results, err := dataSourceService.ReadResources("Patient", "12345")
-	// if err != nil {
-	// 	log.Printf("Error: %v", err)
-	// }
-
-	// // Print results
-	// for _, result := range results {
-	// 	for path, rowData := range result {
-	// 		fmt.Printf("Resource Path: %s, Data: %v\n", path, rowData)
-	// 	}
-	// }
-
-	// Example: Find ConceptMaps for a specific ValueSet
-	valueSetURL := "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354"
-
-	conceptMapService.GetConceptMapsByValuesetURL(valueSetURL)
-
-	conceptMaps, err := conceptMapService.GetConceptMapsByValuesetURL(valueSetURL)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get ConceptMaps")
+	// Initialize logger with conditional colored output based on config
+	var log zerolog.Logger
+	if cfg.Environment == "dev" {
+		// Development mode: colored console output
+		output := zerolog.ConsoleWriter{Out: os.Stderr}
+		output.TimeFormat = "15:04:05"
+		log = zerolog.New(output).With().Timestamp().Logger()
 	} else {
-		for _, conceptMap := range conceptMaps {
-			log.Info().
-				Str("name", conceptMap).
-				Msg("Found ConceptMap")
-		}
-
+		// Production mode: JSON output
+		log = zerolog.New(os.Stderr).With().Timestamp().Logger()
 	}
 
-	// Create the config
-	config := valueset.Config{
-		LocalPath:     "valuesets",      // Directory to store ValueSets
-		DefaultMaxAge: 24 * time.Hour,   // Cache for 24 hours by default
-		HTTPTimeout:   30 * time.Second, // Timeout for remote requests
-	}
-
-	// Create the ValueSet service
-	valuesetService, err := valueset.NewValueSetService(config, log)
+	// Set global log level (dev defaults to debug, prod to info)
+	level, err := zerolog.ParseLevel(cfg.EffectiveLogLevel())
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create ValueSet service")
+		level = zerolog.InfoLevel
 	}
-	// Create a context
-	ctx := context.Background()
+	zerolog.SetGlobalLevel(level)
+	log.Info().Str("environment", cfg.Environment).Str("logLevel", level.String()).Msg("Logger initialized")
 
-	// Try getting a remote ValueSet
-	remoteValueSet, err := valuesetService.GetValueSet(ctx, "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354")
+	log.Info().Str("repoRoot", repoRoot).Msg("Repository root found")
+	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
+
+	db, err := initializeStagingDatabase(cfg, repoRoot, &log)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to get remote ValueSet")
-	} else {
-		log.Info().
-			Str("id", *remoteValueSet.Id).
-			Str("url", *remoteValueSet.Url).
-			Msg("Successfully loaded remote ValueSet")
+		log.Fatal().Err(err).Msg("Failed to initialize database")
 	}
+	defer db.Close()
 
-	// Example: Validate a code against a ValueSet
-	coding := &fhir.Coding{
-		System: ptr("http://snomed.info/sct"),
-		Code:   ptr("227620asd02"),
-	}
-
-	result, err := valuesetService.ValidateCode(ctx, "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354", coding)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to validate code")
-	} else {
-		if result.Valid {
-			log.Info().
-				Str("matchedIn", result.MatchedIn).
-				Msg("Code is valid")
-		} else {
-			log.Info().
-				Str("error", result.ErrorMessage).
-				Msg("Code is not valid")
+	// Initialize output manager
+	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+	var outputMgr *output.Manager
+	if cfg.Output.Local.UseTimestamp {
+		outputMgr, err = output.NewManager(outputDir, cfg.Output.Local.ArchiveCount, &log)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to initialize output manager")
 		}
 	}
 
-	// Initialize repository for StructureDefinitions
-	structureDefRepo := structuredefinition.NewStructureDefinitionRepository(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Load existing StructureDefinitions
-	if err := structureDefRepo.LoadStructureDefinitions("profiles\\sim"); err != nil {
-		log.Error().Err(err).Msg("Failed to load existing StructureDefinitions")
-		os.Exit(1)
+	switch *command {
+	case "load":
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+	case "convert":
+		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
+	case "all":
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
+	case "serve-all":
+		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		fallthrough
+	case "serve":
+		startFHIRServer(db, cfg, repoRoot, &log)
+	default:
+		log.Fatal().Str("command", *command).Msg("Unknown command")
 	}
 
-	// Initialize StructureDefinition service with the repository
-	structureDefService := structuredefinition.NewStructureDefinitionService(structureDefRepo, log)
+	log.Info().Msg("Process completed successfully")
+}
 
-	// Initialize repository for SearchParameters
-	searchParamRepo := searchparameter.NewSearchParameterRepository(log)
-	searchParamRepo.LoadSearchParametersFromFile("searchParameter\\search-parameter.json")
+func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*sqlx.DB, error) {
+	switch cfg.Staging.Database {
+	case "sqlite", "":
+		dbPath := cfg.Staging.StagingPath()
+		if dbPath != ":memory:" {
+			dbPath = resolvePath(repoRoot, dbPath)
+			if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return nil, fmt.Errorf("failed to create database directory: %w", err)
+				}
+			}
+		}
+		driver := cfg.Staging.SQLiteDriver()
+		db, err := sqlx.Connect(driver, dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SQLite (driver=%s): %w", driver, err)
+		}
+		log.Info().Str("path", dbPath).Str("driver", driver).Msg("Connected to staging database")
+		return db, nil
 
-	// Initialize SearchParameter service with the repository
-	searchParamService := searchparameter.NewSearchParameterService(searchParamRepo, log)
-	searchParamService.BuildSearchParameterIndex()
+	case "postgres":
+		db, err := sqlx.Connect("postgres", cfg.Staging.Connection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		}
+		log.Info().Msg("Connected to PostgreSQL")
+		return db, nil
 
-	searchParamService.DebugResourceSearchParameters("Patient")
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Staging.Database)
+	}
+}
 
-	genderSearchType, err := searchParamService.GetSearchTypeByPathAndCode("Patient.gender", "gender")
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get SearchParameter")
-	} else {
-		fmt.Printf("SearchParameter: %+v\n", genderSearchType)
+func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	sqlPath := *sqlFile
+	if sqlPath == "" {
+		sqlPath = cfg.FHIR.SQLFile
+	}
+	if sqlPath == "" {
+		log.Debug().Msg("No fhir.sqlFile configured, skipping generic FHIR conversion")
+		return
+	}
+	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
+}
+
+// loadSources iterates all configured sources, loads each into the staging
+// database, then runs FHIR conversion for every SQL file found in
+// queries/<sourceName>/.
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	watermarkPath := computeWatermarkPath(cfg, repoRoot)
+
+	for name, sc := range cfg.Sources {
+		src := buildSource(name, sc, repoRoot, watermarkPath, *log)
+		if err := src.Load(ctx, db); err != nil {
+			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
+			continue
+		}
+
+		queriesDir := resolvePath(repoRoot, "queries/"+name)
+		entries, err := os.ReadDir(queriesDir)
+		if err != nil {
+			log.Warn().Str("dir", queriesDir).Msg("No query directory found, skipping FHIR conversion")
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+				continue
+			}
+			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, outputMgr, log)
+		}
+	}
+}
+
+// computeWatermarkPath returns the path for the incremental watermark file,
+// placed next to the staging DB. Returns "" for in-memory databases.
+func computeWatermarkPath(cfg *config.Config, repoRoot string) string {
+	dbPath := cfg.Staging.StagingPath()
+	if dbPath == ":memory:" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(resolvePath(repoRoot, dbPath)), ".watermark.json")
+}
+
+// buildSource constructs the Source implementation for the given config entry using the registry.
+// Converts the SourceConfig struct to a map and uses the registry to instantiate the source by type.
+func buildSource(name string, sc config.SourceConfig, repoRoot string, watermarkPath string, log zerolog.Logger) source.Source {
+	stagingDir := sc.StagingDir
+	if stagingDir == "" {
+		stagingDir = "queries/" + name + "/staging"
 	}
 
-	outputMgr.WriteToJSON(genderSearchType, "searchType")
-
-	pathInfoService := fhirpathinfo.NewPathInfoService(structureDefService, searchParamService, conceptMapService, log)
-	structureDefService.BuildStructureDefinitionIndex()
-
-	processorConfig := processor.ProcessorConfig{
-		Log:           log,
-		PathInfoSvc:   pathInfoService,
-		StructDefSvc:  structureDefService,
-		ValueSetSvc:   valuesetService,
-		ConceptMapSvc: conceptMapService,
-		OutputManager: outputMgr,
-	}
-
-	processorService, err := processor.NewProcessorService(processorConfig)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create ProcessorService")
-	}
-
-	searchType, err := pathInfoService.GetSearchTypeByPathAndCode("Patient.gender", "gender")
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get SearchType")
-	} else {
-		log.Info().Msg("Successfully retrieved SearchType")
-		fmt.Printf("SearchType: %+v\n", searchType)
-	}
-	// Process resources
-	filter := types.Filter{
-		Code:  "identifier",
-		Value: "1s",
-	}
-
-	resources, err := processorService.ProcessResources(ctx, dataSourceService, "Patient", "12", []*types.Filter{&filter})
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to process resources")
-
-	}
-
-	for _, resource := range resources {
-		if err := outputMgr.WriteToJSON(resource, "resource"); err != nil {
-			log.Error().Err(err).Msg("Failed to write resource to file")
+	// Convert endpoints slice to []map[string]interface{} for generic registry use.
+	endpointsRaw := make([]interface{}, len(sc.Endpoints))
+	for i, ep := range sc.Endpoints {
+		endpointsRaw[i] = map[string]interface{}{
+			"path":        ep.Path,
+			"table":       ep.Table,
+			"since_param": ep.SinceParam,
+			"end_param":   ep.EndParam,
+			"id_field":    ep.IDField,
 		}
 	}
 
-	// Create and setup router
-	router := api.NewFHIRRouter(searchParamService, processorService, dataSourceService, log)
-	handler := router.SetupRoutes()
-
-	// Start server
-	port := ":8080"
-	log.Info().Msgf("Starting FHIR server on port %s", port)
-	if err := http.ListenAndServe(port, handler); err != nil {
-		log.Fatal().Err(err).Msg("Server failed to start")
+	// Convert SourceConfig to map for generic registry use
+	configMap := map[string]interface{}{
+		"type":              sc.Type,
+		"base_url":          sc.BaseURL,
+		"api_key":           sc.APIKey,
+		"dir":               resolvePath(repoRoot, sc.Dir),
+		"delimiter":         sc.Delimiter,
+		"connection_string": sc.ConnectionString,
+		"staging_dir":       resolvePath(repoRoot, stagingDir),
+		"watermark_path":    watermarkPath,
+		"host":              sc.Host,
+		"port":              sc.Port,
+		"username":          sc.Username,
+		"key_file":          resolvePath(repoRoot, sc.KeyFile),
+		"remote_dir":        sc.RemoteDir,
+		"endpoints":         endpointsRaw,
 	}
 
-	endTime := time.Now()
-	duration := endTime.Sub(startTime)
-	log.Debug().Msgf("Execution time: %s", duration)
+	src, err := source.Build(sc.Type, name, configMap, log)
+	if err != nil {
+		log.Fatal().Err(err).Str("source", name).Msg("Failed to build source")
+	}
+	return src
+}
+
+// runFHIRConversion executes one SQL file against the database and writes FHIR output.
+func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	log.Info().Str("sql", sqlPath).Msg("Starting FHIR conversion")
+
+	query, err := os.ReadFile(sqlPath)
+	if err != nil {
+		log.Error().Err(err).Str("file", sqlPath).Msg("Failed to read SQL file")
+		return
+	}
+
+	profileSvc := converter.NewProfileService(*log)
+	if cfg.FHIR.ProfilesDir != "" {
+		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load profiles")
+		}
+	}
+
+	conceptMapSvc := converter.NewConceptMapService(*log)
+	if cfg.FHIR.ConceptMapsDir != "" {
+		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load concept maps")
+		}
+	}
+
+	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(string(query))
+	if err != nil {
+		log.Error().Err(err).Msg("Conversion failed")
+		return
+	}
+
+	baseName := strings.TrimSuffix(filepath.Base(sqlPath), ".sql")
+	ext := cfg.Output.Format
+	if ext == "pretty" {
+		ext = "json"
+	}
+
+	var data []byte
+	switch cfg.Output.Format {
+	case "ndjson":
+		data, err = converter.ExportToNDJSON(resources)
+	case "pretty":
+		data, err = converter.ExportToPretty(resources)
+	default:
+		data, err = converter.ExportToJSON(resources)
+	}
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal output")
+		return
+	}
+
+	// Write output file using manager if available, otherwise write directly
+	var outputFile string
+	if outputMgr != nil {
+		// Use timestamped output manager
+		outputFile, err = outputMgr.WriteFile(baseName+"."+ext, data)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to write output file")
+			return
+		}
+	} else {
+		// Write directly to output directory
+		outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			log.Fatal().Err(err).Msg("Failed to create output directory")
+		}
+		outputFile = filepath.Join(outputDir, baseName+"."+ext)
+		if err := os.WriteFile(outputFile, data, 0644); err != nil {
+			log.Error().Err(err).Str("file", outputFile).Msg("Failed to write output file")
+			return
+		}
+	}
+
+	log.Info().Str("file", outputFile).Int("resources", len(resources)).Msg("FHIR resources exported")
+}
+
+// connectSourceDirectly opens a database connection directly to the named source in cfg.Sources,
+// bypassing the SQLite staging DB. Only "sqlserver" sources are supported.
+func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger) *sqlx.DB {
+	sc, ok := cfg.Sources[name]
+	if !ok {
+		log.Fatal().Str("source", name).Msg("Source not found in config")
+	}
+	if sc.Type != "sqlserver" {
+		log.Fatal().Str("source", name).Str("type", sc.Type).Msg("Direct connection only supported for sqlserver sources")
+	}
+	var db *sqlx.DB
+	var err error
+	for attempt := 1; attempt <= 10; attempt++ {
+		db, err = sqlx.Connect("sqlserver", sc.ConnectionString)
+		if err == nil {
+			break
+		}
+		log.Warn().Err(err).Int("attempt", attempt).Str("source", name).Msg("SQL Server not ready, retrying in 5s...")
+		time.Sleep(5 * time.Second)
+	}
+	if err != nil {
+		log.Fatal().Err(err).Str("source", name).Msg("Failed to connect directly to SQL Server")
+	}
+	log.Info().Str("source", name).Msg("Connected directly to SQL Server")
+	return db
+}
+
+// startFHIRServer starts the FHIR API server. It blocks until the server exits.
+func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	db := stagingDB
+	if *dataSource != "" {
+		db = connectSourceDirectly(*dataSource, cfg, log)
+		defer db.Close()
+	}
+
+	configDir := resolvePath(repoRoot, *queryConfigDir)
+	compiler, err := querycompiler.New(configDir, repoRoot)
+	if err != nil {
+		log.Fatal().Err(err).Str("configDir", configDir).Msg("Failed to initialise query compiler")
+	}
+
+	profileSvc := converter.NewProfileService(*log)
+	if cfg.FHIR.ProfilesDir != "" {
+		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load profiles")
+		}
+	}
+
+	conceptMapSvc := converter.NewConceptMapService(*log)
+	if cfg.FHIR.ConceptMapsDir != "" {
+		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
+			log.Warn().Err(err).Msg("Failed to load concept maps")
+		}
+	}
+
+	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
+	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
+	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, *log)
+
+	addr := *servePort
+	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")
+	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
+		log.Fatal().Err(err).Msg("FHIR API server stopped")
+	}
+}
+
+func printHelp() {
+	fmt.Println(`CSV to FHIR Converter
+
+Usage: fenix [options]
+
+Options:
+  -config string   Path to configuration file (default "config/config.yaml")
+  -sql    string   SQL file with multi-statement conversion queries
+  -file   string   Specific CSV file to load (optional)
+  -cmd    string   load | convert | all  (default "all")
+  -help            Show this help message
+
+Environment:
+  Configure environment mode in config file:
+    environment: dev   # Colored console output (useful for development)
+    environment: prod  # JSON output (useful for production logging)
+
+SQL file format:
+  Multiple SELECT statements separated by ";".
+  Required columns per row:
+    resource_id  – root resource identifier
+    id           – this row's identifier
+    parent_id    – parent row's id (empty string for root rows)
+    fhir_path    – e.g. "Patient", "Patient.name", "Patient.name.coding"
+    <fields>     – any other column is a leaf field at this level
+                   Use dot-notation for scalar nesting: "subject.reference"
+                   Multiple rows with same fhir_path + parent_id → FHIR array
+
+Example (patient_1.sql):
+  -- Root patient
+  SELECT patient_id AS resource_id, patient_id AS id, '' AS parent_id,
+         'Patient' AS fhir_path, gender, birth_date AS birthDate
+  FROM patients;
+
+  -- Names (multiple rows per patient → Patient.name array)
+  SELECT patient_id AS resource_id, name_id AS id, patient_id AS parent_id,
+         'Patient.name' AS fhir_path, name_use AS "use", family, given
+  FROM patient_names;
+
+Configuration (config.yaml):
+  database:
+    type: sqlite
+    path: data/fenix.db
+  csv:
+    inputDir: data/csv
+    delimiter: ","
+    hasHeader: true
+  fhir:
+    sqlFile: queries/hix/flat/patient_1.sql
+  output:
+    dir: output
+    format: ndjson`)
+}
+
+// findRepoRoot finds the fenix repository root by looking for go.mod
+func findRepoRoot() (string, error) {
+	// Try current working directory
+	cwd, err := os.Getwd()
+	if err == nil {
+		current := cwd
+		for {
+			if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
+				return current, nil
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+			current = parent
+		}
+	}
+
+	// Try relative to executable location
+	ex, err := os.Executable()
+	if err == nil {
+		// Start from executable directory
+		current := filepath.Dir(ex)
+		for range 5 { // Search up 5 levels
+			if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
+				return current, nil
+			}
+			current = filepath.Dir(current)
+		}
+	}
+
+	return "", fmt.Errorf("could not find fenix repository root (go.mod)")
+}
+
+// resolveConfigPath resolves the config path relative to project root
+func resolveConfigPath(configPath string) string {
+	// If absolute path, use as-is
+	if filepath.IsAbs(configPath) {
+		return configPath
+	}
+
+	// Try to find repo root
+	repoRoot, err := findRepoRoot()
+	if err == nil {
+		candidate := filepath.Join(repoRoot, configPath)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	// Fallback: try current working directory
+	if _, err := os.Stat(configPath); err == nil {
+		return configPath
+	}
+
+	// Return original path and let error handling deal with it
+	return configPath
+}
+
+// resolvePath resolves a relative path from repo root
+func resolvePath(repoRoot, relativePath string) string {
+	if filepath.IsAbs(relativePath) {
+		return relativePath
+	}
+	return filepath.Join(repoRoot, relativePath)
 }

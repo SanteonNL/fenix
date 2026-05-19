@@ -1,0 +1,30 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Encounter",
+  "url": "http://hl7.org/fhir/StructureDefinition/Encounter",
+  "name": "Encounter",
+  "status": "active",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Encounter",
+  "snapshot": {
+    "element": [
+      {
+        "path": "Encounter.status",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://hl7.org/fhir/ValueSet/encounter-status|4.0.1"
+        }
+      },
+      {
+        "path": "Encounter.statusHistory.status",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://hl7.org/fhir/ValueSet/encounter-status|4.0.1"
+        }
+      }
+    ]
+  }
+}

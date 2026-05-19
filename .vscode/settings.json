@@ -10,5 +10,34 @@
             "password": "mysecretpassword",
             "name": "my-postgres"
         }
-    ]
+    ],
+    "go.useLanguageServer": true,
+    "go.lintOnSave": "package",
+    "[go]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "editor.defaultFormatter": "golang.Go"
+    },
+    "go.buildFlags": ["-v"],
+    "terminal.integrated.env.windows": {
+        "CGO_ENABLED": "0",
+        "PATH": "C:\\Users\\t.hetterscheid\\AppData\\Local\\Programs\\Quarto\\bin;C:\\Program Files\\R\\R-4.5.2\\bin;C:\\Users\\t.hetterscheid\\sdk\\go1.25.4\\bin;${env:PATH}"
+    },
+    "go.gopath": "C:/Users/t.hetterscheid/go",
+    "go.goroot": "C:/Users/t.hetterscheid/sdk/go1.25.4",
+    "files.associations": {
+        "queries/generic/*.sql": "plaintext",
+        "queries/hix/*.sql": "plaintext",
+        "queries/hix/**/*.sql": "plaintext"
+    },
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.parquet": "duckdb.dataFileViewer",
+        "*.csv": "duckdb.dataFileViewer",
+        "*.tsv": "duckdb.dataFileViewer",
+        "*.xlsx": "duckdb.dataFileViewer"
+    },
+    "r.lsp.promptToInstall": false
 }

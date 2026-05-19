@@ -1,0 +1,18 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "procedure_flat",
+  "resource": "Procedure",
+  "description": "Flattened view of Procedure resources with NZA codes for scopieën",
+  "select": [
+    {
+      "column": [
+        { "name": "id",             "path": "id",                                                                  "type": "id" },
+        { "name": "status",         "path": "status",                                                              "type": "code" },
+        { "name": "patient_ref",    "path": "subject.reference",                                                   "type": "string" },
+        { "name": "performed_date", "path": "performedDateTime",                                                   "type": "dateTime" },
+        { "name": "nza_code",       "path": "code.coding.where(system='https://declaratie.nza.nl').code",          "type": "code" },
+        { "name": "display",        "path": "code.text",                                                           "type": "string" }
+      ]
+    }
+  ]
+}

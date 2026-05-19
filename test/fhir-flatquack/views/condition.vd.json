@@ -1,0 +1,20 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "condition_flat",
+  "resource": "Condition",
+  "description": "Flattened view of Conditions — core fields, join to condition_codes on id",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "patient_ref", "path": "subject.reference", "type": "string" },
+        { "name": "clinical_status", "path": "clinicalStatus.coding.code", "type": "code" },
+        { "name": "verification_status", "path": "verificationStatus.coding.code", "type": "code" },
+        { "name": "severity", "path": "severity.coding.display", "type": "string" },
+        { "name": "condition_display", "path": "code.text", "type": "string" },
+        { "name": "onset_date", "path": "onsetDateTime", "type": "dateTime" },
+        { "name": "recorded_date", "path": "recordedDate", "type": "date" }
+      ]
+    }
+  ]
+}

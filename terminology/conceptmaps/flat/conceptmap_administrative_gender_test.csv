@@ -1,0 +1,6 @@
+system_source;code_source;display_source;system_target;code_target;display_target;target_validation;target_valueset_uri
+https://mst.nl/mct;M;Male;https://lenytest.nl/lct;male;Male;Valid;http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1
+https://mst.nl/mct;F;Female;https://lenytest.nl/lct;female;Female;Valid;http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1
+https://mst.nl/mct;UN;Undifferentiated;https://lenytest.nl/lct;other;Other;Valid;http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1
+;asd;;https://hl7.org/fhir;male;Male;Valid;http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1
+;*;;https://lenytest.nl/lct;unknown;Unknown;Valid;http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1

@@ -1,5 +1,0 @@
-@url = https://server.fire.ly/r4
-
-
-###
-GET {{url}}/Patient?dfsfg=male

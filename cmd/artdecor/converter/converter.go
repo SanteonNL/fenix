@@ -3,7 +3,7 @@ package converter
 
 import (
 	"github.com/SanteonNL/fenix/cmd/artdecor/types" // Update with your actual module path
-	"github.com/SanteonNL/fenix/models/fhir"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 // ConvertToFHIRConceptMap converts an Art-Decor ConceptMap to a FHIR ConceptMap

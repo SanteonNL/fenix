@@ -1,0 +1,23 @@
+@base = https://server.fire.ly/r4
+
+### Request 1
+GET {{base}}/Patient?name=smith
+Accept: application/fhir+json
+
+### Request 2
+GET {{base}}/Patient?name=smith
+    ?_has:Observation:patient:code=55284-4
+    
+
+### Request 3
+GET {{base}}/Observation
+    ?subject=8bfc938e-7836-4e96-b0d8-92756601e0b5
+    &_elements=id,code,value
+
+### Request 4
+ GET {{base}}/Group
+
+### Request 4
+GET {{base}}/Group/CMS0334FHIRPCCesareanBirth/$export?_type=Person
+Prefer: respond-async
+Accept: application/fhir+json

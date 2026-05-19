@@ -1,0 +1,22 @@
+{
+  "resourceType": "ViewDefinition",
+  "name": "observation_flat",
+  "resource": "Observation",
+  "description": "Flattened view of Observations with value quantities",
+  "select": [
+    {
+      "column": [
+        { "name": "id", "path": "id", "type": "id" },
+        { "name": "status", "path": "status", "type": "code" },
+        { "name": "patient_ref", "path": "subject.reference", "type": "string" },
+        { "name": "effective_date", "path": "effectiveDateTime", "type": "dateTime" },
+        { "name": "category", "path": "category.coding.code", "type": "code" },
+        { "name": "loinc_code", "path": "code.coding.where(system='http://loinc.org').code", "type": "code" },
+        { "name": "display", "path": "code.text", "type": "string" },
+        { "name": "value", "path": "valueQuantity.value", "type": "decimal" },
+        { "name": "unit", "path": "valueQuantity.unit", "type": "string" },
+        { "name": "interpretation", "path": "interpretation.coding.code", "type": "code" }
+      ]
+    }
+  ]
+}

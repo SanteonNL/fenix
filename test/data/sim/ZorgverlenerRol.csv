@@ -1,0 +1,5 @@
+ZorgverlenerRolID;ZorgverlenerRolSysteem;ZorgverlenerRolCode;ZorgverlenerRolOmschrijving;ZorgverlenerRolSpecialismeCode;ZorgverlenerRolSpecialismeOmschr
+A|CHI;;A;Assistent;0303;Medisch specialisten, chirurgie
+A|INT;;A;Assistent;0313;Medisch specialisten, inwendige geneeskunde
+I|INT;;I;Interne specialist;0313;Medisch specialisten, inwendige geneeskunde
+I|MDL;;I;Interne specialist;0318;Medisch specialisten, gastro-enterologie (maag-darm-lever-arts)

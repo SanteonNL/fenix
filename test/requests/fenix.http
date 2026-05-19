@@ -1,0 +1,112 @@
+@base = http://localhost:8080/r4
+
+# fenix FHIR API — http test file
+#
+# Start the server against the hix-test SQL Server (docker-compose):
+#   cd test/hix-test && docker-compose up -d && cd ../..
+#   go run ./cmd/fenix/. -cmd serve -source hix-test -data-source hix-test -port 8080
+#
+# Pushdown params per resource (from config/queries/sources/hix-test/hix-test.yaml):
+#   Patient     : birthdate, gender
+#   Observation : date, status, code, category
+#   Encounter   : date, status
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Patient
+# ─────────────────────────────────────────────────────────────────────────────
+
+### All patients (no filter)
+GET {{base}}/Patient
+Accept: application/fhir+json
+
+### Patients born on or after 1990-01-01
+GET {{base}}/Patient?birthdate=ge1990-01-01
+Accept: application/fhir+json
+
+### Patients born between 1980-01-01 and 2000-12-31
+GET {{base}}/Patient?birthdate=ge1980-01-01&birthdate=le2000-12-31
+Accept: application/fhir+json
+
+### Patients born on exact date
+GET {{base}}/Patient?birthdate=eq1985-06-15
+Accept: application/fhir+json
+
+### Patients with gender = male
+GET {{base}}/Patient?gender=male
+Accept: application/fhir+json
+
+### Patients with gender = female born after 1970
+GET {{base}}/Patient?gender=female&birthdate=ge1970-01-01
+Accept: application/fhir+json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Observation
+# ─────────────────────────────────────────────────────────────────────────────
+
+### All observations (all queries: main + lab-results + vital-signs)
+GET {{base}}/Observation
+Accept: application/fhir+json
+
+### Observations on or after 2023-01-01
+GET {{base}}/Observation?date=ge2023-01-01
+Accept: application/fhir+json
+
+### Observations in a date range
+GET {{base}}/Observation?date=ge2022-01-01&date=le2022-12-31
+Accept: application/fhir+json
+
+### Final observations only
+GET {{base}}/Observation?status=final
+Accept: application/fhir+json
+
+### Final observations with date filter
+GET {{base}}/Observation?status=final&date=ge2023-01-01
+Accept: application/fhir+json
+
+### Observations by LOINC code
+GET {{base}}/Observation?code=55284-4
+Accept: application/fhir+json
+
+### Observations by category
+GET {{base}}/Observation?category=vital-signs
+Accept: application/fhir+json
+
+### Lab observations with date filter
+GET {{base}}/Observation?category=laboratory&date=ge2023-06-01
+Accept: application/fhir+json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Encounter
+# ─────────────────────────────────────────────────────────────────────────────
+
+### All encounters
+GET {{base}}/Encounter
+Accept: application/fhir+json
+
+### Encounters on or after 2023-01-01
+GET {{base}}/Encounter?date=ge2023-01-01
+Accept: application/fhir+json
+
+### Encounters in date range
+GET {{base}}/Encounter?date=ge2022-01-01&date=le2022-12-31
+Accept: application/fhir+json
+
+### Finished encounters only
+GET {{base}}/Encounter?status=finished
+Accept: application/fhir+json
+
+### Finished encounters with date filter
+GET {{base}}/Encounter?status=finished&date=ge2023-01-01
+Accept: application/fhir+json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Error cases
+# ─────────────────────────────────────────────────────────────────────────────
+
+### Unsupported resource type → 404 OperationOutcome
+GET {{base}}/Medication
+Accept: application/fhir+json
+
+### Missing resource type → 404
+GET http://localhost:8080/r4/
+Accept: application/fhir+json

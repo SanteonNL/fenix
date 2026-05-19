@@ -1,0 +1,99 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go: build fenix",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "-o", "fenix.exe", "./cmd/fenix"],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: build all",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "./cmd/..."],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: test",
+      "type": "shell",
+      "command": "go",
+      "args": ["test", "-v", "./cmd/fenix/..."],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "test"
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: mod tidy",
+      "type": "shell",
+      "command": "go",
+      "args": ["mod", "tidy"],
+      "problemMatcher": []
+    },
+    {
+      "label": "fenix: run help",
+      "type": "shell",
+      "command": "${workspaceFolder}/cmd/fenix/fenix.exe",
+      "args": ["-help"],
+      "group": {
+        "kind": "test"
+      }
+    },
+    {
+      "label": "hix-test: start docker",
+      "type": "shell",
+      "command": "Start-Process 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'; Write-Host 'Waiting for Docker...'; while (-not (docker info 2>$null)) { Start-Sleep 2 }; docker-compose -f test/hix-test/docker-compose.yml up -d",
+      "problemMatcher": []
+    },
+    {
+      "label": "fenix: serve hix-test",
+      "type": "shell",
+      "command": "air",
+      "dependsOn": ["hix-test: start docker"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "fenix: convert sample data",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/fenix", "-cmd", "all"],
+      "options": {
+        "env": {
+          "CGO_ENABLED": "0"
+        }
+      },
+      "group": {
+        "kind": "test"
+      }
+    }
+  ]
+}

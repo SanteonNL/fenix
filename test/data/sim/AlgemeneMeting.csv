@@ -1,0 +1,5 @@
+MetingID;Identificatienummer;MetingNaamCodeSysteem;MetingNaamCode;MetingNaamOmschrijving;UitslagWaarde;UitslagWaardeEenheidSysteem;UitslagWaardeEenheid;UitslagWaardeOperator;UitslagCodeSysteem;UitslagCode;UitslagCodeOmschrijving;UitslagDatumTijd;MetingDatumTijd;MeetmethodeCodeSysteem;MeetmethodeCode;MeetmethodeOmschrijving;InterpretatieVlaggenCodeSysteem;InterpretatieVlaggenCode;InterpretatieVlaggenOmschrijving;ReferentieWaardeBovengrens;ReferentieWaardeOndergrens;ReferentieWaardeEenheidSysteem;ReferentieWaardeEenheid
+1;123;https://santeon.nl/sct;MCD_A;;;;;;https://santeon.nl/sct;A2;;;2023-10-13T19:19:19+02:00;;;;;;;;;;
+2;123;https://santeon.nl/sct;MCD_L;;;;;;https://santeon.nl/sct;L3;;;2023-10-13T19:19:19+01:00;;;;;;;;;;
+3;456;https://santeon.nl/sct;MCD_B;;;;;;https://santeon.nl/sct;B2;;;2023-10-13T19:19:19+01:00;;;;;;;;;;
+4;456;https://santeon.nl/sct;MayoEndoscopicScore;;;;;;http://loinc.org;LA6751-7;;;2023-10-13T19:19:19+01:00;;;;;;;;;;
