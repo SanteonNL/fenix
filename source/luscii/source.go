@@ -7,19 +7,46 @@ import (
 	"strings"
 	"time"
 
-	lusciiclient "github.com/SanteonNL/fenix/internal/models/luscii/client"
-	"github.com/SanteonNL/fenix/internal/source"
+	lusciiclient "github.com/SanteonNL/fenix/models/luscii/client"
+	"github.com/SanteonNL/fenix/source"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
 
-// endpointConfig mirrors one entry in the config.yaml endpoints list.
+// EndpointConfig configures one Luscii API endpoint.
+type EndpointConfig struct {
+	Path       string // URL path, e.g. /v1/patients
+	Table      string // target staging table name
+	SinceParam string // query param for incremental start date
+	EndParam   string // query param for end date
+	IDField    string // response field used as PK for upsert
+}
+
+// endpointConfig is the internal representation used at runtime.
 type endpointConfig struct {
 	path       string
 	table      string
 	sinceParam string
 	endParam   string
 	idField    string
+}
+
+// New creates a Luscii source directly without the registry.
+// Use this in HipsETL or other callers that prefer direct instantiation.
+func New(name, baseURL, apiKey, watermarkPath string, endpoints []EndpointConfig, log zerolog.Logger) source.Source {
+	eps := make([]endpointConfig, len(endpoints))
+	for i, e := range endpoints {
+		eps[i] = endpointConfig{path: e.Path, table: e.Table, sinceParam: e.SinceParam, endParam: e.EndParam, idField: e.IDField}
+	}
+	return &Source{
+		name:          name,
+		baseURL:       baseURL,
+		apiKey:        apiKey,
+		endpoints:     eps,
+		watermarkPath: watermarkPath,
+		watermark:     source.ReadWatermark(watermarkPath, log),
+		log:           log,
+	}
 }
 
 // Source loads Luscii API data into the staging database.
@@ -127,7 +154,7 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 			return
 		}
 		for _, rec := range flatRecords {
-			if err := upsertRow(db, ep.table, mainCols, rec); err != nil {
+			if err := upsertRow(db, ep.table, mainCols, ep.idField, rec); err != nil {
 				s.log.Error().Err(err).Str("table", ep.table).Msg("luscii: upsert failed")
 			}
 		}
@@ -155,7 +182,7 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 			}
 			// Delete stale child rows for every parent that was re-fetched.
 			for pid := range updatedIDs {
-				if _, err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(childTable), quoted(fkCol)), pid); err != nil {
+				if _, err := db.Exec(db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(childTable), quoted(fkCol))), pid); err != nil {
 					s.log.Warn().Err(err).Str("table", childTable).Msg("luscii: delete stale child rows failed")
 				}
 			}
@@ -258,7 +285,23 @@ func extractColumns(records []map[string]interface{}) []string {
 	return cols
 }
 
-// ── SQLite helpers ────────────────────────────────────────────────────────────
+// ── Database helpers ──────────────────────────────────────────────────────────
+
+func textType(db *sqlx.DB) string {
+	if db.DriverName() == "sqlserver" {
+		return "NVARCHAR(MAX)"
+	}
+	return "TEXT"
+}
+
+// pkTextType returns a bounded type for primary key columns.
+// SQL Server forbids PRIMARY KEY on NVARCHAR(MAX); NVARCHAR(450) fits within the 900-byte index limit.
+func pkTextType(db *sqlx.DB) string {
+	if db.DriverName() == "sqlserver" {
+		return "NVARCHAR(450)"
+	}
+	return "TEXT"
+}
 
 func recreateTable(db *sqlx.DB, table string, cols []string, pk string) error {
 	_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", quoted(table)))
@@ -266,37 +309,54 @@ func recreateTable(db *sqlx.DB, table string, cols []string, pk string) error {
 }
 
 func ensureTable(db *sqlx.DB, table string, cols []string, pk string) error {
-	defs := colDefs(cols, pk)
+	defs := colDefs(db, cols, pk)
+	createSQL := fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), defs)
+	if db.DriverName() == "sqlserver" {
+		_, err := db.Exec(fmt.Sprintf(`IF OBJECT_ID('%s', 'U') IS NULL %s`,
+			strings.ReplaceAll(table, "'", ""), createSQL))
+		return err
+	}
 	_, err := db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", quoted(table), defs))
 	return err
 }
 
 func createTable(db *sqlx.DB, table string, cols []string, pk string) error {
-	_, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), colDefs(cols, pk)))
+	_, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), colDefs(db, cols, pk)))
 	return err
 }
 
-func colDefs(cols []string, pk string) string {
+func colDefs(db *sqlx.DB, cols []string, pk string) string {
+	t := textType(db)
 	defs := make([]string, len(cols))
 	for i, c := range cols {
-		if c == pk {
-			defs[i] = quoted(c) + " TEXT PRIMARY KEY"
+		if c == pk && pk != "" {
+			defs[i] = quoted(c) + " " + pkTextType(db) + " PRIMARY KEY"
 		} else {
-			defs[i] = quoted(c) + " TEXT"
+			defs[i] = quoted(c) + " " + t
 		}
 	}
 	return strings.Join(defs, ", ")
 }
 
 func insertRow(db *sqlx.DB, table string, cols []string, rec map[string]interface{}) error {
-	return writeRow(db, "INSERT INTO", table, cols, rec)
+	return writeRow(db, table, cols, rec)
 }
 
-func upsertRow(db *sqlx.DB, table string, cols []string, rec map[string]interface{}) error {
-	return writeRow(db, "INSERT OR REPLACE INTO", table, cols, rec)
+// upsertRow deletes any existing row matching pk then inserts — database-independent
+// replacement for SQLite-specific INSERT OR REPLACE.
+func upsertRow(db *sqlx.DB, table string, cols []string, pk string, rec map[string]interface{}) error {
+	if pk != "" {
+		if pkVal := rec[pk]; pkVal != nil {
+			del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), quoted(pk)))
+			if _, err := db.Exec(del, fmt.Sprintf("%v", pkVal)); err != nil {
+				return fmt.Errorf("delete before upsert: %w", err)
+			}
+		}
+	}
+	return writeRow(db, table, cols, rec)
 }
 
-func writeRow(db *sqlx.DB, verb, table string, cols []string, rec map[string]interface{}) error {
+func writeRow(db *sqlx.DB, table string, cols []string, rec map[string]interface{}) error {
 	placeholders := make([]string, len(cols))
 	vals := make([]interface{}, len(cols))
 	quotedCols := make([]string, len(cols))
@@ -310,12 +370,11 @@ func writeRow(db *sqlx.DB, verb, table string, cols []string, rec map[string]int
 			vals[i] = marshalValue(v)
 		}
 	}
-	_, err := db.Exec(
-		fmt.Sprintf("%s %s (%s) VALUES (%s)",
-			verb, quoted(table),
-			strings.Join(quotedCols, ", "),
-			strings.Join(placeholders, ", ")),
-		vals...)
+	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		quoted(table),
+		strings.Join(quotedCols, ", "),
+		strings.Join(placeholders, ", ")))
+	_, err := db.Exec(sql, vals...)
 	return err
 }
 

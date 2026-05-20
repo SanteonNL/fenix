@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/SanteonNL/fenix/internal/source"
+	"github.com/SanteonNL/fenix/source"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
@@ -205,11 +205,19 @@ func columnSet(rows []map[string]interface{}) []string {
 	return cols
 }
 
+func textType(db *sqlx.DB) string {
+	if db.DriverName() == "sqlserver" {
+		return "NVARCHAR(MAX)"
+	}
+	return "TEXT"
+}
+
 func recreate(db *sqlx.DB, table string, cols []string) error {
 	_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", quoted(table)))
+	t := textType(db)
 	defs := make([]string, len(cols))
 	for i, c := range cols {
-		defs[i] = c + " TEXT"
+		defs[i] = c + " " + t
 	}
 	_, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), strings.Join(defs, ", ")))
 	return err
@@ -226,12 +234,11 @@ func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interfac
 			vals[i] = fmt.Sprintf("%v", v)
 		}
 	}
-	_, err := db.Exec(
-		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			quoted(table),
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", ")),
-		vals...)
+	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		quoted(table),
+		strings.Join(cols, ", "),
+		strings.Join(placeholders, ", ")))
+	_, err := db.Exec(sql, vals...)
 	return err
 }
 

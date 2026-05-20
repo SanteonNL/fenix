@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/SanteonNL/fenix/internal/source"
-	"github.com/SanteonNL/fenix/internal/source/local"
+	"github.com/SanteonNL/fenix/source"
+	"github.com/SanteonNL/fenix/source/local"
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/sftp"
 	"github.com/rs/zerolog"

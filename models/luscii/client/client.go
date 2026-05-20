@@ -83,28 +83,50 @@ func (c *Client) buildURL(path string, p FetchParams) string {
 	return full + "?" + q.Encode()
 }
 
+// fetchPage fetches one page, retrying on transient errors (network failures,
+// HTTP 429, HTTP 5xx) with exponential backoff: 1s, 2s, 4s.
+// Non-transient errors (4xx, decode failure) are returned immediately.
 func (c *Client) fetchPage(rawURL string) (*pageResponse, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request %s: %w", rawURL, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "application/json")
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(1<<uint(attempt-2)) * time.Second)
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", rawURL, err)
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build request %s: %w", rawURL, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("Accept", "application/json")
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("GET %s: %w", rawURL, err)
+			continue // transient: DNS, connection reset, timeout
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+			continue // transient: rate limit or server error
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+		}
+
+		var page pageResponse
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode %s: %w", rawURL, err)
+		}
+		resp.Body.Close()
+		return &page, nil
 	}
-	var page pageResponse
-	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", rawURL, err)
-	}
-	return &page, nil
+	return nil, fmt.Errorf("GET %s: gave up after %d attempts: %w", rawURL, maxAttempts, lastErr)
 }
 
 // toDateOnly truncates an RFC3339 timestamp or any YYYY-MM-DD... string to date-only format.

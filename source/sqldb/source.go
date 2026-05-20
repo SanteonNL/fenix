@@ -1,4 +1,4 @@
-package sqlserver
+package sqldb
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/SanteonNL/fenix/internal/source"
+	"github.com/SanteonNL/fenix/source"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rs/zerolog"
@@ -50,13 +50,13 @@ func New(name, connectionString, stagingDir, watermarkPath string, log zerolog.L
 func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 	extDB, err := sqlx.ConnectContext(ctx, "sqlserver", s.connectionString)
 	if err != nil {
-		return fmt.Errorf("sqlserver source %q: connect: %w", s.name, err)
+		return fmt.Errorf("sqldb source %q: connect: %w", s.name, err)
 	}
 	defer extDB.Close()
 
 	entries, err := os.ReadDir(s.stagingDir)
 	if err != nil {
-		return fmt.Errorf("sqlserver source %q: read staging dir %q: %w", s.name, s.stagingDir, err)
+		return fmt.Errorf("sqldb source %q: read staging dir %q: %w", s.name, s.stagingDir, err)
 	}
 
 	// Track which tables have a :pk annotation so we can update their watermark.
@@ -71,7 +71,7 @@ func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 
 		rawQuery, err := os.ReadFile(sqlPath)
 		if err != nil {
-			s.log.Error().Err(err).Str("file", e.Name()).Msg("sqlserver: read staging SQL failed")
+			s.log.Error().Err(err).Str("file", e.Name()).Msg("sqldb: read staging SQL failed")
 			continue
 		}
 
@@ -80,7 +80,7 @@ func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 		}
 
 		if err := s.loadQuery(ctx, extDB, stagingDB, string(rawQuery), tableName); err != nil {
-			s.log.Error().Err(err).Str("table", tableName).Msg("sqlserver: load failed")
+			s.log.Error().Err(err).Str("table", tableName).Msg("sqldb: load failed")
 		}
 	}
 
@@ -94,9 +94,9 @@ func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 			updated[t] = now
 		}
 		if err := source.WriteWatermark(s.watermarkPath, updated); err != nil {
-			s.log.Warn().Err(err).Msg("sqlserver: failed to save watermark")
+			s.log.Warn().Err(err).Msg("sqldb: failed to save watermark")
 		} else {
-			s.log.Info().Str("path", s.watermarkPath).Msg("sqlserver: watermark updated")
+			s.log.Info().Str("path", s.watermarkPath).Msg("sqldb: watermark updated")
 		}
 	}
 
@@ -126,7 +126,7 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 	}
 
 	if incremental {
-		s.log.Info().Str("table", tableName).Str("since", since).Msg("sqlserver: incremental load")
+		s.log.Info().Str("table", tableName).Str("since", since).Msg("sqldb: incremental load")
 		if err := ensureTable(stagingDB, tableName, cols, pk); err != nil {
 			return fmt.Errorf("ensure staging table: %w", err)
 		}
@@ -145,7 +145,7 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
-			s.log.Error().Err(err).Str("table", tableName).Msg("sqlserver: scan failed")
+			s.log.Error().Err(err).Str("table", tableName).Msg("sqldb: scan failed")
 			continue
 		}
 		row := make(map[string]interface{}, len(cols))
@@ -156,11 +156,11 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 		}
 		if incremental {
 			if err := upsertRow(stagingDB, tableName, cols, pk, row); err != nil {
-				s.log.Error().Err(err).Str("table", tableName).Msg("sqlserver: upsert failed")
+				s.log.Error().Err(err).Str("table", tableName).Msg("sqldb: upsert failed")
 			}
 		} else {
 			if err := insertRow(stagingDB, tableName, cols, row); err != nil {
-				s.log.Error().Err(err).Str("table", tableName).Msg("sqlserver: insert failed")
+				s.log.Error().Err(err).Str("table", tableName).Msg("sqldb: insert failed")
 			}
 		}
 		count++
@@ -173,7 +173,7 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 	if incremental {
 		mode = "incremental"
 	}
-	s.log.Info().Str("table", tableName).Str("mode", mode).Int("rows", count).Msg("sqlserver: loaded")
+	s.log.Info().Str("table", tableName).Str("mode", mode).Int("rows", count).Msg("sqldb: loaded")
 	return nil
 }
 
@@ -296,16 +296,16 @@ func quoted(name string) string {
 func constructor(name string, config map[string]interface{}, log zerolog.Logger) (source.Source, error) {
 	connStr, _ := config["connection_string"].(string)
 	if connStr == "" {
-		return nil, fmt.Errorf("sqlserver source %q: missing 'connection_string'", name)
+		return nil, fmt.Errorf("sqldb source %q: missing 'connection_string'", name)
 	}
 	stagingDir, _ := config["staging_dir"].(string)
 	if stagingDir == "" {
-		return nil, fmt.Errorf("sqlserver source %q: missing 'staging_dir'", name)
+		return nil, fmt.Errorf("sqldb source %q: missing 'staging_dir'", name)
 	}
 	watermarkPath, _ := config["watermark_path"].(string)
 	return New(name, connStr, stagingDir, watermarkPath, log), nil
 }
 
 func init() {
-	source.Register("sqlserver", constructor)
+	source.Register("sqldb", constructor)
 }

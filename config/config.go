@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
@@ -33,17 +34,17 @@ type EndpointConfig struct {
 }
 
 // SourceConfig configures one external data source.
-// type: "api" calls the live REST API; "local" reads files from a local directory;
-// "sqlserver" queries an external SQL Server and loads results into staging;
+// type: "luscii" calls the Luscii REST API; "local" reads files from a local directory;
+// "sqldb" queries an external SQL database and loads results into staging;
 // "sftp" downloads CSV/JSON files from a remote SFTP server.
 type SourceConfig struct {
-	Type             string           `yaml:"type"`              // "api" | "local" | "sqlserver" | "sftp"
-	BaseURL          string           `yaml:"base_url"`          // api: REST base URL
-	APIKey           string           `yaml:"api_key"`           // api: Bearer token
+	Type             string           `yaml:"type"`              // "luscii" | "local" | "sqldb" | "sftp"
+	BaseURL          string           `yaml:"base_url"`          // luscii: REST base URL
+	APIKey           string           `yaml:"api_key"`           // luscii: Bearer token
 	Dir              string           `yaml:"dir"`               // local: directory containing data files (.json or .csv)
 	Delimiter        string           `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
-	ConnectionString string           `yaml:"connection_string"` // sqlserver: connection string for SQL Server
-	StagingDir       string           `yaml:"staging_dir"`       // sqlserver: directory containing staging SQL queries
+	ConnectionString string           `yaml:"connection_string"` // sqldb: connection string for the external SQL database
+	StagingDir       string           `yaml:"staging_dir"`       // sqldb: directory containing staging SQL queries
 	Host             string           `yaml:"host"`              // sftp: hostname or IP
 	Port             int              `yaml:"port"`              // sftp: port, default 22
 	Username         string           `yaml:"username"`          // sftp: login username
@@ -110,106 +111,98 @@ type LocalOutputConfig struct {
 }
 
 // DataLakeConfig configures a data gateway endpoint (e.g. dls-t.hips.santeon.nl).
-// Authentication uses a client certificate (mTLS or certificate-based OAuth2).
 type DataLakeConfig struct {
-	URL            string `yaml:"url"`            // data gateway base URL, e.g. dls-t.hips.santeon.nl
-	Path           string `yaml:"path"`           // target path inside the storage account
-	ClientID       string `yaml:"clientId"`       // client identifier for the endpoint
-	Certificate    string `yaml:"certificate"`    // path to certificate file (.pem or combined PEM)
-	CertificateKey string `yaml:"certificateKey"` // path to private key file (.pem), if separate
-}
-
-// loadDotEnv loads the .env file co-located with the config file.
-func loadDotEnv(configFilePath string) {
-	_ = godotenv.Load(filepath.Join(filepath.Dir(configFilePath), ".env"))
-}
-
-// resolveEnvVars replaces ${ENV_VAR_NAME} patterns with environment variable values.
-// Supports all string fields in the configuration structure.
-func resolveEnvVars(data []byte) ([]byte, error) {
-
-	// Pattern to match ${VAR_NAME}
-	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
-	result := re.ReplaceAllStringFunc(string(data), func(match string) string {
-		// Extract variable name from ${VAR_NAME}
-		varName := match[2 : len(match)-1]
-
-		// Get the environment variable
-		value, exists := os.LookupEnv(varName)
-		if !exists {
-			// Return the original placeholder if env var not found
-			// This allows optional vars and will show the placeholder in error messages
-			return match
-		}
-		return value
-	})
-
-	return []byte(result), nil
-}
-
-// validateEnvVars checks that all ${ENV_VAR_NAME} placeholders in the config
-// have corresponding environment variables set. This helps catch missing secrets early.
-func validateEnvVars(data []byte) error {
-	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-	matches := re.FindAllStringSubmatch(string(data), -1)
-
-	var missing []string
-	for _, match := range matches {
-		varName := match[1]
-		if _, exists := os.LookupEnv(varName); !exists {
-			missing = append(missing, varName)
-		}
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
-	}
-
-	return nil
+	URL            string `yaml:"url"`
+	Path           string `yaml:"path"`
+	ClientID       string `yaml:"clientId"`
+	Certificate    string `yaml:"certificate"`
+	CertificateKey string `yaml:"certificateKey"`
 }
 
 // LoadConfig loads configuration from a YAML file, resolving environment variables.
-// Syntax: Use ${ENV_VAR_NAME} in the YAML to reference environment variables.
-// Environment variables are loaded from a .env file if it exists.
+// Use ${ENV_VAR_NAME} in the YAML to reference environment variables.
+// A .env file co-located with the config file is loaded automatically.
 func LoadConfig(filePath string) (*Config, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	loadDotEnv(filePath)
+	_ = godotenv.Load(filepath.Join(filepath.Dir(filePath), ".env"))
 
 	if err := validateEnvVars(data); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	// Resolve ${ENV_VAR_NAME} placeholders with actual values
 	resolvedData, err := resolveEnvVars(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve environment variables: %w", err)
 	}
 
-	config := &Config{
-		Staging: StagingConfig{
-			Database: "sqlite",
-			// Path defaults to "" → in-memory SQLite
-		},
-
+	cfg := &Config{
+		Staging: StagingConfig{Database: "sqlite"},
 		Output: OutputConfig{
 			Format: "json",
 			Type:   "local",
-			Local: LocalOutputConfig{
-				Dir:          "output",
-				UseTimestamp: true, // Default: create timestamped subdirectories
-				ArchiveCount: 5,    // Default: keep last 5 runs in archive
-			},
+			Local:  LocalOutputConfig{Dir: "output", UseTimestamp: true, ArchiveCount: 5},
 		},
 	}
 
-	if err := yaml.Unmarshal(resolvedData, config); err != nil {
+	if err := yaml.Unmarshal(resolvedData, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	return cfg, nil
+}
 
-	return config, nil
+// NewStagingDB opens a staging database connection from the given config.
+// The caller is responsible for blank-importing the required driver:
+//
+//	SQLite:     _ "modernc.org/sqlite"
+//	PostgreSQL: _ "github.com/lib/pq"
+//	SQL Server: _ "github.com/microsoft/go-mssqldb"
+func NewStagingDB(cfg *Config) (*sqlx.DB, error) {
+	switch cfg.Staging.Database {
+	case "", "sqlite":
+		dbPath := cfg.Staging.StagingPath()
+		if dbPath != ":memory:" {
+			if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return nil, fmt.Errorf("create staging dir: %w", err)
+				}
+			}
+		}
+		return sqlx.Connect(cfg.Staging.SQLiteDriver(), dbPath)
+	case "postgres":
+		return sqlx.Connect("postgres", cfg.Staging.Connection)
+	case "sqlserver":
+		return sqlx.Connect("sqlserver", cfg.Staging.Connection)
+	default:
+		return nil, fmt.Errorf("unsupported staging database: %s", cfg.Staging.Database)
+	}
+}
+
+func resolveEnvVars(data []byte) ([]byte, error) {
+	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	result := re.ReplaceAllStringFunc(string(data), func(match string) string {
+		varName := match[2 : len(match)-1]
+		if value, exists := os.LookupEnv(varName); exists {
+			return value
+		}
+		return match
+	})
+	return []byte(result), nil
+}
+
+func validateEnvVars(data []byte) error {
+	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	var missing []string
+	for _, match := range re.FindAllStringSubmatch(string(data), -1) {
+		if _, exists := os.LookupEnv(match[1]); !exists {
+			missing = append(missing, match[1])
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
