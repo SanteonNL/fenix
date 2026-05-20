@@ -81,7 +81,6 @@ func main() {
 	zerolog.SetGlobalLevel(level)
 	log.Info().Str("environment", cfg.Environment).Str("logLevel", level.String()).Msg("Logger initialized")
 
-	log.Info().Str("repoRoot", repoRoot).Msg("Repository root found")
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
 
 	db, err := initializeStagingDatabase(cfg, repoRoot, &log)

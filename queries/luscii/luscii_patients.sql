@@ -34,9 +34,9 @@ FROM luscii_patients;
 
 -- ── Statement 3: Identifier ───────────────────────────────────────────────
 SELECT
-    luscii_patient_id                                           AS resource_id,
-    luscii_patient_id || '_' || COALESCE(value, CAST(rowid AS TEXT)) AS id,
-    luscii_patient_id                                           AS parent_id,
+    luscii_patients_id                                           AS resource_id,
+    luscii_patients_id || '_' || COALESCE(value, CAST(rowid AS TEXT)) AS id,
+    luscii_patients_id                                           AS parent_id,
     'Patient.identifier'                                        AS fhir_path,
     "use",
     system,
