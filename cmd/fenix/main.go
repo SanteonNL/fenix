@@ -149,7 +149,15 @@ func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 		}
-		log.Info().Msg("Connected to PostgreSQL")
+		log.Info().Msg("Connected to PostgreSQL staging database")
+		return db, nil
+
+	case "sqlserver":
+		db, err := sqlx.Connect("sqlserver", cfg.Staging.Connection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SQL Server staging: %w", err)
+		}
+		log.Info().Msg("Connected to SQL Server staging database")
 		return db, nil
 
 	default:

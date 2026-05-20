@@ -65,10 +65,10 @@ func (c *Config) EffectiveLogLevel() string {
 }
 
 type StagingConfig struct {
-	Database   string `yaml:"database"`   // sqlite (default) | postgres
+	Database   string `yaml:"database"`   // sqlite (default) | postgres | sqlserver
 	Driver     string `yaml:"driver"`     // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
 	Path       string `yaml:"path"`       // sqlite: file path; omit or "" for in-memory (default)
-	Connection string `yaml:"connection"` // postgres: full connection string
+	Connection string `yaml:"connection"` // postgres/sqlserver: full connection string
 }
 
 // StagingPath returns the SQLite path to use.

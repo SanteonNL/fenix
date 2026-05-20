@@ -4,10 +4,11 @@ environment: dev  # dev (colored console output) | prod (JSON output)
 logLevel: info    # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
 
 staging:
-  database: sqlite        # sqlite (default) | postgres
+  database: sqlite        # sqlite (default) | postgres | sqlserver
   #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
   path: output/staging.db # persist to file — useful for debugging SQL queries after a run
   # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
+  # connection: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix_staging;encrypt=false;TrustServerCertificate=true" # sqlserver
   # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
   # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
 
@@ -25,9 +26,9 @@ output:
     archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
 
 sources:
-  # hix-test:
-  #   type: sqlserver
-  #   connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
+  hix-test:
+    type: sqlserver
+    connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
 
   luscii:
     type: luscii

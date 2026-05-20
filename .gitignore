@@ -1,3 +1,5 @@
+.claude/settings.local.json
+
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
@@ -40,3 +42,6 @@ terminology/conceptmaps/fhir/converted/
 # Sensitive parameter files — keep only templates tracked
 test/**/parameters.*.json
 !test/**/parameters.template.json
+
+config/config.*.yaml
+!config/config.example.yaml

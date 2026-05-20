@@ -155,7 +155,7 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 			}
 		}
 		if incremental {
-			if err := upsertRow(stagingDB, tableName, cols, row); err != nil {
+			if err := upsertRow(stagingDB, tableName, cols, pk, row); err != nil {
 				s.log.Error().Err(err).Str("table", tableName).Msg("sqlserver: upsert failed")
 			}
 		} else {
@@ -212,28 +212,44 @@ func renderTemplate(query string, data map[string]interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-func recreate(db *sqlx.DB, table string, cols []string, pk string) error {
-	_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", quoted(table)))
+// textType returns the appropriate text column type for the target database.
+func textType(db *sqlx.DB) string {
+	if db.DriverName() == "sqlserver" {
+		return "NVARCHAR(MAX)"
+	}
+	return "TEXT"
+}
+
+// colDefs builds column definition strings for CREATE TABLE, using the correct text type for the driver.
+func colDefs(db *sqlx.DB, cols []string, pk string) []string {
+	t := textType(db)
 	defs := make([]string, len(cols))
 	for i, c := range cols {
 		if c == pk {
-			defs[i] = c + " TEXT PRIMARY KEY"
+			defs[i] = c + " " + t + " PRIMARY KEY"
 		} else {
-			defs[i] = c + " TEXT"
+			defs[i] = c + " " + t
 		}
 	}
+	return defs
+}
+
+func recreate(db *sqlx.DB, table string, cols []string, pk string) error {
+	_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", quoted(table)))
+	defs := colDefs(db, cols, pk)
 	_, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), strings.Join(defs, ", ")))
 	return err
 }
 
 func ensureTable(db *sqlx.DB, table string, cols []string, pk string) error {
-	defs := make([]string, len(cols))
-	for i, c := range cols {
-		if c == pk {
-			defs[i] = c + " TEXT PRIMARY KEY"
-		} else {
-			defs[i] = c + " TEXT"
-		}
+	defs := colDefs(db, cols, pk)
+	createSQL := fmt.Sprintf("CREATE TABLE %s (%s)", quoted(table), strings.Join(defs, ", "))
+	if db.DriverName() == "sqlserver" {
+		// SQL Server does not support CREATE TABLE IF NOT EXISTS
+		_, err := db.Exec(fmt.Sprintf(
+			`IF OBJECT_ID('%s', 'U') IS NULL %s`,
+			strings.ReplaceAll(table, "'", ""), createSQL))
+		return err
 	}
 	_, err := db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", quoted(table), strings.Join(defs, ", ")))
 	return err
@@ -250,33 +266,26 @@ func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interfac
 			vals[i] = fmt.Sprintf("%v", v)
 		}
 	}
-	_, err := db.Exec(
-		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			quoted(table),
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", ")),
-		vals...)
+	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		quoted(table),
+		strings.Join(cols, ", "),
+		strings.Join(placeholders, ", ")))
+	_, err := db.Exec(sql, vals...)
 	return err
 }
 
-func upsertRow(db *sqlx.DB, table string, cols []string, row map[string]interface{}) error {
-	placeholders := make([]string, len(cols))
-	vals := make([]interface{}, len(cols))
-	for i, c := range cols {
-		placeholders[i] = "?"
-		if v := row[c]; v == nil {
-			vals[i] = nil
-		} else {
-			vals[i] = fmt.Sprintf("%v", v)
+// upsertRow deletes any existing row with the same pk then inserts, making it
+// database-independent (avoids SQLite-specific INSERT OR REPLACE).
+func upsertRow(db *sqlx.DB, table string, cols []string, pk string, row map[string]interface{}) error {
+	if pk != "" {
+		if pkVal := row[pk]; pkVal != nil {
+			del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), pk))
+			if _, err := db.Exec(del, fmt.Sprintf("%v", pkVal)); err != nil {
+				return fmt.Errorf("delete before upsert: %w", err)
+			}
 		}
 	}
-	_, err := db.Exec(
-		fmt.Sprintf("INSERT OR REPLACE INTO %s (%s) VALUES (%s)",
-			quoted(table),
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", ")),
-		vals...)
-	return err
+	return insertRow(db, table, cols, row)
 }
 
 func quoted(name string) string {

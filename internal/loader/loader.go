@@ -112,9 +112,10 @@ func (l *Loader) Load(tableName string, f *Flattener, records []interface{}) err
 
 func (l *Loader) recreate(tableName string, cols []string) error {
 	_, _ = l.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", quoted(tableName)))
+	t := textType(l.db)
 	defs := make([]string, len(cols))
 	for i, c := range cols {
-		defs[i] = clean(c) + " TEXT"
+		defs[i] = clean(c) + " " + t
 	}
 	_, err := l.db.Exec(fmt.Sprintf("CREATE TABLE %s (%s)", quoted(tableName), strings.Join(defs, ", ")))
 	return err
@@ -127,10 +128,10 @@ func (l *Loader) insert(tableName string, cols []string, row map[string]interfac
 		sanCols[i] = clean(c)
 		placeholders[i] = "?"
 	}
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+	sql := l.db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		quoted(tableName),
 		strings.Join(sanCols, ", "),
-		strings.Join(placeholders, ", "))
+		strings.Join(placeholders, ", ")))
 
 	vals := make([]interface{}, len(cols))
 	for i, c := range cols {
@@ -138,6 +139,14 @@ func (l *Loader) insert(tableName string, cols []string, row map[string]interfac
 	}
 	_, err := l.db.Exec(sql, vals...)
 	return err
+}
+
+// textType returns the appropriate text column type for the target database.
+func textType(db *sqlx.DB) string {
+	if db.DriverName() == "sqlserver" {
+		return "NVARCHAR(MAX)"
+	}
+	return "TEXT"
 }
 
 func childTable(parent, field string) string { return parent + "_" + field }
