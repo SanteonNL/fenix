@@ -16,6 +16,7 @@ import (
 	"github.com/SanteonNL/fenix/cmd/fenix/fhirserver"
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
 	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/source"
 	_ "github.com/SanteonNL/fenix/source/local"
 	_ "github.com/SanteonNL/fenix/source/luscii"
 	_ "github.com/SanteonNL/fenix/source/sftp"
@@ -153,11 +154,21 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
 	watermarkPath := config.WatermarkPath(cfg, repoRoot)
 
+	fw, err := config.NewFileWriter(cfg, repoRoot)
+	if err != nil {
+		log.Error().Err(err).Msg("staging files: failed to create file writer — file output disabled")
+	}
+
 	for name, sc := range cfg.Sources {
 		src, err := config.BuildSource(name, sc, repoRoot, watermarkPath, *log)
 		if err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to build source")
 			continue
+		}
+		if fw != nil {
+			if fa, ok := src.(source.FileWritable); ok {
+				fa.SetFileWriter(fw)
+			}
 		}
 		if err := src.Load(ctx, db); err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to load source")

@@ -66,10 +66,21 @@ func (c *Config) EffectiveLogLevel() string {
 }
 
 type StagingConfig struct {
-	Database   string `yaml:"database"`   // sqlite (default) | postgres | sqlserver
-	Driver     string `yaml:"driver"`     // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
-	Path       string `yaml:"path"`       // sqlite: file path; omit or "" for in-memory (default)
-	Connection string `yaml:"connection"` // postgres/sqlserver: full connection string
+	Database   string             `yaml:"database"`         // sqlite (default) | postgres | sqlserver
+	Driver     string             `yaml:"driver"`           // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
+	Path       string             `yaml:"path"`             // sqlite: file path; omit or "" for in-memory (default)
+	Connection string             `yaml:"connection"`       // postgres/sqlserver: full connection string
+	Files      *StagingFilesConfig `yaml:"files,omitempty"` // optional: also write staging data to files
+}
+
+// StagingFilesConfig enables writing staging data to flat CSV files and hierarchical JSON files
+// alongside (or instead of) the staging database.
+// Incremental runs append new CSV rows and merge JSON records by ID field.
+type StagingFilesConfig struct {
+	Dir    string `yaml:"dir"`     // local directory for flat CSVs (one file per table)
+	RawDir string `yaml:"raw_dir"` // local directory for hierarchical JSON (defaults to Dir if empty)
+	// Future: Azure blob storage support
+	// Azure *AzureStorageConfig `yaml:"azure,omitempty"`
 }
 
 // StagingPath returns the SQLite path to use.

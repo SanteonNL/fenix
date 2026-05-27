@@ -53,6 +53,8 @@ func New(name, baseURL, apiKey, watermarkPath string, endpoints []EndpointConfig
 // Each configured endpoint is loaded into its own table.
 // Fields that are arrays of objects are automatically split into child tables
 // named <table>_<fieldname> with a <table>_id foreign key column.
+// If a FileWriter is set via SetFileWriter, each table is also written to
+// flat CSV files and the full hierarchical JSON is maintained per endpoint.
 type Source struct {
 	name          string
 	baseURL       string
@@ -60,7 +62,13 @@ type Source struct {
 	endpoints     []endpointConfig
 	watermarkPath string
 	watermark     map[string]string
+	fileWriter    source.FileWriter // nil if file output is not configured
 	log           zerolog.Logger
+}
+
+// SetFileWriter configures file-based staging output alongside the database.
+func (s *Source) SetFileWriter(w source.FileWriter) {
+	s.fileWriter = w
 }
 
 func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
@@ -171,6 +179,32 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 		}
 	}
 
+	// ── File output: flat CSV + hierarchical JSON ─────────────────────────────
+	if s.fileWriter != nil && len(flatRecords) > 0 {
+		// Flat CSV: append new rows on incremental, overwrite on full load.
+		var csvErr error
+		if incremental {
+			csvErr = s.fileWriter.WriteTableAppend(ep.table, mainCols, flatRecords)
+		} else {
+			csvErr = s.fileWriter.WriteTableFull(ep.table, mainCols, flatRecords)
+		}
+		if csvErr != nil {
+			s.log.Warn().Err(csvErr).Str("table", ep.table).Msg("luscii: csv write failed")
+		}
+
+		// Hierarchical JSON: merge by ID on incremental (preserves nested children),
+		// overwrite on full load.
+		var jsonErr error
+		if incremental {
+			jsonErr = s.fileWriter.UpsertJSON(ep.table, ep.idField, records)
+		} else {
+			jsonErr = s.fileWriter.WriteJSONFull(ep.table, records)
+		}
+		if jsonErr != nil {
+			s.log.Warn().Err(jsonErr).Str("table", ep.table).Msg("luscii: json write failed")
+		}
+	}
+
 	// ── Child tables ─────────────────────────────────────────────────────────
 	for childTable, childRows := range childBatches {
 		childCols := extractColumns(childRows)
@@ -200,6 +234,15 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 		}
 
 		s.log.Info().Str("table", childTable).Int("rows", len(childRows)).Msg("luscii: child table loaded")
+
+		// File output for child flat CSV.
+		// On full load: overwrite. On incremental: skip — the hierarchical JSON
+		// already contains the full updated child data for modified parents.
+		if s.fileWriter != nil && !incremental {
+			if err := s.fileWriter.WriteTableFull(childTable, childCols, childRows); err != nil {
+				s.log.Warn().Err(err).Str("table", childTable).Msg("luscii: child csv write failed")
+			}
+		}
 	}
 }
 
