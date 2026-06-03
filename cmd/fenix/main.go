@@ -105,14 +105,16 @@ func main() {
 
 	switch *command {
 	case "load":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 	case "convert":
+		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "all":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
+		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "serve-all":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 		fallthrough
 	case "serve":
 		startFHIRServer(db, cfg, repoRoot, &log)
@@ -148,10 +150,8 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
 }
 
-// loadSources iterates all configured sources, loads each into the staging
-// database, then runs FHIR conversion for every SQL file found in
-// queries/<sourceName>/.
-func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+// loadSources iterates all configured sources and loads each into the staging database.
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
 	watermarkPath := config.WatermarkPath(cfg, repoRoot)
 
 	fw, err := config.NewFileWriter(cfg, repoRoot)
@@ -172,9 +172,13 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 		}
 		if err := src.Load(ctx, db); err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
-			continue
 		}
+	}
+}
 
+// runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/.
+func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	for name := range cfg.Sources {
 		queriesDir := resolvePath(repoRoot, "queries/"+name)
 		entries, err := os.ReadDir(queriesDir)
 		if err != nil {

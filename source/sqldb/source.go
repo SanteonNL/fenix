@@ -173,7 +173,7 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 	if incremental {
 		mode = "incremental"
 	}
-	s.log.Info().Str("table", tableName).Str("mode", mode).Int("rows", count).Msg("sqldb: loaded")
+	s.log.Info().Str("source", s.name).Str("type", "sqldb").Str("table", tableName).Str("mode", mode).Int("rows", count).Msg("source: loaded")
 	return nil
 }
 

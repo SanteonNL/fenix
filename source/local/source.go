@@ -97,7 +97,7 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
 		}
 	}
-	s.log.Info().Str("table", table).Int("rows", len(flat)).Msg("local: loaded")
+	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(flat)).Msg("source: loaded")
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
 		}
 	}
-	s.log.Info().Str("table", table).Int("rows", len(rows)).Msg("local: loaded")
+	s.log.Info().Str("table", table).Str("mode", "full").Int("rows", len(rows)).Msg("source: loaded")
 	return nil
 }
 

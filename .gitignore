@@ -11,7 +11,7 @@ test/requests/.env
 *.so
 *.dylib
 *.bkp
-
+*/t
 # Test binary, built with `go test -c`
 *.test
 
@@ -37,6 +37,7 @@ cmd/artdecor/conceptmap_*.csv
 output/temp/*.json
 output/temp/*.json
 
+tmp/
 
 terminology/conceptmaps/fhir/converted/
 

@@ -86,7 +86,7 @@ func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
 			Since:      since,
 		}
 
-		s.log.Info().Str("path", ep.path).Str("table", ep.table).Str("since", since).Msg("luscii: fetching")
+		s.log.Info().Str("source", s.name).Str("type", "luscii").Str("table", ep.table).Str("since", since).Msg("source: loading")
 
 		records, err := cli.FetchAll(ep.path, params)
 		if err != nil {
@@ -155,8 +155,9 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 
 	// ── Main table ────────────────────────────────────────────────────────────
 	mainCols := extractColumns(flatRecords)
+	mode := "full"
 	if incremental {
-		s.log.Info().Str("table", ep.table).Str("since", since).Int("rows", len(flatRecords)).Msg("luscii: incremental upsert")
+		mode = "incremental"
 		if err := ensureTable(db, ep.table, mainCols, ep.idField); err != nil {
 			s.log.Error().Err(err).Str("table", ep.table).Msg("luscii: ensure table failed")
 			return
@@ -167,7 +168,6 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 			}
 		}
 	} else {
-		s.log.Info().Str("table", ep.table).Int("rows", len(flatRecords)).Msg("luscii: full load")
 		if err := recreateTable(db, ep.table, mainCols, ep.idField); err != nil {
 			s.log.Error().Err(err).Str("table", ep.table).Msg("luscii: recreate failed")
 			return
@@ -178,6 +178,7 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 			}
 		}
 	}
+	s.log.Info().Str("source", s.name).Str("type", "luscii").Str("table", ep.table).Str("mode", mode).Int("rows", len(flatRecords)).Msg("source: loaded")
 
 	// ── File output: flat CSV + hierarchical JSON ─────────────────────────────
 	if s.fileWriter != nil && len(flatRecords) > 0 {
@@ -233,7 +234,7 @@ func (s *Source) loadEndpoint(db *sqlx.DB, ep endpointConfig, records []map[stri
 			}
 		}
 
-		s.log.Info().Str("table", childTable).Int("rows", len(childRows)).Msg("luscii: child table loaded")
+		s.log.Info().Str("source", s.name).Str("type", "luscii").Str("table", childTable).Str("mode", mode).Int("rows", len(childRows)).Msg("source: loaded")
 
 		// File output for child flat CSV.
 		// On full load: overwrite. On incremental: skip — the hierarchical JSON
