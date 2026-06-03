@@ -49,6 +49,7 @@ func BuildSource(name string, sc SourceConfig, repoRoot string, watermarkPath st
 		"key_file":          resolvePath(repoRoot, sc.KeyFile),
 		"remote_dir":        sc.RemoteDir,
 		"endpoints":         endpointsRaw,
+		"json_options":      sc.JSONOptions,
 	}
 
 	return source.Build(sc.Type, name, configMap, log)

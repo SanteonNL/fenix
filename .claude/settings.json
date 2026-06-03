@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/t.hetterscheid/Repo/HipsETL/**)",
+      "Bash(xargs grep -l \"fenix\\\\|config.LoadAllSources\")"
+    ]
+  }
+}

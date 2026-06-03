@@ -14,25 +14,42 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// JSONFileConfig controls how a specific JSON file's records are flattened.
+// Fields listed in Children become separate child tables with a FK back to the
+// parent; each child entry can itself carry a JSONFileConfig for deeper nesting.
+// All other arrays are JSON-encoded as text (the default behaviour).
+type JSONFileConfig struct {
+	IDField  string
+	Children map[string]*JSONFileConfig // field name → sub-config (nil = promote, no deeper nesting)
+}
+
 // Source reads all files from a local directory into the staging database.
 // Format is detected by extension: .json and .csv are supported.
 // Table name: <sourceName>_<filename_without_extension>.
 //
 // JSON: unwraps {"data": [...]} or bare array; nested objects are flattened
 // with "_" separators; arrays are stored as JSON text.
+// JSON with a matching JSONFileConfig: fields in Children become child tables (recursive).
 // CSV: first row is treated as the header.
 type Source struct {
-	name      string
-	dir       string
-	delimiter rune
-	log       zerolog.Logger
+	name        string
+	dir         string
+	delimiter   rune
+	jsonOptions map[string]JSONFileConfig // keyed by lower-cased file base name (no ext)
+	fileWriter  source.FileWriter
+	log         zerolog.Logger
 }
 
-func New(name, dir string, delimiter rune, log zerolog.Logger) *Source {
+// SetFileWriter configures file-based staging output alongside the database.
+func (s *Source) SetFileWriter(w source.FileWriter) {
+	s.fileWriter = w
+}
+
+func New(name, dir string, delimiter rune, jsonOptions map[string]JSONFileConfig, log zerolog.Logger) *Source {
 	if delimiter == 0 {
 		delimiter = ','
 	}
-	return &Source{name: name, dir: dir, delimiter: delimiter, log: log}
+	return &Source{name: name, dir: dir, delimiter: delimiter, jsonOptions: jsonOptions, log: log}
 }
 
 func (s *Source) Load(_ context.Context, db *sqlx.DB) error {
@@ -67,6 +84,8 @@ func (s *Source) Load(_ context.Context, db *sqlx.DB) error {
 
 // loadJSON reads a JSON file, unwraps the {"data":[...]} envelope if present,
 // flattens each record, and inserts into the staging database.
+// If a JSONFileConfig is configured for this file, fields in Children become
+// separate child tables (recursively); otherwise the generic flattenMap strategy is used.
 func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -79,6 +98,11 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 	if len(records) == 0 {
 		s.log.Warn().Str("file", filepath.Base(path)).Msg("local: no records")
 		return nil
+	}
+
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	if cfg, ok := s.jsonOptions[base]; ok {
+		return NewLoader(s.name, s.fileWriter, s.log).Load(db, table, records, cfg, false)
 	}
 
 	flat := make([]map[string]interface{}, 0, len(records))
@@ -98,8 +122,18 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 		}
 	}
 	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(flat)).Msg("source: loaded")
+
+	if s.fileWriter != nil {
+		if err := s.fileWriter.WriteTableFull(table, cols, flat); err != nil {
+			s.log.Warn().Err(err).Str("table", table).Msg("local: csv write failed")
+		}
+		if err := s.fileWriter.WriteJSONFull(table, records); err != nil {
+			s.log.Warn().Err(err).Str("table", table).Msg("local: json write failed")
+		}
+	}
 	return nil
 }
+
 
 // loadCSV reads a CSV file (first row = header) and inserts into the staging database.
 func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
@@ -111,6 +145,7 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 
 	r := csv.NewReader(f)
 	r.Comma = s.delimiter
+	r.LazyQuotes = true
 	records, err := r.ReadAll()
 	if err != nil {
 		return fmt.Errorf("read %s: %w", filepath.Base(path), err)
@@ -121,23 +156,34 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 	}
 
 	headers := sanitise(records[0])
-	rows := records[1:]
+	rawRows := records[1:]
 
-	if err := recreate(db, table, headers); err != nil {
-		return err
-	}
-	for _, rec := range rows {
+	allRows := make([]map[string]interface{}, 0, len(rawRows))
+	for _, rec := range rawRows {
 		row := make(map[string]interface{}, len(headers))
 		for i, h := range headers {
 			if i < len(rec) {
 				row[h] = rec[i]
 			}
 		}
+		allRows = append(allRows, row)
+	}
+
+	if err := recreate(db, table, headers); err != nil {
+		return err
+	}
+	for _, row := range allRows {
 		if err := insertRow(db, table, headers, row); err != nil {
 			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
 		}
 	}
-	s.log.Info().Str("table", table).Str("mode", "full").Int("rows", len(rows)).Msg("source: loaded")
+	s.log.Info().Str("table", table).Str("mode", "full").Int("rows", len(allRows)).Msg("source: loaded")
+
+	if s.fileWriter != nil {
+		if err := s.fileWriter.WriteTableFull(table, headers, allRows); err != nil {
+			s.log.Warn().Err(err).Str("table", table).Msg("local: csv write failed")
+		}
+	}
 	return nil
 }
 
@@ -172,6 +218,54 @@ func flattenMap(prefix string, src map[string]interface{}, dst map[string]interf
 		default:
 			dst[key] = v
 		}
+	}
+}
+
+// asObjectArray returns v as a slice of maps if it is a non-empty JSON array
+// whose every element is an object. Returns false for mixed or primitive arrays.
+func asObjectArray(v interface{}) ([]map[string]interface{}, bool) {
+	arr, ok := v.([]interface{})
+	if !ok || len(arr) == 0 {
+		return nil, false
+	}
+	result := make([]map[string]interface{}, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		result = append(result, m)
+	}
+	return result, true
+}
+
+// flattenObjectFields flattens one level of nested objects using "_" as separator.
+// Any remaining nested structures (arrays, maps) are JSON-encoded as strings.
+func flattenObjectFields(m map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range m {
+		if nested, ok := v.(map[string]interface{}); ok {
+			for subk, subv := range nested {
+				result[k+"_"+subk] = marshalValue(subv)
+			}
+		} else {
+			result[k] = marshalValue(v)
+		}
+	}
+	return result
+}
+
+// marshalValue returns scalars as-is and encodes maps/slices as JSON strings.
+func marshalValue(v interface{}) interface{} {
+	switch v.(type) {
+	case nil, string, bool, float64, int, int64:
+		return v
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
 	}
 }
 
@@ -246,6 +340,42 @@ func quoted(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, ``) + `"`
 }
 
+// ParseJSONOptions parses the json_options config block into a map keyed by file base name.
+func ParseJSONOptions(config map[string]interface{}) map[string]JSONFileConfig {
+	rawOpts, ok := config["json_options"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	result := make(map[string]JSONFileConfig, len(rawOpts))
+	for fileName, v := range rawOpts {
+		m, _ := v.(map[string]interface{})
+		result[strings.ToLower(fileName)] = parseJSONFileConfig(m)
+	}
+	return result
+}
+
+func parseJSONFileConfig(m map[string]interface{}) JSONFileConfig {
+	if m == nil {
+		return JSONFileConfig{}
+	}
+	idField, _ := m["id_field"].(string)
+	var children map[string]*JSONFileConfig
+	if rawChildren, ok := m["children"].(map[string]interface{}); ok {
+		children = make(map[string]*JSONFileConfig, len(rawChildren))
+		for name, v := range rawChildren {
+			if v == nil {
+				children[name] = nil
+			} else if cm, ok := v.(map[string]interface{}); ok {
+				sub := parseJSONFileConfig(cm)
+				children[name] = &sub
+			} else {
+				children[name] = nil
+			}
+		}
+	}
+	return JSONFileConfig{IDField: idField, Children: children}
+}
+
 // Constructor for registry-based source instantiation.
 // The table prefix is always derived from the last path segment of dir,
 // so "test/data/source1" → prefix "source1" regardless of the config key name.
@@ -260,7 +390,8 @@ func constructor(name string, config map[string]interface{}, log zerolog.Logger)
 		delimiter = rune(delim[0])
 	}
 
-	return New(filepath.Base(dir), dir, delimiter, log), nil
+	jsonOptions := ParseJSONOptions(config)
+	return New(filepath.Base(dir), dir, delimiter, jsonOptions, log), nil
 }
 
 func init() {

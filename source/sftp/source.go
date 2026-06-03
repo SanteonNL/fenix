@@ -20,17 +20,24 @@ import (
 // into the staging database using the same table conventions as the local source.
 // Authentication is done with an SSH private key file.
 type Source struct {
-	name      string
-	host      string
-	port      int
-	username  string
-	keyFile   string
-	remoteDir string
-	delimiter rune
-	log       zerolog.Logger
+	name        string
+	host        string
+	port        int
+	username    string
+	keyFile     string
+	remoteDir   string
+	delimiter   rune
+	jsonOptions map[string]local.JSONFileConfig
+	fileWriter  source.FileWriter
+	log         zerolog.Logger
 }
 
-func New(name, host string, port int, username, keyFile, remoteDir string, delimiter rune, log zerolog.Logger) *Source {
+// SetFileWriter configures file-based staging output alongside the database.
+func (s *Source) SetFileWriter(w source.FileWriter) {
+	s.fileWriter = w
+}
+
+func New(name, host string, port int, username, keyFile, remoteDir string, delimiter rune, jsonOptions map[string]local.JSONFileConfig, log zerolog.Logger) *Source {
 	if delimiter == 0 {
 		delimiter = ','
 	}
@@ -38,14 +45,15 @@ func New(name, host string, port int, username, keyFile, remoteDir string, delim
 		port = 22
 	}
 	return &Source{
-		name:      name,
-		host:      host,
-		port:      port,
-		username:  username,
-		keyFile:   keyFile,
-		remoteDir: remoteDir,
-		delimiter: delimiter,
-		log:       log,
+		name:        name,
+		host:        host,
+		port:        port,
+		username:    username,
+		keyFile:     keyFile,
+		remoteDir:   remoteDir,
+		delimiter:   delimiter,
+		jsonOptions: jsonOptions,
+		log:         log,
 	}
 }
 
@@ -66,7 +74,11 @@ func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
 		return fmt.Errorf("sftp source %q: download: %w", s.name, err)
 	}
 
-	return local.New(s.name, tmpDir, s.delimiter, s.log).Load(ctx, db)
+	ls := local.New(s.name, tmpDir, s.delimiter, s.jsonOptions, s.log)
+	if s.fileWriter != nil {
+		ls.SetFileWriter(s.fileWriter)
+	}
+	return ls.Load(ctx, db)
 }
 
 func (s *Source) connect() (*sftp.Client, func(), error) {
@@ -177,7 +189,8 @@ func constructor(name string, config map[string]interface{}, log zerolog.Logger)
 		delimiter = rune(delim[0])
 	}
 
-	return New(name, host, port, username, keyFile, remoteDir, delimiter, log), nil
+	jsonOptions := local.ParseJSONOptions(config)
+	return New(name, host, port, username, keyFile, remoteDir, delimiter, jsonOptions, log), nil
 }
 
 func init() {

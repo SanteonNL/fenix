@@ -50,7 +50,8 @@ type SourceConfig struct {
 	Username         string           `yaml:"username"`          // sftp: login username
 	KeyFile          string           `yaml:"key_file"`          // sftp: path to SSH private key file
 	RemoteDir        string           `yaml:"remote_dir"`        // sftp: remote directory to download files from
-	Endpoints        []EndpointConfig `yaml:"endpoints"`         // luscii: list of API endpoints to fetch
+	Endpoints        []EndpointConfig       `yaml:"endpoints"`    // luscii: list of API endpoints to fetch
+	JSONOptions      map[string]interface{} `yaml:"json_options"` // local/sftp: per-file JSON flattening config
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:
