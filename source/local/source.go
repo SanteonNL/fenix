@@ -177,7 +177,7 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
 		}
 	}
-	s.log.Info().Str("table", table).Str("mode", "full").Int("rows", len(allRows)).Msg("source: loaded")
+	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(allRows)).Msg("source: loaded")
 
 	if s.fileWriter != nil {
 		if err := s.fileWriter.WriteTableFull(table, headers, allRows); err != nil {
@@ -377,8 +377,6 @@ func parseJSONFileConfig(m map[string]interface{}) JSONFileConfig {
 }
 
 // Constructor for registry-based source instantiation.
-// The table prefix is always derived from the last path segment of dir,
-// so "test/data/source1" → prefix "source1" regardless of the config key name.
 func constructor(name string, config map[string]interface{}, log zerolog.Logger) (source.Source, error) {
 	dir, ok := config["dir"].(string)
 	if !ok || dir == "" {
@@ -391,7 +389,7 @@ func constructor(name string, config map[string]interface{}, log zerolog.Logger)
 	}
 
 	jsonOptions := ParseJSONOptions(config)
-	return New(filepath.Base(dir), dir, delimiter, jsonOptions, log), nil
+	return New(name, dir, delimiter, jsonOptions, log), nil
 }
 
 func init() {
