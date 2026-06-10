@@ -1,3 +1,10 @@
+$hixTestActive = (Get-Content "config/config.yaml") |
+    Where-Object { $_ -match '^\s+hix-test:' -and $_ -notmatch '^\s*#' }
+if (-not $hixTestActive) {
+    Write-Host 'hix-test not in config sources — skipping Docker startup.'
+    exit 0
+}
+
 function Get-ContainerHealth {
     $json = docker inspect hix-test-sqlserver 2>$null | ConvertFrom-Json
     return $json.State.Health.Status

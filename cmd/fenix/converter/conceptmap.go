@@ -100,11 +100,6 @@ func (s *ConceptMapService) LoadCSV(filePath string) error {
 
 	for vsURI, g := range groups {
 		s.byValueset[vsURI] = &valuesetMap{entries: g.entries, validCodes: g.validCodes}
-		s.logger.Info().
-			Str("valueset", vsURI).
-			Str("file", filePath).
-			Int("entries", len(g.entries)).
-			Msg("Loaded concept map")
 	}
 	return nil
 }
@@ -115,14 +110,18 @@ func (s *ConceptMapService) LoadDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
+	count := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".csv") {
 			continue
 		}
 		if err := s.LoadCSV(dir + "/" + e.Name()); err != nil {
 			s.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping concept map")
+		} else {
+			count++
 		}
 	}
+	s.logger.Info().Str("dir", dir).Int("files", count).Msg("Loaded concept maps")
 	return nil
 }
 

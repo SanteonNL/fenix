@@ -1,3 +1,6 @@
+.claude/settings.local.json
+test/requests/.env
+
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
@@ -8,7 +11,7 @@
 *.so
 *.dylib
 *.bkp
-
+*/t
 # Test binary, built with `go test -c`
 *.test
 
@@ -34,9 +37,13 @@ cmd/artdecor/conceptmap_*.csv
 output/temp/*.json
 output/temp/*.json
 
+tmp/
 
 terminology/conceptmaps/fhir/converted/
 
 # Sensitive parameter files — keep only templates tracked
 test/**/parameters.*.json
 !test/**/parameters.template.json
+
+config/config.yaml
+!config/config.example.yaml

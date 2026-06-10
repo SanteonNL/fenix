@@ -1,0 +1,35 @@
+@base = https://vitalsapi.luscii.com
+@apiKey = {{$dotenv LUSCII_API_KEY}}
+
+# Luscii Vitals API — http test file
+#
+# Requires a .env file next to this file (gitignored):
+#   test/requests/.env
+#   LUSCII_API_KEY=<your-api-key>
+#
+# VS Code REST Client reads {{$dotenv VAR}} from .env automatically.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Patients
+# ─────────────────────────────────────────────────────────────────────────────
+
+### All patients
+GET {{base}}/v1/patients
+Authorization: Bearer {{apiKey}}
+Accept: application/json
+
+### Patients updated since a date (incremental)
+GET {{base}}/v1/patients?startDate=2024-01-01
+Authorization: Bearer {{apiKey}}
+Accept: application/json
+
+### Patients updated in a date range
+GET {{base}}/v1/patients?startDate=2026-01-01&endDate=2026-12-31
+Authorization: Bearer {{apiKey}}
+Accept: application/json
+
+### Single patient by ID
+# @prompt patientId Patient ID
+GET {{base}}/v1/patients/{{patientId}}
+Authorization: Bearer {{apiKey}}
+Accept: application/json

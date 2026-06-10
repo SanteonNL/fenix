@@ -11,16 +11,16 @@ import (
 
 	"net/http"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/config"
+	"github.com/SanteonNL/fenix/config"
 	"github.com/SanteonNL/fenix/cmd/fenix/converter"
 	"github.com/SanteonNL/fenix/cmd/fenix/fhirserver"
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
 	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
-	"github.com/SanteonNL/fenix/internal/source"
-	_ "github.com/SanteonNL/fenix/internal/source/local"
-	_ "github.com/SanteonNL/fenix/internal/source/luscii"
-	_ "github.com/SanteonNL/fenix/internal/source/sftp"
-	_ "github.com/SanteonNL/fenix/internal/source/sqlserver"
+	"github.com/SanteonNL/fenix/source"
+	_ "github.com/SanteonNL/fenix/source/local"
+	_ "github.com/SanteonNL/fenix/source/luscii"
+	_ "github.com/SanteonNL/fenix/source/sftp"
+	_ "github.com/SanteonNL/fenix/source/sqldb"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 	_ "modernc.org/sqlite"
@@ -82,7 +82,6 @@ func main() {
 	zerolog.SetGlobalLevel(level)
 	log.Info().Str("environment", cfg.Environment).Str("logLevel", level.String()).Msg("Logger initialized")
 
-	log.Info().Str("repoRoot", repoRoot).Msg("Repository root found")
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
 
 	db, err := initializeStagingDatabase(cfg, repoRoot, &log)
@@ -106,14 +105,16 @@ func main() {
 
 	switch *command {
 	case "load":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 	case "convert":
+		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "all":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
+		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "serve-all":
-		loadSources(ctx, db, cfg, repoRoot, outputMgr, &log)
+		loadSources(ctx, db, cfg, repoRoot, &log)
 		fallthrough
 	case "serve":
 		startFHIRServer(db, cfg, repoRoot, &log)
@@ -125,36 +126,16 @@ func main() {
 }
 
 func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*sqlx.DB, error) {
-	switch cfg.Staging.Database {
-	case "sqlite", "":
-		dbPath := cfg.Staging.StagingPath()
-		if dbPath != ":memory:" {
-			dbPath = resolvePath(repoRoot, dbPath)
-			if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					return nil, fmt.Errorf("failed to create database directory: %w", err)
-				}
-			}
-		}
-		driver := cfg.Staging.SQLiteDriver()
-		db, err := sqlx.Connect(driver, dbPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to SQLite (driver=%s): %w", driver, err)
-		}
-		log.Info().Str("path", dbPath).Str("driver", driver).Msg("Connected to staging database")
-		return db, nil
-
-	case "postgres":
-		db, err := sqlx.Connect("postgres", cfg.Staging.Connection)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-		}
-		log.Info().Msg("Connected to PostgreSQL")
-		return db, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported database type: %s", cfg.Staging.Database)
+	// Resolve a relative SQLite path against the repo root before handing off.
+	if (cfg.Staging.Database == "" || cfg.Staging.Database == "sqlite") && cfg.Staging.Path != "" {
+		cfg.Staging.Path = resolvePath(repoRoot, cfg.Staging.Path)
 	}
+	db, err := config.NewStagingDB(cfg)
+	if err != nil {
+		return nil, err
+	}
+	log.Info().Str("database", cfg.Staging.Database).Msg("Connected to staging database")
+	return db, nil
 }
 
 func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
@@ -169,19 +150,35 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
 }
 
-// loadSources iterates all configured sources, loads each into the staging
-// database, then runs FHIR conversion for every SQL file found in
-// queries/<sourceName>/.
-func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
-	watermarkPath := computeWatermarkPath(cfg, repoRoot)
+// loadSources iterates all configured sources and loads each into the staging database.
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	watermarkPath := config.WatermarkPath(cfg, repoRoot)
+
+	fw, err := config.NewFileWriter(cfg, repoRoot)
+	if err != nil {
+		log.Error().Err(err).Msg("staging files: failed to create file writer — file output disabled")
+	}
 
 	for name, sc := range cfg.Sources {
-		src := buildSource(name, sc, repoRoot, watermarkPath, *log)
-		if err := src.Load(ctx, db); err != nil {
-			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
+		src, err := config.BuildSource(name, sc, repoRoot, watermarkPath, *log)
+		if err != nil {
+			log.Error().Err(err).Str("source", name).Msg("Failed to build source")
 			continue
 		}
+		if fw != nil {
+			if fa, ok := src.(source.FileWritable); ok {
+				fa.SetFileWriter(fw)
+			}
+		}
+		if err := src.Load(ctx, db); err != nil {
+			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
+		}
+	}
+}
 
+// runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/.
+func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+	for name := range cfg.Sources {
 		queriesDir := resolvePath(repoRoot, "queries/"+name)
 		entries, err := os.ReadDir(queriesDir)
 		if err != nil {
@@ -197,60 +194,6 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 	}
 }
 
-// computeWatermarkPath returns the path for the incremental watermark file,
-// placed next to the staging DB. Returns "" for in-memory databases.
-func computeWatermarkPath(cfg *config.Config, repoRoot string) string {
-	dbPath := cfg.Staging.StagingPath()
-	if dbPath == ":memory:" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(resolvePath(repoRoot, dbPath)), ".watermark.json")
-}
-
-// buildSource constructs the Source implementation for the given config entry using the registry.
-// Converts the SourceConfig struct to a map and uses the registry to instantiate the source by type.
-func buildSource(name string, sc config.SourceConfig, repoRoot string, watermarkPath string, log zerolog.Logger) source.Source {
-	stagingDir := sc.StagingDir
-	if stagingDir == "" {
-		stagingDir = "queries/" + name + "/staging"
-	}
-
-	// Convert endpoints slice to []map[string]interface{} for generic registry use.
-	endpointsRaw := make([]interface{}, len(sc.Endpoints))
-	for i, ep := range sc.Endpoints {
-		endpointsRaw[i] = map[string]interface{}{
-			"path":        ep.Path,
-			"table":       ep.Table,
-			"since_param": ep.SinceParam,
-			"end_param":   ep.EndParam,
-			"id_field":    ep.IDField,
-		}
-	}
-
-	// Convert SourceConfig to map for generic registry use
-	configMap := map[string]interface{}{
-		"type":              sc.Type,
-		"base_url":          sc.BaseURL,
-		"api_key":           sc.APIKey,
-		"dir":               resolvePath(repoRoot, sc.Dir),
-		"delimiter":         sc.Delimiter,
-		"connection_string": sc.ConnectionString,
-		"staging_dir":       resolvePath(repoRoot, stagingDir),
-		"watermark_path":    watermarkPath,
-		"host":              sc.Host,
-		"port":              sc.Port,
-		"username":          sc.Username,
-		"key_file":          resolvePath(repoRoot, sc.KeyFile),
-		"remote_dir":        sc.RemoteDir,
-		"endpoints":         endpointsRaw,
-	}
-
-	src, err := source.Build(sc.Type, name, configMap, log)
-	if err != nil {
-		log.Fatal().Err(err).Str("source", name).Msg("Failed to build source")
-	}
-	return src
-}
 
 // runFHIRConversion executes one SQL file against the database and writes FHIR output.
 func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
@@ -334,8 +277,8 @@ func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger)
 	if !ok {
 		log.Fatal().Str("source", name).Msg("Source not found in config")
 	}
-	if sc.Type != "sqlserver" {
-		log.Fatal().Str("source", name).Str("type", sc.Type).Msg("Direct connection only supported for sqlserver sources")
+	if sc.Type != "sqldb" {
+		log.Fatal().Str("source", name).Str("type", sc.Type).Msg("Direct connection only supported for sqldb sources")
 	}
 	var db *sqlx.DB
 	var err error

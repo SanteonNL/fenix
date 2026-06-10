@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 
 	"github.com/rs/zerolog"
 )
+
+var timestampDirRe = regexp.MustCompile(`^\d{8}_\d{6}$`)
 
 // Manager handles timestamped output and archiving of previous runs
 type Manager struct {
@@ -76,10 +79,11 @@ func (m *Manager) archiveOldRuns() error {
 		return fmt.Errorf("failed to read output directory: %w", err)
 	}
 
-	// Find all timestamped directories (excluding archive folder)
+	// Find timestamped run directories only (format: YYYYMMDD_HHMMSS).
+	// Other subdirectories (e.g. "staging") are left untouched.
 	var runDirs []string
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != "archive" {
+		if entry.IsDir() && isTimestampDir(entry.Name()) {
 			runDirs = append(runDirs, entry.Name())
 		}
 	}
@@ -155,6 +159,10 @@ func (m *Manager) pruneArchive() error {
 	}
 
 	return nil
+}
+
+func isTimestampDir(name string) bool {
+	return timestampDirRe.MatchString(name)
 }
 
 // WriteFile writes data to a file in the current run directory
