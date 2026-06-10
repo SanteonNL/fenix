@@ -26,6 +26,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var version = "dev"
+
 var (
 	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
 	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
