@@ -45,6 +45,24 @@ sources:
     type: local
     dir: "test/data/sim"
     delimiter: ";"
+    # json_options (local/sftp only): controls how a JSON file's records are split into tables.
+    # Keyed by filename without extension, lowercased (e.g. journeys.json -> "journeys").
+    #   id_field: response field used as the row's primary key, required for incremental upsert.
+    #   children: map of field name -> sub-config. Each listed field is pulled out of the
+    #             parent record into its own child table, named <source>_<file>_<field>,
+    #             linked back to the parent via a generated FK column.
+    #             - children.<field>: {}                     promote to a child table, flattened with no further nesting
+    #             - children.<field>: {id_field, children}   recurse another level (grandchild tables), same rules apply
+    # Any array field NOT listed under children is left as JSON text in the parent row (default behaviour).
+    json_options:
+      journeys:
+        id_field: id                      # upsert key for the journeys table
+        children:
+          responsible_user_groups: {}     # -> sim_journeys_responsible_user_groups, no deeper nesting
+          steps:                          # -> sim_journeys_steps, recurse one level further
+            id_field: id
+            children:
+              completions: {}             # -> sim_journeys_steps_completions
 
   zbj-test:
     type: sftp
