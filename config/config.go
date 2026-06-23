@@ -208,13 +208,38 @@ func resolveEnvVars(data []byte) ([]byte, error) {
 func validateEnvVars(data []byte) error {
 	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 	var missing []string
-	for _, match := range re.FindAllStringSubmatch(string(data), -1) {
-		if _, exists := os.LookupEnv(match[1]); !exists {
-			missing = append(missing, match[1])
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, match := range re.FindAllStringSubmatch(stripYAMLComment(line), -1) {
+			if _, exists := os.LookupEnv(match[1]); !exists {
+				missing = append(missing, match[1])
+			}
 		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// stripYAMLComment returns the line with any trailing "# ..." comment removed,
+// ignoring '#' characters that appear inside single- or double-quoted strings.
+func stripYAMLComment(line string) string {
+	inSingle, inDouble := false, false
+	for i, r := range line {
+		switch r {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '#':
+			if !inSingle && !inDouble {
+				return line[:i]
+			}
+		}
+	}
+	return line
 }

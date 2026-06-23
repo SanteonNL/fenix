@@ -44,6 +44,5 @@ release:
     owner: SanteonNL
     name: fenix
   draft: false
-  prerelease: auto
+  prerelease: auto   # rc.* worden automatisch als pre-release gemarkeerd
   name_template: "{{.ProjectName}} {{.Tag}}"
-  replace_existing_artifacts: true
