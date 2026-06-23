@@ -37,19 +37,7 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  use: github
-  sort: asc
-  groups:
-    - title: "✨ Features"
-      regexp: '^feat'
-    - title: "🐛 Bug Fixes"
-      regexp: '^fix'
-    - title: "🔧 Maintenance"
-      regexp: '^(chore|refactor|ci)'
-  filters:
-    exclude:
-      - '^docs'
-      - '^test'
+  use: github-native
 
 release:
   github:

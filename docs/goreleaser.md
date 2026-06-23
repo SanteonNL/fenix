@@ -96,23 +96,16 @@ Bij elke tag (`v*`) triggert de pipeline en doet GoReleaser het volgende:
 |---|---|
 | **Build** | Compileert binaries voor linux, windows, darwin (amd64 + arm64) |
 | **Versie injecten** | `main.version`, `main.commit`, `main.buildDate` worden ingebakken |
-| **Archiveren** | Elke binary wordt verpakt met `README.md`, `LICENSE`, en `configs/example.yaml` |
+| **Archiveren** | Elke binary wordt verpakt met `README.md`, `LICENSE`, en `config/config.example.yaml` |
 | **Checksums** | `checksums.txt` wordt gegenereerd voor alle artefacten |
-| **Changelog** | Automatisch gegenereerd op basis van commits sinds de vorige tag |
+| **Changelog** | Gegenereerd door GitHub's native release notes (`changelog.use: github-native`) |
 | **GitHub Release** | Release aangemaakt met alle artefacten, changelog, en juiste pre-release vlag |
 
-### Changelog groeperingen
+### Changelog
 
-De changelog groepeert commits automatisch op basis van het prefix:
+GoReleaser delegeert de changelog generatie aan GitHub's "auto-generated release notes": één regel per merged PR (inclusief auteur en PR-nummer), een contributors-lijst, en een "Full Changelog" compare-link. Losse commits binnen een merge commit worden niet los getoond — alleen de PR titel.
 
-| Prefix | Sectie |
-|---|---|
-| `feat:` | ✨ Features |
-| `fix:` | 🐛 Bug Fixes |
-| `chore:`, `refactor:`, `ci:` | 🔧 Maintenance |
-| `docs:`, `test:` | worden uitgefilterd |
-
-Zorg dus voor goede commit messages — die komen rechtstreeks in de release notes.
+Zorg dus voor duidelijke PR-titels — die komen rechtstreeks in de release notes.
 
 ---
 
