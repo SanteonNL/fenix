@@ -145,9 +145,22 @@ We gebruiken geen `alpha` of `beta` tags — RC is voldoende voor onze workflow.
 
 Je kunt GoReleaser lokaal draaien zonder een echte release te maken:
 
+**macOS:**
 ```bash
 # Installeer GoReleaser
 brew install goreleaser
+
+# Dry-run — bouwt alles maar maakt geen GitHub Release
+goreleaser release --snapshot --clean
+
+# Output staat in ./dist/
+ls dist/
+```
+
+**Windows (PowerShell):**
+```powershell
+# Installeer GoReleaser
+choco install goreleaser
 
 # Dry-run — bouwt alles maar maakt geen GitHub Release
 goreleaser release --snapshot --clean
