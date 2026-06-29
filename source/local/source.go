@@ -58,6 +58,7 @@ func (s *Source) Load(_ context.Context, db *sqlx.DB) error {
 		return fmt.Errorf("local source %q: read dir: %w", s.name, err)
 	}
 
+	matched := 0
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -75,9 +76,13 @@ func (s *Source) Load(_ context.Context, db *sqlx.DB) error {
 		default:
 			continue
 		}
+		matched++
 		if loadErr != nil {
 			s.log.Error().Err(loadErr).Str("file", e.Name()).Str("table", table).Msg("local: load failed")
 		}
+	}
+	if matched == 0 {
+		s.log.Warn().Str("source", s.name).Str("dir", s.dir).Msg("local: no files found in source, nothing loaded")
 	}
 	return nil
 }
