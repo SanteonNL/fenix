@@ -1,1 +1,114 @@
-[{"code":7771000,"created_at":"2024-06-13T11:12:31+02:00","display_name_en":"Left (qualifier value)","display_name_nl":"links (kwalificatiewaarde)","id":1,"updated_at":"2024-06-13T11:12:31+02:00"},{"code":24184005,"created_at":"2024-06-13T11:12:49+02:00","display_name_en":"Increased blood pressure (finding)","display_name_nl":"verhoogde bloeddruk (bevinding)","id":2,"updated_at":"2024-06-13T11:12:49+02:00"},{"code":129264002,"created_at":"2024-06-21T08:31:14+02:00","display_name_en":"Action (qualifier value)","display_name_nl":"handeling (kwalificatiewaarde)","id":3,"updated_at":"2024-06-21T08:31:14+02:00"},{"code":185317003,"created_at":"2024-06-21T08:32:38+02:00","display_name_en":"Telephone encounter (procedure)","display_name_nl":"telefonisch contact (verrichting)","id":4,"updated_at":"2024-06-21T08:32:38+02:00"},{"code":2147483647,"created_at":"2024-06-25T11:18:45+02:00","display_name_en":"Videotelephony encounter (procedure)","display_name_nl":"contact via videobellen (verrichting)","id":5,"updated_at":"2024-06-25T11:18:45+02:00"},{"code":1197766005,"created_at":"2024-10-08T14:15:59+02:00","display_name_en":"Encounter by electronic text-based asynchronous communication (procedure)","display_name_nl":"contact via elektronische tekstuele asynchrone communicatie (verrichting)","id":7,"updated_at":"2024-10-08T14:15:59+02:00"},{"code":385658003,"created_at":"2025-10-08T16:32:31+02:00","display_name_en":"Done (qualifier value)","display_name_nl":"gedaan (kwalificatiewaarde)","id":8,"updated_at":"2025-10-08T16:32:31+02:00"},{"code":385660001,"created_at":"2025-10-08T16:35:04+02:00","display_name_en":"Not done (qualifier value)","display_name_nl":"niet uitgevoerd (kwalificatiewaarde)","id":9,"updated_at":"2025-10-08T16:35:04+02:00"},{"code":75367002,"created_at":"2025-10-08T16:36:08+02:00","display_name_en":"Blood pressure (observable entity)","display_name_nl":"bloeddruk (waarneembare entiteit)","id":10,"updated_at":"2025-10-08T16:36:08+02:00"},{"code":364075005,"created_at":"2025-10-08T16:37:28+02:00","display_name_en":"Heart rate (observable entity)","display_name_nl":"hartslagfrequentie (waarneembare entiteit)","id":11,"updated_at":"2025-10-08T16:37:28+02:00"},{"code":38276004,"created_at":"2025-10-08T16:38:49+02:00","display_name_en":"Multiple symptoms (finding)","display_name_nl":"meerdere klachten (bevinding)","id":12,"updated_at":"2025-10-08T16:38:49+02:00"},{"code":27113001,"created_at":"2025-10-08T16:42:58+02:00","display_name_en":"Body weight (observable entity)","display_name_nl":"lichaamsgewicht (waarneembare entiteit)","id":13,"updated_at":"2025-10-08T16:42:58+02:00"},{"code":1258986006,"created_at":"2025-10-08T16:44:00+02:00","display_name_en":"Face-to-face encounter (procedure)","display_name_nl":"persoonlijk contact (verrichting)","id":14,"updated_at":"2025-10-08T16:44:00+02:00"},{"code":404684003,"created_at":"2025-10-08T16:48:05+02:00","display_name_en":"Clinical finding (finding)","display_name_nl":"klinische bevinding (bevinding)","id":15,"updated_at":"2025-10-08T16:48:05+02:00"}]
+[
+    {
+        "code": 7771000,
+        "created_at": "2024-06-13T11:12:31+02:00",
+        "display_name_en": "Left (qualifier value)",
+        "display_name_nl": "links (kwalificatiewaarde)",
+        "id": 1,
+        "updated_at": "2024-06-13T11:12:31+02:00"
+    },
+    {
+        "code": 24184005,
+        "created_at": "2024-06-13T11:12:49+02:00",
+        "display_name_en": "Increased blood pressure (finding)",
+        "display_name_nl": "verhoogde bloeddruk (bevinding)",
+        "id": 2,
+        "updated_at": "2024-06-13T11:12:49+02:00"
+    },
+    {
+        "code": 129264002,
+        "created_at": "2024-06-21T08:31:14+02:00",
+        "display_name_en": "Action (qualifier value)",
+        "display_name_nl": "handeling (kwalificatiewaarde)",
+        "id": 3,
+        "updated_at": "2024-06-21T08:31:14+02:00"
+    },
+    {
+        "code": 185317003,
+        "created_at": "2024-06-21T08:32:38+02:00",
+        "display_name_en": "Telephone encounter (procedure)",
+        "display_name_nl": "telefonisch contact (verrichting)",
+        "id": 4,
+        "updated_at": "2024-06-21T08:32:38+02:00"
+    },
+    {
+        "code": 2147483647,
+        "created_at": "2024-06-25T11:18:45+02:00",
+        "display_name_en": "Videotelephony encounter (procedure)",
+        "display_name_nl": "contact via videobellen (verrichting)",
+        "id": 5,
+        "updated_at": "2024-06-25T11:18:45+02:00"
+    },
+    {
+        "code": 1197766005,
+        "created_at": "2024-10-08T14:15:59+02:00",
+        "display_name_en": "Encounter by electronic text-based asynchronous communication (procedure)",
+        "display_name_nl": "contact via elektronische tekstuele asynchrone communicatie (verrichting)",
+        "id": 7,
+        "updated_at": "2024-10-08T14:15:59+02:00"
+    },
+    {
+        "code": 385658003,
+        "created_at": "2025-10-08T16:32:31+02:00",
+        "display_name_en": "Done (qualifier value)",
+        "display_name_nl": "gedaan (kwalificatiewaarde)",
+        "id": 8,
+        "updated_at": "2025-10-08T16:32:31+02:00"
+    },
+    {
+        "code": 385660001,
+        "created_at": "2025-10-08T16:35:04+02:00",
+        "display_name_en": "Not done (qualifier value)",
+        "display_name_nl": "niet uitgevoerd (kwalificatiewaarde)",
+        "id": 9,
+        "updated_at": "2025-10-08T16:35:04+02:00"
+    },
+    {
+        "code": 75367002,
+        "created_at": "2025-10-08T16:36:08+02:00",
+        "display_name_en": "Blood pressure (observable entity)",
+        "display_name_nl": "bloeddruk (waarneembare entiteit)",
+        "id": 10,
+        "updated_at": "2025-10-08T16:36:08+02:00"
+    },
+    {
+        "code": 364075005,
+        "created_at": "2025-10-08T16:37:28+02:00",
+        "display_name_en": "Heart rate (observable entity)",
+        "display_name_nl": "hartslagfrequentie (waarneembare entiteit)",
+        "id": 11,
+        "updated_at": "2025-10-08T16:37:28+02:00"
+    },
+    {
+        "code": 38276004,
+        "created_at": "2025-10-08T16:38:49+02:00",
+        "display_name_en": "Multiple symptoms (finding)",
+        "display_name_nl": "meerdere klachten (bevinding)",
+        "id": 12,
+        "updated_at": "2025-10-08T16:38:49+02:00"
+    },
+    {
+        "code": 27113001,
+        "created_at": "2025-10-08T16:42:58+02:00",
+        "display_name_en": "Body weight (observable entity)",
+        "display_name_nl": "lichaamsgewicht (waarneembare entiteit)",
+        "id": 13,
+        "updated_at": "2025-10-08T16:42:58+02:00"
+    },
+    {
+        "code": 1258986006,
+        "created_at": "2025-10-08T16:44:00+02:00",
+        "display_name_en": "Face-to-face encounter (procedure)",
+        "display_name_nl": "persoonlijk contact (verrichting)",
+        "id": 14,
+        "updated_at": "2025-10-08T16:44:00+02:00"
+    },
+    {
+        "code": 404684003,
+        "created_at": "2025-10-08T16:48:05+02:00",
+        "display_name_en": "Clinical finding (finding)",
+        "display_name_nl": "klinische bevinding (bevinding)",
+        "id": 15,
+        "updated_at": "2025-10-08T16:48:05+02:00"
+    }
+]
