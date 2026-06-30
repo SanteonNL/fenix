@@ -118,7 +118,7 @@ func (fc *FHIRConverter) ConvertSQL(query string) ([]interface{}, error) {
 	resources := make(map[string]ResourceResult)
 	rootPaths := make(map[string]string)
 
-	for i, stmt := range splitStatements(query) {
+	for i, stmt := range SplitStatements(query) {
 		if err := fc.executeStatement(stmt, i+1, resources, rootPaths); err != nil {
 			fc.logger.Error().Err(err).Int("statement", i+1).Msg("Statement failed, continuing")
 		}
@@ -219,9 +219,9 @@ func (fc *FHIRConverter) buildResources(resources map[string]ResourceResult, roo
 	return result
 }
 
-// splitStatements splits a SQL string on ";" into individual non-empty statements.
+// SplitStatements splits a SQL string on ";" into individual non-empty statements.
 // Lines that consist only of comments are skipped.
-func splitStatements(sql string) []string {
+func SplitStatements(sql string) []string {
 	var statements []string
 	for _, raw := range strings.Split(sql, ";") {
 		var lines []string

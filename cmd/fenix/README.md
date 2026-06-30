@@ -59,8 +59,8 @@ id,patient_id,code,loinc_code,value,unit,effective_date,status
 # Load CSV and convert to FHIR
 go run ./cmd/fenix -config config/fenix.yaml -cmd all
 
-# Only load CSV
-go run ./cmd/fenix -cmd load
+# Only load + clean (dwh layer), no FHIR conversion
+go run ./cmd/fenix -cmd prepare
 
 # Only convert
 go run ./cmd/fenix -cmd convert
@@ -255,7 +255,7 @@ output:
 go run ./cmd/fenix
 
 # Load specific CSV file
-go run ./cmd/fenix -file patients.csv -cmd load
+go run ./cmd/fenix -file patients.csv -cmd prepare
 
 # Convert existing tables to FHIR
 go run ./cmd/fenix -cmd convert
@@ -303,7 +303,7 @@ Example log output:
 - Check logs for column mapping attempts
 
 ### Empty output
-- Verify CSV files were loaded correctly (`-cmd load` only)
+- Verify CSV files were loaded correctly (`-cmd prepare` only)
 - Check that rows exist in the database
 - Verify resource type configuration
 

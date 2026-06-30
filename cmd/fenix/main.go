@@ -32,7 +32,7 @@ var (
 	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
 	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
 	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
-	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
+	command        = flag.String("cmd", "all", "Command: prepare, convert, all, serve, serve-all")
 	help           = flag.Bool("help", false, "Show help message")
 	servePort      = flag.String("port", "127.0.0.1:8080", "Address for the FHIR API server (used with -cmd serve)")
 	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
@@ -106,17 +106,21 @@ func main() {
 	defer cancel()
 
 	switch *command {
-	case "load":
+	case "prepare":
 		loadSources(ctx, db, cfg, repoRoot, &log)
+		runTransforms(db, cfg, repoRoot, &log)
 	case "convert":
+		runTransforms(db, cfg, repoRoot, &log)
 		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "all":
 		loadSources(ctx, db, cfg, repoRoot, &log)
+		runTransforms(db, cfg, repoRoot, &log)
 		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "serve-all":
 		loadSources(ctx, db, cfg, repoRoot, &log)
+		runTransforms(db, cfg, repoRoot, &log)
 		fallthrough
 	case "serve":
 		startFHIRServer(db, cfg, repoRoot, &log)
@@ -178,10 +182,84 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 	}
 }
 
-// runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/.
+// runTransforms executes the cleaned/DWH-layer SQL files against the staging DB, after loading
+// and before FHIR conversion. There is no per-file config: transforms are discovered purely by
+// directory convention, mirroring runSourceQueries.
+//
+//   - queries/<source>/dwh/*.sql   — per-source cleanup, run for every configured source.
+//   - queries/dwh/cross/*.sql      — cross-source cleanup that may join several sources' staging
+//     tables. Each file must declare the sources it needs via a "-- :requires <a>,<b>" annotation
+//     (mirrors the "-- :pk <col>" convention used by sqldb staging queries). A required source
+//     that is not configured is fatal — silently running with missing data would be worse.
+//
+// Files within a directory run in lexicographic order, so prefix with "01_", "02_", etc. when
+// one transform depends on another.
+func runTransforms(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	for name := range cfg.Sources {
+		dir := resolvePath(repoRoot, "queries/"+name+"/dwh")
+		runTransformDir(db, dir, nil, cfg, log)
+	}
+	runTransformDir(db, resolvePath(repoRoot, "queries/dwh/cross"), parseRequires, cfg, log)
+}
+
+// runTransformDir executes every *.sql file in dir, in lexicographic order. If checkRequires is
+// non-nil, it is used to extract a file's required source names, which are validated against
+// cfg.Sources before the file runs (fatal on a missing source).
+func runTransformDir(db *sqlx.DB, dir string, checkRequires func(query string) []string, cfg *config.Config, log *zerolog.Logger) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // no transform layer here — most sources won't have one
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		relPath := filepath.Join(dir, e.Name())
+		sqlBytes, err := os.ReadFile(relPath)
+		if err != nil {
+			log.Error().Err(err).Str("file", relPath).Msg("Failed to read transform file")
+			continue
+		}
+		query := string(sqlBytes)
+		if checkRequires != nil {
+			for _, req := range checkRequires(query) {
+				if _, ok := cfg.Sources[req]; !ok {
+					log.Fatal().Str("file", relPath).Str("missing_source", req).
+						Msg("transform requires a source that is not configured")
+				}
+			}
+		}
+		log.Info().Str("file", relPath).Msg("Running transform")
+		for _, stmt := range converter.SplitStatements(query) {
+			if _, err := db.Exec(stmt); err != nil {
+				log.Error().Err(err).Str("file", relPath).Msg("Transform statement failed")
+			}
+		}
+	}
+}
+
+// parseRequires extracts source names from a "-- :requires <a>,<b>" annotation.
+func parseRequires(query string) []string {
+	for _, line := range strings.Split(query, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "-- :requires ") {
+			raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "-- :requires "))
+			var sources []string
+			for _, s := range strings.Split(raw, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					sources = append(sources, s)
+				}
+			}
+			return sources
+		}
+	}
+	return nil
+}
+
+// runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/fhir/.
 func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
 	for name := range cfg.Sources {
-		queriesDir := resolvePath(repoRoot, "queries/"+name)
+		queriesDir := resolvePath(repoRoot, "queries/"+name+"/fhir")
 		entries, err := os.ReadDir(queriesDir)
 		if err != nil {
 			log.Warn().Str("dir", queriesDir).Msg("No query directory found, skipping FHIR conversion")
@@ -347,7 +425,7 @@ Options:
   -config string   Path to configuration file (default "config/config.yaml")
   -sql    string   SQL file with multi-statement conversion queries
   -file   string   Specific CSV file to load (optional)
-  -cmd    string   load | convert | all  (default "all")
+  -cmd    string   prepare | convert | all  (default "all")
   -help            Show this help message
 
 Environment:

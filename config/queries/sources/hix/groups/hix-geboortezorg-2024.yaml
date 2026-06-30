@@ -12,7 +12,7 @@ resources:
     queries:
       # Replace the entire SQL file for the "lab-results" query.
       - name: lab-results
-        sql: queries/hix/geboortezorg/hix_geboortezorg_observation_lab.sql
+        sql: queries/hix/fhir/geboortezorg/hix_geboortezorg_observation_lab.sql
 
       # Partial replacement: inject a test-patient JOIN into the "main" query
       # without touching the rest of the SQL. Useful for scoping to test data.

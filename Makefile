@@ -1,4 +1,4 @@
-.PHONY: serve build load test tidy docker-up docker-down kill-port
+.PHONY: serve build prepare test tidy docker-up docker-down kill-port
 
 serve: docker-up kill-port
 	air
@@ -6,8 +6,8 @@ serve: docker-up kill-port
 build:
 	CGO_ENABLED=0 go build -o fenix.exe ./cmd/fenix
 
-load: docker-up
-	CGO_ENABLED=0 go run ./cmd/fenix -cmd load
+prepare: docker-up
+	CGO_ENABLED=0 go run ./cmd/fenix -cmd prepare
 
 test:
 	CGO_ENABLED=0 go test -v ./cmd/fenix/...

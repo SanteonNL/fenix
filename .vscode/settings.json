@@ -29,8 +29,7 @@
     "go.goroot": "C:/Users/t.hetterscheid/sdk/go1.25.4",
     "files.associations": {
         "queries/generic/*.sql": "plaintext",
-        "queries/hix/*.sql": "plaintext",
-        "queries/hix/**/*.sql": "plaintext"
+        "queries/**/*.sql": "plaintext"
     },
     "workbench.editorAssociations": {
         "*.copilotmd": "vscode.markdown.preview.editor",

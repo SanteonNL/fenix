@@ -16,23 +16,23 @@ resources:
   Patient:
     queries:
       - name: main
-        sql: queries/hix-test/hix_patient.sql
+        sql: queries/hix-test/fhir/hix_patient.sql
         pushdown: [birthdate, gender]
 
   Observation:
     queries:
       - name: main
-        sql: queries/hix-test/hix_observation_main.sql
+        sql: queries/hix-test/fhir/hix_observation_main.sql
         pushdown: [date, status, code, category]
       - name: lab-results
-        sql: queries/hix-test/hix_observation_lab.sql
+        sql: queries/hix-test/fhir/hix_observation_lab.sql
         pushdown: [date, code]
       - name: vital-signs
-        sql: queries/hix-test/hix_observation_vitals.sql
+        sql: queries/hix-test/fhir/hix_observation_vitals.sql
         pushdown: [date, status]
 
   Encounter:
     queries:
       - name: main
-        sql: queries/hix-test/hix_encounter_main.sql
+        sql: queries/hix-test/fhir/hix_encounter_main.sql
         pushdown: [date, status]
