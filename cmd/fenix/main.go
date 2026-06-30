@@ -182,78 +182,11 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 	}
 }
 
-// runTransforms executes the cleaned/DWH-layer SQL files against the staging DB, after loading
-// and before FHIR conversion. There is no per-file config: transforms are discovered purely by
-// directory convention, mirroring runSourceQueries.
-//
-//   - queries/<source>/dwh/*.sql   — per-source cleanup, run for every configured source.
-//   - queries/dwh/cross/*.sql      — cross-source cleanup that may join several sources' staging
-//     tables. Each file must declare the sources it needs via a "-- :requires <a>,<b>" annotation
-//     (mirrors the "-- :pk <col>" convention used by sqldb staging queries). A required source
-//     that is not configured is fatal — silently running with missing data would be worse.
-//
-// Files within a directory run in lexicographic order, so prefix with "01_", "02_", etc. when
-// one transform depends on another.
+// runTransforms executes the cleaned/DWH-layer SQL files against the staging DB. The discovery
+// and execution logic lives in the config package so that other consumers of fenix staging
+// (e.g. the HipsETL dataset generator) run the exact same DWH layer. See config.RunTransforms.
 func runTransforms(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
-	for name := range cfg.Sources {
-		dir := resolvePath(repoRoot, "queries/"+name+"/dwh")
-		runTransformDir(db, dir, nil, cfg, log)
-	}
-	runTransformDir(db, resolvePath(repoRoot, "queries/dwh/cross"), parseRequires, cfg, log)
-}
-
-// runTransformDir executes every *.sql file in dir, in lexicographic order. If checkRequires is
-// non-nil, it is used to extract a file's required source names, which are validated against
-// cfg.Sources before the file runs (fatal on a missing source).
-func runTransformDir(db *sqlx.DB, dir string, checkRequires func(query string) []string, cfg *config.Config, log *zerolog.Logger) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return // no transform layer here — most sources won't have one
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		relPath := filepath.Join(dir, e.Name())
-		sqlBytes, err := os.ReadFile(relPath)
-		if err != nil {
-			log.Error().Err(err).Str("file", relPath).Msg("Failed to read transform file")
-			continue
-		}
-		query := string(sqlBytes)
-		if checkRequires != nil {
-			for _, req := range checkRequires(query) {
-				if _, ok := cfg.Sources[req]; !ok {
-					log.Fatal().Str("file", relPath).Str("missing_source", req).
-						Msg("transform requires a source that is not configured")
-				}
-			}
-		}
-		log.Info().Str("file", relPath).Msg("Running transform")
-		for _, stmt := range converter.SplitStatements(query) {
-			if _, err := db.Exec(stmt); err != nil {
-				log.Error().Err(err).Str("file", relPath).Msg("Transform statement failed")
-			}
-		}
-	}
-}
-
-// parseRequires extracts source names from a "-- :requires <a>,<b>" annotation.
-func parseRequires(query string) []string {
-	for _, line := range strings.Split(query, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "-- :requires ") {
-			raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "-- :requires "))
-			var sources []string
-			for _, s := range strings.Split(raw, ",") {
-				if s = strings.TrimSpace(s); s != "" {
-					sources = append(sources, s)
-				}
-			}
-			return sources
-		}
-	}
-	return nil
+	config.RunTransforms(db, cfg, repoRoot, log)
 }
 
 // runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/fhir/.
