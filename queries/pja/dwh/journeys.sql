@@ -10,8 +10,8 @@ SELECT
         WHEN instr(patient_id, '-') > 0
             THEN substr(patient_id, instr(patient_id, '-') + 1)
         ELSE patient_id
-    END AS patient_id_clean
+    END AS patient_id
 FROM pja_journeys;
 
 -- per-patient lookups hit the index instead of scanning the whole table
-CREATE INDEX idx_dwh_pja_journeys_patient_id_clean ON dwh_pja_journeys(patient_id_clean);
+CREATE INDEX idx_dwh_pja_journeys_patient_id_clean ON dwh_pja_journeys(patient_id);

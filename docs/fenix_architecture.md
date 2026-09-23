@@ -544,10 +544,13 @@ corresponding FHIR resources automatically — they are never written by hand.
 oncology-active-2024.yaml          ← human authors this
         │
         └── fenix generate
-              ├── Group.json        ← generated: cohort as FHIR Group (Bulk Cohort profile)
-              ├── Parameters.json   ← generated: export query as FHIR $export parameters
+              ├── Group.json                    ← generated: cohort as FHIR Group (Bulk Cohort profile)
+              ├── Parameters.json                ← generated: export query as FHIR $export parameters (_type, _typeFilter, _elements)
+              ├── DeidentificationRuleset.json   ← generated: effective ruleset (base + overrides resolved) — see ❻ De-identification
               └── (stored in Git alongside the YAML, committed in the same PR)
 ```
+
+`Parameters.json` and `DeidentificationRuleset.json` together are the normative pair that fully describes what an export releases and how it is de-identified — see [Coverage](#coverage) in ❻. The YAML that produces them (including its `de-identification` block) is FENIX's own authoring input; it is never exchanged.
 
 ---
 
@@ -570,14 +573,19 @@ cohort:
 export-query:
   - resource: Patient
     params: ""
+    elements: "id,birthDate,gender"
   - resource: Observation
     params: "code=363346000&status=final&date=ge2023-01-01"
+    elements: "id,subject,code,effectiveDateTime,valueQuantity"
   - resource: Condition
     params: "code=363346000&clinical-status=active"
+    elements: "id,subject,code,onsetDateTime,clinicalStatus"
   - resource: MedicationStatement
     params: "status=active"
+    elements: "id,subject,medicationCodeableConcept,effectivePeriod"
   - resource: CarePlan
     params: "status=active"
+    elements: "id,subject,status,period"
 
 frequency:
   mode: on-demand          # on-demand | scheduled
@@ -586,21 +594,26 @@ frequency:
                            # snapshot = patient list frozen at first run
 
 de-identification:
-  base: "https://ig.santeon.nl/sim-on-fhir/de-identification"  # standard ruleset from the IG
+  base: "https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default|0.1.0"  # standard ruleset from the IG
   # no overrides — standard rules apply as-is
 ```
+
+`elements` per `export-query` entry is what FENIX resolves into the `_elements` parameter of the generated `Parameters` resource — it is the export's own selection of *which fields leave the hospital*, independent of the profile (which bounds what *can* ever appear) and of the `de-identification` ruleset (which decides *how* each selected field is transformed). Every path named or implied by `elements`, for every resource in `export-query`, must be covered by a rule in the effective ruleset — see [Coverage](#coverage) below.
 
 For use cases that require stricter age generalisation, the `de-identification` block can override individual rules. The geboortezorg (maternity care) use case, for example, clamps age to 0–45 instead of the standard 18–85:
 
 ```yaml
 de-identification:
-  base: "https://ig.santeon.nl/sim-on-fhir/de-identification"
-  rules:
+  base: "https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default|0.1.0"
+  overrides:
     - path: "Patient.birthDate"   # replaces the standard clamp-age for this export
       action: clamp-age
-      min-age: 0
-      max-age: 45
+      minAge: 0
+      maxAge: 45
+      exceptionReason: "Maternity cohort; includes newborns and excludes patients over 45"
 ```
+
+An override interacts with the base ruleset by **path + action**: same path and action replaces the base rule, `action: none` disables the base rule for that path (an `exceptionReason` is then required), and a new path not present in the base set is added on top of it. `fenix generate` resolves `base` + `overrides` into the effective, self-contained `DeidentificationRuleset.json` — see [Two-layer configuration](#two-layer-configuration) in ❻.
 
 ---
 
@@ -675,6 +688,10 @@ to the `Group/[id]/$export` operation parameters defined in the Bulk Data Access
       "valueString": "MedicationStatement?status=active"
     },
     {
+      "name": "_elements",
+      "valueString": "Patient.id,Patient.birthDate,Patient.gender,Observation.id,Observation.subject,Observation.code,Observation.effectiveDateTime,Observation.valueQuantity,Condition.id,Condition.subject,Condition.code,Condition.onsetDateTime,Condition.clinicalStatus,MedicationStatement.id,MedicationStatement.subject,MedicationStatement.medicationCodeableConcept,MedicationStatement.effectivePeriod,CarePlan.id,CarePlan.subject,CarePlan.status,CarePlan.period"
+    },
+    {
       "name": "_outputFormat",
       "valueString": "application/fhir+ndjson"
     }
@@ -683,8 +700,13 @@ to the `Group/[id]/$export` operation parameters defined in the Bulk Data Access
 ```
 
 > `_typeFilter` is the standard Bulk Data IG parameter that scopes which resources
-> within a type are included — it is the FHIR representation of the `export-query` entries.
+> within a type are included — it is the FHIR representation of the `export-query` entries' `params`.
 > `Patient` has no filter so it appears only in `_type`, not in `_typeFilter`.
+>
+> `_elements` is the standard Bulk Data IG parameter that scopes which *fields* of each
+> included resource are released — the FHIR representation of each entry's `elements`.
+> Together with `_typeFilter`, `_elements` defines exactly what the export releases;
+> this is the input the de-identification ruleset must cover in full (see [Coverage](#coverage)).
 
 ---
 
@@ -1411,24 +1433,37 @@ FLARE, which downloads and forwards to HIPS, receives already-de-identified NDJS
 
 ---
 
+### Three layers of control
+
+De-identification is the innermost of three layers that together govern what an export releases. Each layer operates on the output of the one above it:
+
+| Layer | Governs | Artefact |
+|---|---|---|
+| 1 — Profile | What *can* ever appear | The FHIR profile (via `implementation-guide`) — the upper bound on elements |
+| 2 — Export query | What *goes* | `export-query`'s `params` (→ `_typeFilter`, which records) and `elements` (→ `_elements`, which fields) |
+| 3 — De-identification | *How* it is transformed | The `de-identification` ruleset — hash, shift, clamp, floor, or leave intact |
+
+De-identification never removes elements — that is the query's job (`elements`/`_elements`). The ruleset only decides how each element the query already selected is transformed on its way out.
+
 ### Two-layer configuration
 
-Rules are configured at two levels that compose at runtime.
+The ruleset itself (layer 3 above) is configured at two levels that compose at runtime into one effective, self-contained ruleset.
 
-**Layer 1 — IG standard set (`de-identification.json`)**
+**Layer 1 — IG standard set (`DeidentificationRuleset`)**
 
-Each Implementation Guide package ships a `de-identification.json` — a plain JSON file versioned alongside the IG, not a `StructureDefinition`. It defines the default ruleset for all exports using that IG:
+Each Implementation Guide package ships a standard ruleset — an instance of the `DeidentificationRuleset` Logical Model, versioned alongside the IG and addressable by canonical URL (`https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default`). It defines the default treatment for the elements common to every export using that IG:
 
 ```json
 {
-  "id": "de-identification-default",
+  "id": "santeon-default",
   "version": "0.1.0",
-  "rules": [
+  "url": "https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default",
+  "rule": [
     {
       "path": "Patient.id",
       "action": "hash",
       "algorithm": "hmac-sha256",
-      "propagate-to": ["*.subject", "*.patient"]
+      "propagateTo": ["*.subject", "*.patient"]
     },
     {
       "path": "Patient.identifier",
@@ -1438,7 +1473,7 @@ Each Implementation Guide package ships a `de-identification.json` — a plain J
     {
       "path": "**.ofType(date)",
       "action": "shift",
-      "max-days": 15
+      "maxDays": 15
     },
     {
       "path": "Patient.birthDate",
@@ -1447,26 +1482,59 @@ Each Implementation Guide package ships a `de-identification.json` — a plain J
     {
       "path": "Patient.birthDate",
       "action": "clamp-age",
-      "min-age": 18,
-      "max-age": 85
+      "minAge": 18,
+      "maxAge": 85
     }
   ]
 }
 ```
 
-`propagate-to` on `Patient.id` limits reference updates to `*.subject` and `*.patient` only — not every `Reference` field in every resource.
+`propagateTo` on `Patient.id` limits reference updates to `*.subject` and `*.patient` only — not every `Reference` field in every resource.
 
 **Layer 2 — per-export override (YAML)**
 
-The `de-identification` block in the dataset export request YAML can override individual rules. See [The YAML — source of truth](#the-yaml--source-of-truth) for full examples.
+The `de-identification` block in the dataset export request YAML references this standard set as `base` and, where an export needs to differ, lists `overrides`. See [The YAML — source of truth](#the-yaml--source-of-truth) for full examples. `fenix generate` resolves `base` + `overrides` into the effective `DeidentificationRuleset.json` — the self-contained artefact actually exchanged; the YAML is FENIX's own authoring input and is never exchanged.
 
-Override semantics:
+Override semantics, by path + action:
 
 | Scenario | Behaviour |
 |---|---|
-| Same `path` as a standard rule | Per-export rule **replaces** the standard rule for that path |
-| `action: none` | Standard rule for that path is **disabled** |
-| New `path` not in the standard set | Rule is **added** on top of the standard set |
+| Same `path` and `action` as a base rule | Override **replaces** the base rule |
+| `action: none` on a base path | Base rule for that path is **disabled** — element released intact (`exceptionReason` required) |
+| New `path` not in the base set | Override is **added** on top of the base |
+| Base rule whose `path` matches nothing this export selects | Ignored — no error, keeps the shared base usable across exports with different `elements` |
+
+---
+
+### Actions
+
+Every rule specifies an `action`, which determines the parameters it must carry:
+
+| Action | Required parameters | Effect |
+|---|---|---|
+| `none` | `exceptionReason` | Released unchanged. Never silent — always a documented, deliberate decision. Used for coded values (SNOMED CT, LOINC, UCUM) and booleans that carry no identifying risk. |
+| `hash` | `algorithm`, optional `propagateTo` | HMAC replaces the value. `propagateTo` on an `id` rule names the reference paths rewritten with the same hash, preserving referential integrity. |
+| `shift` | `maxDays` | Date/dateTime moved by a random, per-patient, per-export offset drawn from `±maxDays` (never zero). Intervals between a patient's events are preserved. |
+| `clamp-age` | `minAge`, `maxAge`, optional `exceptionReason` (when overriding the standard 18–85 range) | Birth dates implying an age outside the range are brought to the nearest boundary. |
+| `first-of-month` | *(none)* | Floors a date to the first of its month, removing day precision. |
+
+When more than one rule targets the same element (birth date is the common case), they apply in a fixed order regardless of authoring order: **shift → first-of-month → clamp-age**. Shifting first keeps intervals intact; flooring next removes day precision; clamping last bounds the final released age.
+
+---
+
+### Coverage
+
+Every element `elements`/`_elements` releases, and every `_typeFilter` the export uses, must be covered by a rule in the effective ruleset — a rule that names its path directly, or a path expression (e.g. `**.ofType(date)`) that matches it. An export with an uncovered element or filter is a validation error and must not run.
+
+Coverage is hierarchical: a rule covers the element it names **and every element beneath it**. A `none` rule on `Observation.code` covers `Observation.code.coding.system` and every other descendant without a separate rule for each — one `exceptionReason` accounts for the whole subtree. Where more than one rule covers the same element, the **most specific** one wins — a rule naming `Patient.birthDate` directly overrides `**.ofType(date)` for that element specifically.
+
+`fenix generate` emits a coverage report alongside the effective ruleset — every released element, the rule that covers it, and the resulting action — so a reviewer can confirm at a glance that nothing is uncovered and every `none` carries a reason:
+
+| Element (released) | Covered by rule | Action |
+|---|---|---|
+| `Patient.id` | `Patient.id` | hash |
+| `Patient.birthDate` | `Patient.birthDate` (×2) | first-of-month → clamp-age |
+| `Observation.effectiveDateTime` | `**.ofType(date)` | shift |
 
 ---
 
@@ -1480,32 +1548,37 @@ Rules are applied from most specific path to most general — `Patient.birthDate
 
 ② hash Patient.identifier (all slices)
 
-③ Patient.birthDate (specific rules win, applied in order):
-     first-of-month  →  clamp-age (min/max)
+③ Patient.birthDate (fixed order, most specific rule wins):
+     shift  →  first-of-month  →  clamp-age (min/max)
 
 ④ all other date fields (general rule):
      shift ± N days, consistent per patient
 ```
 
-The per-patient shift is derived deterministically so that temporal relationships between resources are preserved within one run:
+The per-patient shift offset and the identifier hashes are derived deterministically from a per-export **seed**, so they are consistent within one export run and unlinkable across runs — see [Pseudonymisation and the per-export seed](#pseudonymisation-and-the-per-export-seed) below.
 
-```
-shift_days = HMAC(env_key + run_id, patient_id) mod 31 − 15
-```
-
-`run_id` is a UUID generated once per export run — consistent per patient within that run, different across runs.
+For related patients who must move together — most commonly mother and child — the link is expressed in the source data itself via a `RelatedPerson` resource connecting the two `Patient` records (`RelatedPerson.relationship` carrying `MTH`/`CHILD` or similar). Both patients' dates are then derived from the same linking identifier and so receive the same shift offset, keeping cross-record intervals intact. A patient with no `RelatedPerson` link uses their own identifier and is shifted independently.
 
 ---
 
-### Key management
+### Pseudonymisation and the per-export seed
 
-The HMAC key never appears in the YAML, in generated FHIR artefacts, or in Git:
+Identifiers are hashed with HMAC — a *keyed* hash — rather than a plain hash, because a plain hash of a small, enumerable identifier space (BSNs, patient numbers) is trivially reversible by anyone who can hash candidate values. Keying it with a secret the outside world never holds is what makes this **pseudonymisation** under GDPR rather than anonymisation: the hospital, holding the key and the source data, can reverse it; nobody else can.
+
+Each export derives its HMAC seed freshly, per run. The seed governs both identifier hashing and the per-patient date-shift offset, and a conforming export must exhibit two properties:
+
+- **Consistent within a run** — the same source identifier always hashes to the same value, and one patient's dates all shift by the same offset, so referential integrity and temporal relationships survive.
+- **Unlinkable across runs** — because the seed changes per export, the same patient exported twice hashes to two different values and shifts by two different offsets. Two deliveries cannot be joined on their contents.
+
+**The key and the seed never leave the hospital.** The HMAC key never appears in the YAML, in generated FHIR artefacts (`Parameters.json`, `DeidentificationRuleset.json`), or in Git:
 
 ```
 FENIX_DEIDENT_KEY=<base64-encoded secret>   # .env — stays inside the hospital
 ```
 
-The hospital retains this key. A privacy officer with access to the key and the source data can reverse the pseudonymisation for any individual patient if legally required.
+**The run identifier is different: it is not secret, and it is exchanged.** Each export run carries an opaque, non-secret run identifier (e.g. `run-f3a1c8`, already visible in the bulk-export status URL — see [Step 2](#step-2--poll-for-completion)) that names the run without revealing anything about its seed; it may appear in a `Provenance` resource or export metadata. Reversal for a specific patient requires all three of: the run identifier (which seed generation), the key (hospital-held secret), and the source data (the EPD) — combined only inside the hospital.
+
+Only `hash` needs its own reversal procedure, and reversal is recomputation, not decryption: take a candidate identifier from the EPD, recompute `HMAC(key, candidate)` under the seed reconstructed for that run, and compare to the hash in the export. A match identifies the patient — after which every other field on that record, however it was transformed on export, is simply read from the EPD. `shift` needs no separate inversion for this reason; `clamp-age` and `first-of-month` are lossy generalisations and cannot be inverted at all, key or not — precision was discarded, not transformed.
 
 ---
 

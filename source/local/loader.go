@@ -2,6 +2,7 @@ package local
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -117,6 +118,7 @@ func (l *Loader) load(
 	cols := columnSet(flatRecords)
 	mode := "full"
 
+	var rowErr *RowLoadError
 	switch {
 	case incremental:
 		mode = "incremental"
@@ -125,7 +127,10 @@ func (l *Loader) load(
 		}
 		for _, row := range flatRecords {
 			if err := loaderUpsert(db, table, cols, cfg.IDField, row); err != nil {
-				l.log.Error().Err(err).Str("table", table).Msg("loader: upsert failed")
+				if rowErr == nil {
+					rowErr = &RowLoadError{Table: table}
+				}
+				rowErr.addFailure(cfg.IDField, row[cfg.IDField], err)
 			}
 		}
 	case parentFKCol != "":
@@ -135,18 +140,17 @@ func (l *Loader) load(
 		}
 		for _, row := range flatRecords {
 			if err := loaderWrite(db, table, cols, row); err != nil {
-				l.log.Error().Err(err).Str("table", table).Msg("loader: insert failed")
+				if rowErr == nil {
+					rowErr = &RowLoadError{Table: table}
+				}
+				rowErr.addFailure(parentFKCol, row[parentFKCol], err)
 			}
 		}
 	default:
 		if err := loaderRecreate(db, table, cols, cfg.IDField); err != nil {
 			return fmt.Errorf("recreate table %s: %w", table, err)
 		}
-		for _, row := range flatRecords {
-			if err := loaderWrite(db, table, cols, row); err != nil {
-				l.log.Error().Err(err).Str("table", table).Msg("loader: insert failed")
-			}
-		}
+		rowErr = l.writeRows(db, table, cols, cfg.IDField, flatRecords)
 	}
 	l.log.Info().Str("source", l.name).Str("table", table).Str("mode", mode).Int("rows", len(flatRecords)).Msg("loader: loaded")
 
@@ -184,6 +188,7 @@ func (l *Loader) load(
 	// Recurse into children. Pass fkCol + updatedIDs so grandchild tables can clean up
 	// stale rows when the parent (this level) was in any incremental context.
 	inIncrementalCtx := incremental || parentFKCol != ""
+	var errs []error
 	for childTable, batch := range childBatches {
 		var childFKCol string
 		var childUpdatedIDs map[string]bool
@@ -192,11 +197,17 @@ func (l *Loader) load(
 			childUpdatedIDs = updatedIDs
 		}
 		if err := l.load(db, childTable, batch.rows, batch.rows, batch.cfg, false, childFKCol, childUpdatedIDs); err != nil {
-			l.log.Error().Err(err).Str("table", childTable).Msg("loader: child table failed")
+			errs = append(errs, err)
 		}
 	}
 
-	return nil
+	if !rowErr.empty() {
+		errs = append(errs, rowErr)
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.Join(errs...)
 }
 
 // validateConfig checks that configured field names appear in at least one record.
@@ -229,6 +240,47 @@ func (l *Loader) validateConfig(table string, records []map[string]interface{}, 
 				Msg("loader: child field not found in records — check config spelling")
 		}
 	}
+}
+
+// logKeyField returns the zerolog field name to tag a row-error with the
+// value of its key column, falling back to a generic name when no key
+// column is configured (e.g. child tables without an id_field).
+func logKeyField(col string) string {
+	if col == "" {
+		return "row_key"
+	}
+	return col
+}
+
+// isDuplicateKeyErr reports whether err is a primary-key/unique constraint
+// violation, as opposed to some other insert failure (bad type, closed db, etc).
+func isDuplicateKeyErr(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "UNIQUE constraint") ||
+		strings.Contains(s, "PRIMARY KEY constraint") ||
+		strings.Contains(s, "Violation of PRIMARY KEY") ||
+		strings.Contains(s, "duplicate key")
+}
+
+// writeRows inserts rows into table, one INSERT per row. Duplicate-key failures
+// (the common case: the source file contains the same id_field value more than
+// once) are counted and reported as a single aggregated summary with sample IDs,
+// instead of one failure per row, via the returned *RowLoadError.
+func (l *Loader) writeRows(db *sqlx.DB, table string, cols []string, idField string, rows []map[string]interface{}) *RowLoadError {
+	var rowErr *RowLoadError
+	for _, row := range rows {
+		if err := loaderWrite(db, table, cols, row); err != nil {
+			if rowErr == nil {
+				rowErr = &RowLoadError{Table: table}
+			}
+			if idField != "" && isDuplicateKeyErr(err) {
+				rowErr.addDuplicate(fmt.Sprintf("%v", row[idField]))
+				continue
+			}
+			rowErr.addFailure(idField, row[idField], err)
+		}
+	}
+	return rowErr
 }
 
 // ── DB helpers ─────────────────────────────────────────────────────────────────

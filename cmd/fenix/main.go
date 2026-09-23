@@ -32,7 +32,7 @@ var (
 	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
 	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
 	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
-	command        = flag.String("cmd", "all", "Command: prepare, convert, all, serve, serve-all")
+	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
 	help           = flag.Bool("help", false, "Show help message")
 	servePort      = flag.String("port", "127.0.0.1:8080", "Address for the FHIR API server (used with -cmd serve)")
 	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
@@ -105,21 +105,23 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sourceNames := parseSourceNames(flag.Args())
+
 	switch *command {
-	case "prepare":
-		loadSources(ctx, db, cfg, repoRoot, &log)
+	case "load":
+		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
 	case "convert":
 		runTransforms(db, cfg, repoRoot, &log)
 		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "all":
-		loadSources(ctx, db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
 		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
 		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
 	case "serve-all":
-		loadSources(ctx, db, cfg, repoRoot, &log)
+		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
 		fallthrough
 	case "serve":
@@ -156,8 +158,24 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
 }
 
-// loadSources iterates all configured sources and loads each into the staging database.
-func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+// parseSourceNames turns positional CLI args into a flat list of source names, accepting either
+// space-separated args ("zbj-test pja sim") or comma-separated ones ("zbj-test,pja,sim"), or a mix.
+func parseSourceNames(args []string) []string {
+	var names []string
+	for _, arg := range args {
+		for _, name := range strings.Split(arg, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// loadSources loads the named sources into the staging database. If sourceNames is empty, every
+// source configured in cfg.Sources is loaded.
+func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot string, sourceNames []string, log *zerolog.Logger) {
 	watermarkPath := config.WatermarkPath(cfg, repoRoot)
 
 	fw, err := config.NewFileWriter(cfg, repoRoot)
@@ -165,7 +183,20 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 		log.Error().Err(err).Msg("staging files: failed to create file writer — file output disabled")
 	}
 
-	for name, sc := range cfg.Sources {
+	sources := cfg.Sources
+	if len(sourceNames) > 0 {
+		sources = make(config.SourcesConfig, len(sourceNames))
+		for _, name := range sourceNames {
+			sc, ok := cfg.Sources[name]
+			if !ok {
+				log.Warn().Str("source", name).Msg("Source not found in config, skipping")
+				continue
+			}
+			sources[name] = sc
+		}
+	}
+
+	for name, sc := range sources {
 		src, err := config.BuildSource(name, sc, repoRoot, watermarkPath, *log)
 		if err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to build source")
@@ -352,14 +383,25 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 func printHelp() {
 	fmt.Println(`CSV to FHIR Converter
 
-Usage: fenix [options]
+Usage: fenix [options] [source ...]
+
+  [source ...]     Source identifiers from config.yaml's "sources" section
+                    (e.g. zbj-test). Accepts multiple space- or comma-
+                    separated names (e.g. "zbj-test,pja,sim"). Only used by
+                    -cmd load|all|serve-all to restrict which sources are
+                    loaded. Omit to load all configured sources.
 
 Options:
   -config string   Path to configuration file (default "config/config.yaml")
   -sql    string   SQL file with multi-statement conversion queries
   -file   string   Specific CSV file to load (optional)
-  -cmd    string   prepare | convert | all  (default "all")
+  -cmd    string   load | convert | all | serve | serve-all  (default "all")
   -help            Show this help message
+
+Examples:
+  fenix -cmd load                    # load all configured sources
+  fenix -cmd load zbj-test           # load only the "zbj-test" source
+  fenix -cmd load zbj-test,pja,sim   # load multiple sources
 
 Environment:
   Configure environment mode in config file:

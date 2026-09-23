@@ -121,9 +121,13 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 	if err := recreate(db, table, cols); err != nil {
 		return err
 	}
+	var rowErr *RowLoadError
 	for _, row := range flat {
 		if err := insertRow(db, table, cols, row); err != nil {
-			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
+			if rowErr == nil {
+				rowErr = &RowLoadError{Table: table}
+			}
+			rowErr.addFailure("", nil, err)
 		}
 	}
 	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(flat)).Msg("source: loaded")
@@ -135,6 +139,9 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 		if err := s.fileWriter.WriteJSONFull(table, records); err != nil {
 			s.log.Warn().Err(err).Str("table", table).Msg("local: json write failed")
 		}
+	}
+	if rowErr != nil {
+		return rowErr
 	}
 	return nil
 }
@@ -177,9 +184,13 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 	if err := recreate(db, table, headers); err != nil {
 		return err
 	}
+	var rowErr *RowLoadError
 	for _, row := range allRows {
 		if err := insertRow(db, table, headers, row); err != nil {
-			s.log.Error().Err(err).Str("table", table).Msg("local: insert failed")
+			if rowErr == nil {
+				rowErr = &RowLoadError{Table: table}
+			}
+			rowErr.addFailure("", nil, err)
 		}
 	}
 	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(allRows)).Msg("source: loaded")
@@ -188,6 +199,9 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 		if err := s.fileWriter.WriteTableFull(table, headers, allRows); err != nil {
 			s.log.Warn().Err(err).Str("table", table).Msg("local: csv write failed")
 		}
+	}
+	if rowErr != nil {
+		return rowErr
 	}
 	return nil
 }
