@@ -11,16 +11,18 @@ import (
 
 	"net/http"
 
-	"github.com/SanteonNL/fenix/config"
 	"github.com/SanteonNL/fenix/cmd/fenix/converter"
 	"github.com/SanteonNL/fenix/cmd/fenix/fhirserver"
 	"github.com/SanteonNL/fenix/cmd/fenix/output"
 	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/config"
+	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/source"
 	_ "github.com/SanteonNL/fenix/source/local"
 	_ "github.com/SanteonNL/fenix/source/luscii"
 	_ "github.com/SanteonNL/fenix/source/sftp"
 	_ "github.com/SanteonNL/fenix/source/sqldb"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 	_ "modernc.org/sqlite"
@@ -107,19 +109,27 @@ func main() {
 
 	sourceNames := parseSourceNames(flag.Args())
 
+	// One RunID per CLI invocation, not per SQL file: de-identification
+	// hashes a reference (e.g. Observation.subject) by hashing its id
+	// directly, independent of whether the Patient it points at is in the
+	// same batch (see deident.Deidentify) — that only lines up with the
+	// Patient's own hashed id, produced by a separate runFHIRConversion
+	// call for a different SQL file, if both calls share the same RunID.
+	runID := uuid.NewString()
+
 	switch *command {
 	case "load":
 		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
 	case "convert":
 		runTransforms(db, cfg, repoRoot, &log)
-		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
-		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
+		runSourceQueries(db, cfg, repoRoot, outputMgr, runID, &log)
+		convertToFHIR(db, cfg, repoRoot, outputMgr, runID, &log)
 	case "all":
 		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
-		runSourceQueries(db, cfg, repoRoot, outputMgr, &log)
-		convertToFHIR(db, cfg, repoRoot, outputMgr, &log)
+		runSourceQueries(db, cfg, repoRoot, outputMgr, runID, &log)
+		convertToFHIR(db, cfg, repoRoot, outputMgr, runID, &log)
 	case "serve-all":
 		loadSources(ctx, db, cfg, repoRoot, sourceNames, &log)
 		runTransforms(db, cfg, repoRoot, &log)
@@ -146,7 +156,7 @@ func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog
 	return db, nil
 }
 
-func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
 	sqlPath := *sqlFile
 	if sqlPath == "" {
 		sqlPath = cfg.FHIR.SQLFile
@@ -155,7 +165,7 @@ func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *
 		log.Debug().Msg("No fhir.sqlFile configured, skipping generic FHIR conversion")
 		return
 	}
-	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, log)
+	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, runID, log)
 }
 
 // parseSourceNames turns positional CLI args into a flat list of source names, accepting either
@@ -221,7 +231,7 @@ func runTransforms(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 }
 
 // runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/fhir/.
-func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
 	for name := range cfg.Sources {
 		queriesDir := resolvePath(repoRoot, "queries/"+name+"/fhir")
 		entries, err := os.ReadDir(queriesDir)
@@ -233,14 +243,41 @@ func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMg
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 				continue
 			}
-			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, outputMgr, log)
+			runFHIRConversion(db, cfg, filepath.Join(queriesDir, e.Name()), repoRoot, outputMgr, runID, log)
 		}
 	}
 }
 
+// deidentifyBatch de-identifies resources in place against the ruleset
+// configured at cfg.Deident.RulesetFile. runID must be the same for every
+// batch that should be able to reference each other correctly (e.g. every
+// SQL file in one CLI invocation) — a reference is hashed by its own id,
+// independent of whether the resource it points at is in this batch (see
+// deident.Deidentify), and that only matches that resource's own hashed id
+// when both hashes are computed under the same RunContext.
+func deidentifyBatch(cfg *config.Config, resources []interface{}, runID string) error {
+	rs, err := config.LoadDeidentRuleset(cfg.Deident.RulesetFile)
+	if err != nil {
+		return err
+	}
+	key, err := cfg.DeidentKey()
+	if err != nil {
+		return err
+	}
+
+	deidResources := make([]deident.Resource, len(resources))
+	for i, r := range resources {
+		rt, val, _ := converter.Unwrap(r)
+		deidResources[i] = deident.Resource{Type: rt, Value: val}
+	}
+
+	ctx := deident.RunContext{Key: key, RunID: runID}
+	_, err = deident.Deidentify(deidResources, rs, nil, ctx, nil)
+	return err
+}
 
 // runFHIRConversion executes one SQL file against the database and writes FHIR output.
-func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, log *zerolog.Logger) {
+func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
 	log.Info().Str("sql", sqlPath).Msg("Starting FHIR conversion")
 
 	query, err := os.ReadFile(sqlPath)
@@ -267,6 +304,13 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 	if err != nil {
 		log.Error().Err(err).Msg("Conversion failed")
 		return
+	}
+
+	if cfg.Deident.Enabled {
+		if err := deidentifyBatch(cfg, resources, runID); err != nil {
+			log.Error().Err(err).Str("sql", sqlPath).Msg("De-identification failed — output not written")
+			return
+		}
 	}
 
 	baseName := strings.TrimSuffix(filepath.Base(sqlPath), ".sql")
@@ -371,7 +415,22 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
-	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, *log)
+
+	var deidentRuleset *deident.Ruleset
+	var deidentKey []byte
+	if cfg.Deident.Enabled {
+		rs, err := config.LoadDeidentRuleset(cfg.Deident.RulesetFile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to load de-identification ruleset")
+		}
+		deidentKey, err = cfg.DeidentKey()
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to load de-identification key")
+		}
+		deidentRuleset = &rs
+	}
+
+	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, *log)
 
 	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")

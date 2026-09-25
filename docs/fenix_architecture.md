@@ -1462,8 +1462,7 @@ Each Implementation Guide package ships a standard ruleset — an instance of th
     {
       "path": "Patient.id",
       "action": "hash",
-      "algorithm": "hmac-sha256",
-      "propagateTo": ["*.subject", "*.patient"]
+      "algorithm": "hmac-sha256"
     },
     {
       "path": "Patient.identifier",
@@ -1489,7 +1488,7 @@ Each Implementation Guide package ships a standard ruleset — an instance of th
 }
 ```
 
-`propagateTo` on `Patient.id` limits reference updates to `*.subject` and `*.patient` only — not every `Reference` field in every resource.
+Once `Patient.id` has a `hash` rule, every reference to a Patient anywhere in the export — `Observation.subject`, `RelatedPerson.patient`, whatever a resource happens to call it — is rewritten to the same hashed value automatically. There is no separate list of reference paths to author or maintain: there is never a legitimate reason to hash a resource's id but leave some references to it unrewritten, since that would either leak the original id or break referential integrity.
 
 **Layer 2 — per-export override (YAML)**
 
@@ -1513,7 +1512,7 @@ Every rule specifies an `action`, which determines the parameters it must carry:
 | Action | Required parameters | Effect |
 |---|---|---|
 | `none` | `exceptionReason` | Released unchanged. Never silent — always a documented, deliberate decision. Used for coded values (SNOMED CT, LOINC, UCUM) and booleans that carry no identifying risk. |
-| `hash` | `algorithm`, optional `propagateTo` | HMAC replaces the value. `propagateTo` on an `id` rule names the reference paths rewritten with the same hash, preserving referential integrity. |
+| `hash` | `algorithm` | HMAC replaces the value. A `hash` rule on an `id` element also rewrites every reference to that resource type, anywhere in the export, to the same hashed value — automatically, not via a declared list of reference paths. |
 | `shift` | `maxDays` | Date/dateTime moved by a random, per-patient, per-export offset drawn from `±maxDays` (never zero). Intervals between a patient's events are preserved. |
 | `clamp-age` | `minAge`, `maxAge`, optional `exceptionReason` (when overriding the standard 18–85 range) | Birth dates implying an age outside the range are brought to the nearest boundary. |
 | `first-of-month` | *(none)* | Floors a date to the first of its month, removing day precision. |
@@ -1544,7 +1543,7 @@ Rules are applied from most specific path to most general — `Patient.birthDate
 
 ```
 ① hash Patient.id
-     → rewrite *.subject and *.patient references across all resources in the export
+     → every reference to Patient, anywhere, is rewritten to the same hash
 
 ② hash Patient.identifier (all slices)
 

@@ -10,6 +10,8 @@ import (
 
 	"github.com/SanteonNL/fenix/cmd/fenix/converter"
 	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/deident"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
 
@@ -25,22 +27,30 @@ type Server struct {
 	groupID   string
 	outputDir string // if non-empty, compiled queries are written here
 	log       zerolog.Logger
+
+	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
+	deidentKey     []byte
 }
 
 // New creates a Server.
-//   - compiler   query compiler initialised with config/queries and the repo root
-//   - conv       FHIRConverter already wired to the staging/source database
-//   - source     source name from config/queries/sources/ (e.g. "hix-test")
-//   - groupID    optional group override (e.g. "geboortezorg-2024"), empty for none
-//   - outputDir  directory to write compiled queries into; empty disables writing
-func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source, groupID, outputDir string, log zerolog.Logger) *Server {
+//   - compiler       query compiler initialised with config/queries and the repo root
+//   - conv           FHIRConverter already wired to the staging/source database
+//   - source         source name from config/queries/sources/ (e.g. "hix-test")
+//   - groupID        optional group override (e.g. "geboortezorg-2024"), empty for none
+//   - outputDir      directory to write compiled queries into; empty disables writing
+//   - deidentRuleset the effective de-identification ruleset to apply to every
+//     response, or nil to disable de-identification (existing behaviour)
+//   - deidentKey     the HMAC key backing deidentRuleset; ignored when deidentRuleset is nil
+func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source, groupID, outputDir string, deidentRuleset *deident.Ruleset, deidentKey []byte, log zerolog.Logger) *Server {
 	return &Server{
-		compiler:  compiler,
-		converter: conv,
-		source:    source,
-		groupID:   groupID,
-		outputDir: outputDir,
-		log:       log,
+		compiler:       compiler,
+		converter:      conv,
+		source:         source,
+		groupID:        groupID,
+		outputDir:      outputDir,
+		deidentRuleset: deidentRuleset,
+		deidentKey:     deidentKey,
+		log:            log,
 	}
 }
 
@@ -111,6 +121,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.deidentRuleset != nil {
+		if err := s.deidentify(resourceType, resources, fhirParams["_elements"]); err != nil {
+			s.log.Error().Err(err).Str("resourceType", resourceType).Msg("De-identification failed")
+			fhirError(w, fmt.Sprintf("de-identification failed: %v", err), http.StatusUnprocessableEntity)
+			return
+		}
+	}
+
 	// Wrap in a FHIR Bundle (searchset)
 	entries := make([]map[string]interface{}, len(resources))
 	for i, res := range resources {
@@ -127,6 +145,42 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(bundle); err != nil {
 		s.log.Error().Err(err).Msg("Failed to encode bundle")
 	}
+}
+
+// deidentify de-identifies resources (all of resourceType, per this
+// handler's single-type search) in place against s.deidentRuleset, using a
+// fresh per-request RunID so repeated requests aren't linkable to each
+// other. rawElements is the request's own _elements query parameter, if
+// any — FENIX has no notion of "an export" to declare elements against
+// separately; the resource type and parameters actually posted to this
+// endpoint are the only input de-identification needs.
+//
+// Known limitation: a reference to another resource type (e.g.
+// Observation.subject) is hashed by its own id (deident.Deidentify), which
+// only matches that other resource's own hashed id — from a *separate*
+// request to /r4/{otherType} — if both requests share the same RunID. They
+// don't: each request gets its own. Fixing that properly needs the actual
+// bulk $export job concept (one RunID per export run, shared across every
+// resource type it returns) — out of scope today, same as the rest of the
+// async $export API. The CLI batch path doesn't have this problem: one CLI
+// invocation already shares a single RunID across every SQL file/resource
+// type it converts (see cmd/fenix/main.go).
+
+func (s *Server) deidentify(resourceType string, resources []interface{}, rawElements string) error {
+	deidResources := make([]deident.Resource, len(resources))
+	for i, r := range resources {
+		rt, val, _ := converter.Unwrap(r)
+		deidResources[i] = deident.Resource{Type: rt, Value: val}
+	}
+
+	var elements map[string][]string
+	if rawElements != "" {
+		elements = map[string][]string{resourceType: strings.Split(rawElements, ",")}
+	}
+
+	ctx := deident.RunContext{Key: s.deidentKey, RunID: uuid.NewString()}
+	_, err := deident.Deidentify(deidResources, *s.deidentRuleset, elements, ctx, nil)
+	return err
 }
 
 // writeCompiledQueries writes each rendered query to outputDir/compiled/{resourceType}_{name}.sql.

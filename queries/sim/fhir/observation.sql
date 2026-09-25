@@ -9,6 +9,12 @@
 --     MetingDatumTijd
 
 -- ── Statement 1: Root Observation ─────────────────────────────────────────
+-- NULLIF on the valueQuantity.* columns: a coded-only measurement (result
+-- expressed via UitslagCode, handled in statement 3 below) has no numeric
+-- UitslagWaarde at all. Without this, an empty string reaches Quantity.Value
+-- (*json.Number), which fails to unmarshal ("" is not a valid number
+-- literal) and the whole Observation gets skipped — NULL, unlike "", is a
+-- valid (absent) value for every field type here.
 SELECT
     MetingID                                AS resource_id,
     MetingID                                AS id,
@@ -17,9 +23,9 @@ SELECT
     'final'                                 AS status,
     MetingDatumTijd                         AS effectiveDateTime,
     'Patient/' || Identificatienummer       AS "subject.reference",
-    UitslagWaarde                           AS "valueQuantity.value",
-    UitslagWaardeEenheid                    AS "valueQuantity.unit",
-    UitslagWaardeEenheidSysteem             AS "valueQuantity.system"
+    NULLIF(UitslagWaarde, '')               AS "valueQuantity.value",
+    NULLIF(UitslagWaardeEenheid, '')        AS "valueQuantity.unit",
+    NULLIF(UitslagWaardeEenheidSysteem, '') AS "valueQuantity.system"
 FROM sim_algemenemeting;
 
 -- ── Statement 2: code.coding (MetingNaam) ─────────────────────────────────

@@ -19,6 +19,26 @@ type Config struct {
 	FHIR        FHIRConfig    `yaml:"fhir"`
 	Output      OutputConfig  `yaml:"output"`
 	Sources     SourcesConfig `yaml:"sources"`
+	Deident     DeidentConfig `yaml:"deident"`
+}
+
+// DeidentConfig configures de-identification of FHIR output (internal/deident).
+// Disabled by default: until RulesetFile points at a real resolved
+// DeidentificationRuleset JSON file, both the CLI batch path and the live
+// server run exactly as they do today.
+type DeidentConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	RulesetFile string `yaml:"rulesetFile"` // path to a resolved (deident.Resolve output) DeidentificationRuleset JSON file
+	KeyEnv      string `yaml:"keyEnv"`      // env var holding the base64-encoded HMAC key; defaults to FENIX_DEIDENT_KEY
+}
+
+// EffectiveKeyEnv returns the env var name to read the HMAC key from,
+// defaulting to FENIX_DEIDENT_KEY.
+func (dc DeidentConfig) EffectiveKeyEnv() string {
+	if dc.KeyEnv != "" {
+		return dc.KeyEnv
+	}
+	return "FENIX_DEIDENT_KEY"
 }
 
 // SourcesConfig maps source name (e.g. "luscii") to its configuration.
@@ -38,20 +58,20 @@ type EndpointConfig struct {
 // "sqldb" queries an external SQL database and loads results into staging;
 // "sftp" downloads CSV/JSON files from a remote SFTP server.
 type SourceConfig struct {
-	Type             string           `yaml:"type"`              // "luscii" | "local" | "sqldb" | "sftp"
-	BaseURL          string           `yaml:"base_url"`          // luscii: REST base URL
-	APIKey           string           `yaml:"api_key"`           // luscii: Bearer token
-	Dir              string           `yaml:"dir"`               // local: directory containing data files (.json or .csv)
-	Delimiter        string           `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
-	ConnectionString string           `yaml:"connection_string"` // sqldb: connection string for the external SQL database
-	StagingDir       string           `yaml:"staging_dir"`       // sqldb: directory containing staging SQL queries
-	Host             string           `yaml:"host"`              // sftp: hostname or IP
-	Port             int              `yaml:"port"`              // sftp: port, default 22
-	Username         string           `yaml:"username"`          // sftp: login username
-	KeyFile          string           `yaml:"key_file"`          // sftp: path to SSH private key file
-	RemoteDir        string           `yaml:"remote_dir"`        // sftp: remote directory to download files from
-	Endpoints        []EndpointConfig       `yaml:"endpoints"`    // luscii: list of API endpoints to fetch
-	JSONOptions      map[string]interface{} `yaml:"json_options"` // local/sftp: per-file JSON flattening config
+	Type             string                 `yaml:"type"`              // "luscii" | "local" | "sqldb" | "sftp"
+	BaseURL          string                 `yaml:"base_url"`          // luscii: REST base URL
+	APIKey           string                 `yaml:"api_key"`           // luscii: Bearer token
+	Dir              string                 `yaml:"dir"`               // local: directory containing data files (.json or .csv)
+	Delimiter        string                 `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
+	ConnectionString string                 `yaml:"connection_string"` // sqldb: connection string for the external SQL database
+	StagingDir       string                 `yaml:"staging_dir"`       // sqldb: directory containing staging SQL queries
+	Host             string                 `yaml:"host"`              // sftp: hostname or IP
+	Port             int                    `yaml:"port"`              // sftp: port, default 22
+	Username         string                 `yaml:"username"`          // sftp: login username
+	KeyFile          string                 `yaml:"key_file"`          // sftp: path to SSH private key file
+	RemoteDir        string                 `yaml:"remote_dir"`        // sftp: remote directory to download files from
+	Endpoints        []EndpointConfig       `yaml:"endpoints"`         // luscii: list of API endpoints to fetch
+	JSONOptions      map[string]interface{} `yaml:"json_options"`      // local/sftp: per-file JSON flattening config
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:
@@ -67,10 +87,10 @@ func (c *Config) EffectiveLogLevel() string {
 }
 
 type StagingConfig struct {
-	Database   string             `yaml:"database"`         // sqlite (default) | postgres | sqlserver
-	Driver     string             `yaml:"driver"`           // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
-	Path       string             `yaml:"path"`             // sqlite: file path; omit or "" for in-memory (default)
-	Connection string             `yaml:"connection"`       // postgres/sqlserver: full connection string
+	Database   string              `yaml:"database"`        // sqlite (default) | postgres | sqlserver
+	Driver     string              `yaml:"driver"`          // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
+	Path       string              `yaml:"path"`            // sqlite: file path; omit or "" for in-memory (default)
+	Connection string              `yaml:"connection"`      // postgres/sqlserver: full connection string
 	Files      *StagingFilesConfig `yaml:"files,omitempty"` // optional: also write staging data to files
 }
 

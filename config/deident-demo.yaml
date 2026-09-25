@@ -1,0 +1,40 @@
+# Self-contained config for running the real fenix CLI pipeline end-to-end
+# against sample data with de-identification enabled — see `make deident-pipeline-demo`.
+# Not a template for production use: staging is in-memory, and the ruleset
+# (config/deident/sim-demo-ruleset.json) covers only what the `sim` source's
+# queries actually select.
+
+environment: dev
+logLevel: info
+
+staging:
+  database: sqlite
+  path: "" # in-memory
+
+fhir:
+  sqlFile: ""
+  profilesDir: terminology/profiles/sim
+  conceptMapsDir: terminology/conceptmaps/flat
+
+output:
+  format: pretty
+  type: local
+  local:
+    dir: output/deident-demo
+    useTimestamp: false
+    archiveCount: 0
+
+deident:
+  enabled: true
+  rulesetFile: config/deident/sim-demo-ruleset.json
+
+sources:
+  sim:
+    type: local
+    dir: "test/data/sim"
+    delimiter: ";"
+    json_options:
+      journeys:
+        id_field: id
+        children:
+          responsible_user_groups: {}

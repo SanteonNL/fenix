@@ -21,6 +21,17 @@ func NewDateTime(t time.Time) DateTime {
 	}
 }
 
+// ParseDateTime parses a FHIR dateTime string (year, year-month, date, or a
+// full datetime with optional fractional seconds and timezone) into a
+// DateTime, preserving the precision it was given at.
+func ParseDateTime(s string) (DateTime, error) {
+	var d DateTime
+	if err := d.UnmarshalJSON([]byte(`"` + s + `"`)); err != nil {
+		return DateTime{}, err
+	}
+	return d, nil
+}
+
 // String returns the datetime in FHIR format based on precision
 func (d DateTime) String() string {
 	if d.Time.IsZero() {

@@ -1,0 +1,32 @@
+{
+  "id": "santeon-default",
+  "version": "0.1.0",
+  "url": "https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default",
+  "rule": [
+    {
+      "path": "Patient.id",
+      "action": "hash",
+      "algorithm": "hmac-sha256"
+    },
+    {
+      "path": "Patient.identifier",
+      "action": "hash",
+      "algorithm": "hmac-sha256"
+    },
+    {
+      "path": "**.ofType(date)",
+      "action": "shift",
+      "maxDays": 15
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "first-of-month"
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "clamp-age",
+      "minAge": 18,
+      "maxAge": 85
+    }
+  ]
+}

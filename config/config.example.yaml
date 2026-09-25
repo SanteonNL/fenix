@@ -73,3 +73,10 @@ sources:
     key_file: "C:\\Users\\t.hetterscheid\\.ssh\\zbj-test-svc-id_rsa"
     remote_dir: "/"
     delimiter: ";"
+
+# De-identification (internal/deident) — disabled by default. See
+# docs/fenix_architecture.md, "❻ De-identification".
+# deident:
+#   enabled: true
+#   rulesetFile: "config/deident/santeon-default.json"  # a resolved DeidentificationRuleset JSON file (deident.Resolve output)
+#   keyEnv: "FENIX_DEIDENT_KEY"                          # env var holding the base64-encoded HMAC key; this is the default if omitted

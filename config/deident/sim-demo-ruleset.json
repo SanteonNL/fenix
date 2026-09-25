@@ -1,0 +1,62 @@
+{
+  "id": "santeon-default",
+  "version": "0.1.0",
+  "url": "https://ig.santeon.nl/sim-on-fhir/DeidentificationRuleset/santeon-default",
+  "rule": [
+    {
+      "path": "Patient.id",
+      "action": "hash",
+      "algorithm": "hmac-sha256"
+    },
+    {
+      "path": "Patient.identifier",
+      "action": "hash",
+      "algorithm": "hmac-sha256"
+    },
+    {
+      "path": "**.ofType(date)",
+      "action": "shift",
+      "maxDays": 15
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "first-of-month"
+    },
+    {
+      "path": "Patient.birthDate",
+      "action": "clamp-age",
+      "minAge": 18,
+      "maxAge": 85
+    },
+    {
+      "path": "Patient.gender",
+      "action": "none",
+      "exceptionReason": "low re-identification risk, required for cohort stratification"
+    },
+    {
+      "path": "Observation.id",
+      "action": "none",
+      "exceptionReason": "server-internal id, not linkable without the (hashed) patient reference"
+    },
+    {
+      "path": "Observation.status",
+      "action": "none",
+      "exceptionReason": "coded value, no identifying risk"
+    },
+    {
+      "path": "Observation.code",
+      "action": "none",
+      "exceptionReason": "coded concept, exact value required for analysis"
+    },
+    {
+      "path": "Observation.valueQuantity",
+      "action": "none",
+      "exceptionReason": "measurement value/unit, no identifying risk"
+    },
+    {
+      "path": "Observation.valueCodeableConcept",
+      "action": "none",
+      "exceptionReason": "coded result, exact value required for analysis"
+    }
+  ]
+}

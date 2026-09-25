@@ -31,6 +31,26 @@ type fhirOutput struct {
 	inner        interface{}
 }
 
+// Unwrap returns the resourceType and the underlying resource value for one
+// element of the slice ConvertSQL/ExportToNDJSON operate on: a fhirOutput
+// wrapper unwraps to its resourceType and inner (the concrete *fhir.* struct
+// pointer); a raw map[string]interface{} (a resource type the converter has
+// no typed model for, see newFHIRResource) returns its own "resourceType"
+// field and itself, with typed=false so callers can tell the two apart —
+// notably deident.Deidentify, which refuses to run against an untyped map
+// since it can't walk or verify coverage on one.
+func Unwrap(v interface{}) (resourceType string, resource interface{}, typed bool) {
+	switch r := v.(type) {
+	case fhirOutput:
+		return r.resourceType, r.inner, true
+	case map[string]interface{}:
+		rt, _ := r["resourceType"].(string)
+		return rt, r, false
+	default:
+		return "", v, false
+	}
+}
+
 func (f fhirOutput) MarshalJSON() ([]byte, error) {
 	inner, err := json.Marshal(f.inner)
 	if err != nil {
@@ -303,43 +323,108 @@ func buildFHIRResource(result ResourceResult, rootPath string) (map[string]inter
 	return resource, nil
 }
 
-// setChildren finds all direct child paths of parentPath and populates them.
-// Multiple RowData at the same child path with the same parentID become a FHIR array.
-// Fields that are defined as array types in the FHIR struct are wrapped in arrays
-// even when there's only one element.
+// setChildren finds all child paths of parentPath and populates them. This
+// normally means direct children (one dot-segment below parentPath), but a
+// query can also skip a level entirely — e.g. giving fhir_path
+// "Observation.code.coding" with parent_id set to the root Observation's own
+// id, never providing an "Observation.code" row of its own. That's a common,
+// intentional pattern for a CodeableConcept that carries nothing but its
+// coding array (see queries/hix/fhir/observation.sql's "Code" statement) —
+// setChildren synthesizes the missing intermediate object rather than
+// silently dropping that data (see hasDescendantRows below).
+//
+// Multiple RowData at the same child path with the same parentID become a
+// FHIR array. Fields that are defined as array types in the FHIR struct are
+// wrapped in arrays even when there's only one element.
 func setChildren(parent map[string]interface{}, result ResourceResult, parentPath string, parentID string, arrayFields map[string]bool) {
-	for path := range result {
-		if !isDirectChild(parentPath, path) {
-			continue
-		}
-		fieldName := path[len(parentPath)+1:] // e.g. "name" from "Patient.name"
+	for _, fieldName := range directDescendantSegments(result, parentPath) {
+		childPath := parentPath + "." + fieldName
+		shouldBeArray := arrayFields[fieldName]
 
-		// Collect rows that belong to this parent
+		// Rows given directly at this exact path, belonging to this parent.
 		var matching []RowData
-		for _, row := range result[path] {
+		for _, row := range result[childPath] {
 			if row.ParentID == parentID {
 				matching = append(matching, row)
 			}
 		}
-		if len(matching) == 0 {
+
+		if len(matching) > 0 {
+			if len(matching) == 1 && !shouldBeArray {
+				// Single element and not defined as array in struct → store as single object
+				parent[fieldName] = buildChild(matching[0], result, childPath, arrayFields)
+			} else {
+				// Multiple elements OR field is defined as array in struct → store as array
+				arr := make([]interface{}, len(matching))
+				for i, row := range matching {
+					arr[i] = buildChild(row, result, childPath, arrayFields)
+				}
+				parent[fieldName] = arr
+			}
 			continue
 		}
 
-		// Check if this field should be an array based on the struct definition
-		shouldBeArray := arrayFields[fieldName]
-
-		if len(matching) == 1 && !shouldBeArray {
-			// Single element and not defined as array in struct → store as single object
-			parent[fieldName] = buildChild(matching[0], result, path, arrayFields)
+		// No rows at exactly childPath — but a deeper path may still carry
+		// rows parented directly to this level's id (the skipped-level
+		// pattern described above). Synthesize the intermediate object.
+		if !hasDescendantRows(result, childPath, parentID) {
+			continue
+		}
+		obj := make(map[string]interface{})
+		nestedArrayFields := getArrayFieldsForType(getTypeNameFromPath(childPath))
+		setChildren(obj, result, childPath, parentID, nestedArrayFields)
+		normalizeObjectArrayFields(obj, getTypeNameFromPath(childPath))
+		if len(obj) == 0 {
+			continue
+		}
+		if shouldBeArray {
+			parent[fieldName] = []interface{}{obj}
 		} else {
-			// Multiple elements OR field is defined as array in struct → store as array
-			arr := make([]interface{}, len(matching))
-			for i, row := range matching {
-				arr[i] = buildChild(row, result, path, arrayFields)
-			}
-			parent[fieldName] = arr
+			parent[fieldName] = obj
 		}
 	}
+}
+
+// directDescendantSegments returns the distinct immediate next-segments
+// (e.g. "code" from "Observation.code" or "Observation.code.coding") among
+// every path in result that falls under parentPath, however deep.
+func directDescendantSegments(result ResourceResult, parentPath string) []string {
+	prefix := parentPath + "."
+	seen := map[string]bool{}
+	var segments []string
+	for path := range result {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := path[len(prefix):]
+		segment := rest
+		if i := strings.Index(rest, "."); i >= 0 {
+			segment = rest[:i]
+		}
+		if !seen[segment] {
+			seen[segment] = true
+			segments = append(segments, segment)
+		}
+	}
+	return segments
+}
+
+// hasDescendantRows reports whether any path strictly beneath prefix (not
+// prefix itself — that's the direct-row case, checked separately) has a row
+// whose ParentID matches parentID.
+func hasDescendantRows(result ResourceResult, prefix string, parentID string) bool {
+	descendantPrefix := prefix + "."
+	for path, rows := range result {
+		if !strings.HasPrefix(path, descendantPrefix) {
+			continue
+		}
+		for _, row := range rows {
+			if row.ParentID == parentID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // buildChild converts one RowData into either a scalar, or a nested map with children.

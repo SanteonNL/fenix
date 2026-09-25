@@ -37,7 +37,7 @@ type Observation struct {
 	Subject              *Reference                  `bson:"subject,omitempty" json:"subject,omitempty"`
 	Focus                []Reference                 `bson:"focus,omitempty" json:"focus,omitempty"`
 	Encounter            *Reference                  `bson:"encounter,omitempty" json:"encounter,omitempty"`
-	EffectiveDateTime    *Date                     `bson:"effectiveDateTime,omitempty" json:"effectiveDateTime,omitempty"`
+	EffectiveDateTime    *DateTime                 `bson:"effectiveDateTime,omitempty" json:"effectiveDateTime,omitempty"`
 	EffectivePeriod      *Period                     `bson:"effectivePeriod,omitempty" json:"effectivePeriod,omitempty"`
 	EffectiveTiming      *Timing                     `bson:"effectiveTiming,omitempty" json:"effectiveTiming,omitempty"`
 	EffectiveInstant     *string                     `bson:"effectiveInstant,omitempty" json:"effectiveInstant,omitempty"`
@@ -51,8 +51,8 @@ type Observation struct {
 	ValueRange           *Range                      `bson:"valueRange,omitempty" json:"valueRange,omitempty"`
 	ValueRatio           *Ratio                      `bson:"valueRatio,omitempty" json:"valueRatio,omitempty"`
 	ValueSampledData     *SampledData                `bson:"valueSampledData,omitempty" json:"valueSampledData,omitempty"`
-	ValueTime            *Date                     `bson:"valueTime,omitempty" json:"valueTime,omitempty"`
-	ValueDateTime        *Date                     `bson:"valueDateTime,omitempty" json:"valueDateTime,omitempty"`
+	ValueTime            *string                   `bson:"valueTime,omitempty" json:"valueTime,omitempty"`
+	ValueDateTime        *DateTime                 `bson:"valueDateTime,omitempty" json:"valueDateTime,omitempty"`
 	ValuePeriod          *Period                     `bson:"valuePeriod,omitempty" json:"valuePeriod,omitempty"`
 	DataAbsentReason     *CodeableConcept            `bson:"dataAbsentReason,omitempty" json:"dataAbsentReason,omitempty"`
 	Interpretation       []CodeableConcept           `bson:"interpretation,omitempty" json:"interpretation,omitempty"`
