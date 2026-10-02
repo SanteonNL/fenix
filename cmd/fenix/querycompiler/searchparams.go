@@ -16,6 +16,19 @@ type searchParamInfo struct {
 // searchParamIndex maps resourceType → paramCode → info.
 type searchParamIndex map[string]map[string]searchParamInfo
 
+// lookupSearchParam resolves (resourceType, code) to its SearchParameter
+// info. Some params (_id, _lastUpdated, ...) are defined once against the
+// generic "Resource" base rather than listed per concrete resource type,
+// since they apply polymorphically to all of them — this falls back to that
+// generic entry before giving up.
+func lookupSearchParam(idx searchParamIndex, resourceType, code string) (searchParamInfo, bool) {
+	if info, ok := idx[resourceType][code]; ok {
+		return info, true
+	}
+	info, ok := idx["Resource"][code]
+	return info, ok
+}
+
 var stripSuffix = regexp.MustCompile(`(\[x\]|\s+\(as\s+\w+\)).*`)
 
 func loadSearchParams(filePath string) (searchParamIndex, error) {

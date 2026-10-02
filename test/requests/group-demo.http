@@ -30,6 +30,50 @@ Accept: application/fhir+json
 GET {{base}}/Observation?status=final
 Accept: application/fhir+json
 
+### ─────────────────────────────────────────────────────────────────────
+### Struct-based param fallback (cmd/fenix/fhirserver/paramfilter.go) —
+### ?code= isn't configured as SQL pushdown for Observation
+### (config/queries/sources/sim/sim.yaml only lists status/patient), so the
+### SQL itself returns every row regardless of ?code=. filterUnwiredParams
+### catches it afterwards instead: it looks up "code"'s SearchParameter type
+### (token) in terminology/searchparameter/search-parameter.json and
+### filters the already-converted FHIR structs in Go. Same observations as
+### test/data/sim/AlgemeneMeting.csv: 123 has codes MCD_A/MCD_L, 456 has
+### MCD_B/LA6751-7, 789 (preliminary) has MCD_P.
+### ─────────────────────────────────────────────────────────────────────
+
+### Unwired token param alone — only the one observation coded MCD_A (patient 123)
+GET {{base}}/Observation?code=MCD_A
+Accept: application/fhir+json
+
+### Combine a pushed-down param (status) with an unwired one (code) — only patient 456's MCD_B observation
+GET {{base}}/Observation?status=final&code=MCD_B
+Accept: application/fhir+json
+
+### FHIR token "system|code" syntax also works — same single match as above
+GET {{base}}/Observation?code=https://santeon.nl/sct|MCD_B
+Accept: application/fhir+json
+
+### date is also unwired (not in sim.yaml's pushdown list), and maps to the
+### choice-type field Observation.effective[x] — filterUnwiredParams resolves
+### that to the actual JSON key (effectiveDateTime here) via resolveField's
+### prefix fallback (cmd/fenix/fhirserver/paramfilter.go). All 5 seeded
+### observations are dated 2023-10-13, so ge2023-10-14 proves the filter is
+### real (0 results, not just passed through) while ge2023-10-13 proves it
+### isn't over-filtering (all 5 still come back).
+
+### No observation is on/after 2023-10-14 — expect total: 0
+GET {{base}}/Observation?date=ge2023-10-14
+Accept: application/fhir+json
+
+### Every observation is on/after 2023-10-13 — expect total: 5
+GET {{base}}/Observation?date=ge2023-10-13
+Accept: application/fhir+json
+
+### Combine with the pushed-down status param — expect total: 4 (the 789/preliminary row drops out)
+GET {{base}}/Observation?status=final&date=ge2023-10-13
+Accept: application/fhir+json
+
 ### Create a Group whose membership is dynamically filtered to status=final — expect 123 and 456, NOT 789
 # @name createGroup
 POST {{base}}/Group

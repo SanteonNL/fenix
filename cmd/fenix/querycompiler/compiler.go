@@ -108,6 +108,48 @@ func (c *Compiler) Resolve(source, groupID, resourceType string, fhirParams map[
 	return result, nil
 }
 
+// SearchParamField resolves (resourceType, code) to the FHIR field name and
+// SearchParameter type FENIX would use for SQL pushdown (see
+// buildTemplateVars), derived from the same
+// terminology/searchparameter/search-parameter.json index. Callers that
+// can't push a param down into SQL — the live server's struct-based
+// fallback filter (fhirserver.filterUnwiredParams) — use this to know which
+// field to inspect on the converted resource and how to compare it.
+func (c *Compiler) SearchParamField(resourceType, code string) (field, paramType string, ok bool) {
+	info, ok := lookupSearchParam(c.searchIndex, resourceType, code)
+	if !ok {
+		return "", "", false
+	}
+	field = fieldName(resourceType, info.expression)
+	if field == "" {
+		field = code
+	}
+	return field, info.paramType, true
+}
+
+// PushdownCodes returns the set of FHIR param codes already pushed down
+// into SQL by every query configured for (source, resourceType) — group
+// overrides don't carry their own pushdown list, so groupID doesn't factor
+// in here. The live server's struct-based fallback filter skips these,
+// since the SQL already scoped them.
+func (c *Compiler) PushdownCodes(source, resourceType string) map[string]bool {
+	codes := make(map[string]bool)
+	sc, ok := c.sources[source]
+	if !ok {
+		return codes
+	}
+	res, ok := sc.Resources[resourceType]
+	if !ok {
+		return codes
+	}
+	for _, q := range res.Queries {
+		for _, p := range q.Pushdown {
+			codes[p] = true
+		}
+	}
+	return codes
+}
+
 // resolveQueries returns the list of QueryConfigs to run and the group override for the resource.
 func (c *Compiler) resolveQueries(source, groupID, resourceType string) ([]QueryConfig, GroupResourceConfig) {
 	var groupRes GroupResourceConfig

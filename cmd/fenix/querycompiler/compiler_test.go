@@ -31,7 +31,7 @@ func TestResolve(t *testing.T) {
 		groupID      string
 		resourceType string
 		params       map[string]string
-		wantQueries  int    // expected number of rendered queries
+		wantQueries  int      // expected number of rendered queries
 		wantInAll    []string // must appear in every rendered query
 		wantInAny    []string // must appear in at least one rendered query
 	}{
@@ -51,9 +51,9 @@ func TestResolve(t *testing.T) {
 			params:       map[string]string{"date": "ge2023-01-01", "status": "final"},
 			wantQueries:  3,
 			wantInAny: []string{
-				"FROM hix_observations",   // main
-				"FROM hix_lab_results",    // lab-results
-				"FROM hix_vitals",         // vital-signs
+				"FROM hix_observations", // main
+				"FROM hix_lab_results",  // lab-results
+				"FROM hix_vitals",       // vital-signs
 				"obs_date >= '2023-01-01'",
 				"result_date >= '2023-01-01'",
 				"measured_at >= '2023-01-01'",
@@ -81,9 +81,9 @@ func TestResolve(t *testing.T) {
 			wantQueries:  3,
 			wantInAll:    []string{"category = 'geboortezorg'"},
 			wantInAny: []string{
-				"FROM hix_verloskunde_lab",                       // lab-results → replaced SQL file
-				"FROM hix_vitals",                               // vital-signs → unchanged
-				"JOIN test_patients tp ON tp.patient_id",        // main → partial replace injected JOIN
+				"FROM hix_verloskunde_lab",               // lab-results → replaced SQL file
+				"FROM hix_vitals",                        // vital-signs → unchanged
+				"JOIN test_patients tp ON tp.patient_id", // main → partial replace injected JOIN
 			},
 		},
 		{
@@ -96,15 +96,26 @@ func TestResolve(t *testing.T) {
 			wantInAll:    []string{"FROM encounters", "start_time >= '2024-01-01'"},
 		},
 		{
-			// sim reuses the CLI batch pipeline's existing SQL as-is (see
-			// config/queries/sources/sim/sim.yaml) — no pushdown/template
-			// filtering, so params are accepted but don't narrow the SQL.
+			// sim reuses the CLI batch pipeline's existing SQL (see
+			// config/queries/sources/sim/sim.yaml); with no _id given, the
+			// {{if ._id}} filter is simply absent, same as "no filter".
 			name:         "sim_Patient",
 			source:       "sim",
 			resourceType: "Patient",
 			params:       map[string]string{},
 			wantQueries:  1,
 			wantInAll:    []string{"FROM sim_patient", "'Patient'"},
+		},
+		{
+			// _id is pushed down (config/queries/sources/sim/sim.yaml) via
+			// the generic "Resource" SearchParameter fallback (see
+			// querycompiler.lookupSearchParam) and scopes to one patient.
+			name:         "sim_Patient_id",
+			source:       "sim",
+			resourceType: "Patient",
+			params:       map[string]string{"_id": "123"},
+			wantQueries:  1,
+			wantInAll:    []string{"FROM sim_patient", "Identificatienummer = '123'"},
 		},
 		{
 			// status is pushed down (config/queries/sources/sim/sim.yaml) and
@@ -115,6 +126,17 @@ func TestResolve(t *testing.T) {
 			params:       map[string]string{"status": "final"},
 			wantQueries:  1,
 			wantInAll:    []string{"FROM sim_algemenemeting", "Status = 'final'"},
+		},
+		{
+			// patient is pushed down too, scoping to one patient's rows —
+			// used by Group/$export (cmd/fenix/fhirserver/export.go) to fire
+			// this query once per member id.
+			name:         "sim_Observation_patient",
+			source:       "sim",
+			resourceType: "Observation",
+			params:       map[string]string{"patient": "456"},
+			wantQueries:  1,
+			wantInAll:    []string{"FROM sim_algemenemeting", "Identificatienummer = '456'"},
 		},
 	}
 
@@ -162,5 +184,95 @@ func TestResolve(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSearchParamField(t *testing.T) {
+	c, err := querycompiler.New(configDir, sqlBaseDir)
+	if err != nil {
+		t.Fatalf("querycompiler.New: %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		resourceType  string
+		code          string
+		wantField     string
+		wantParamType string
+		wantOK        bool
+	}{
+		{
+			// Defined directly against Observation's own base in
+			// search-parameter.json.
+			name:          "Observation_status",
+			resourceType:  "Observation",
+			code:          "status",
+			wantField:     "status",
+			wantParamType: "token",
+			wantOK:        true,
+		},
+		{
+			// Listed under a multi-resource "patient" SearchParameter whose
+			// expression includes "Observation.subject.where(...)".
+			name:          "Observation_patient",
+			resourceType:  "Observation",
+			code:          "patient",
+			wantField:     "subject",
+			wantParamType: "reference",
+			wantOK:        true,
+		},
+		{
+			// _id has no per-resource-type entry at all — only the generic
+			// "Resource" base — so the field name falls back to the code
+			// itself (see fieldName's "not found for this resource type").
+			name:          "Patient_id_fallback",
+			resourceType:  "Patient",
+			code:          "_id",
+			wantField:     "_id",
+			wantParamType: "token",
+			wantOK:        true,
+		},
+		{
+			name:         "unknown_code",
+			resourceType: "Observation",
+			code:         "not-a-real-param",
+			wantOK:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			field, paramType, ok := c.SearchParamField(tt.resourceType, tt.code)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if field != tt.wantField || paramType != tt.wantParamType {
+				t.Errorf("got (%q, %q), want (%q, %q)", field, paramType, tt.wantField, tt.wantParamType)
+			}
+		})
+	}
+}
+
+func TestPushdownCodes(t *testing.T) {
+	c, err := querycompiler.New(configDir, sqlBaseDir)
+	if err != nil {
+		t.Fatalf("querycompiler.New: %v", err)
+	}
+
+	got := c.PushdownCodes("sim", "Observation")
+	for _, code := range []string{"status", "patient"} {
+		if !got[code] {
+			t.Errorf("PushdownCodes(sim, Observation) missing %q: %v", code, got)
+		}
+	}
+
+	if got := c.PushdownCodes("sim", "DoesNotExist"); len(got) != 0 {
+		t.Errorf("expected empty set for unconfigured resource type, got %v", got)
+	}
+	if got := c.PushdownCodes("no-such-source", "Observation"); len(got) != 0 {
+		t.Errorf("expected empty set for unconfigured source, got %v", got)
 	}
 }

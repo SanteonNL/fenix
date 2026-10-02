@@ -17,21 +17,13 @@ import "strings"
 //	{{if .effective_from}} AND effective_date >= '{{.effective_from}}'{{end}}
 func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdownCodes []string, idx searchParamIndex) map[string]interface{} {
 	vars := make(map[string]interface{})
-	resourceIdx := idx[resourceType]
 
 	for _, code := range pushdownCodes {
 		value, ok := fhirParams[code]
 		if !ok {
 			continue
 		}
-		info, ok := resourceIdx[code]
-		if !ok {
-			// Some params (_id, _lastUpdated, ...) are defined once against
-			// the generic "Resource" base rather than listed per concrete
-			// resource type, since they apply polymorphically to all of
-			// them — fall back to that generic entry before giving up.
-			info, ok = idx["Resource"][code]
-		}
+		info, ok := lookupSearchParam(idx, resourceType, code)
 		if !ok {
 			continue // param not defined for this resource type — skip
 		}

@@ -30,7 +30,7 @@ type Server struct {
 	outputDir string // if non-empty, compiled queries are written here
 	log       zerolog.Logger
 
-	conceptMapsDir string                     // directory of FHIR ConceptMap .json files served/edited by the /conceptmaps UI
+	conceptMapsDir string                       // directory of FHIR ConceptMap .json files served/edited by the /conceptmaps UI
 	conceptMapSvc  *converter.ConceptMapService // reloaded in place whenever the editor saves/deletes a file
 
 	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
@@ -193,6 +193,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // source has no queries configured for resourceType at all (distinct from a
 // configured query that simply matched zero rows). It implements the searcher
 // interface (see group.go), which Group membership resolution depends on.
+//
+// Not every param in fhirParams necessarily narrowed the SQL above: only
+// params listed in a query's `pushdown:` config (config/queries/sources/
+// <source>/<source>.yaml) do. filterUnwiredParams is the backstop for the
+// rest — it re-checks them against the converted resources in Go, so a
+// param still filters correctly even before it's wired as pushdown.
 func (s *Server) search(resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error) {
 	rendered, err := s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
 	if err != nil {
@@ -218,6 +224,9 @@ func (s *Server) search(resourceType string, fhirParams map[string]string) (reso
 	if err != nil {
 		return nil, true, fmt.Errorf("conversion failed: %w", err)
 	}
+
+	pushed := s.compiler.PushdownCodes(s.source, resourceType)
+	resources = filterUnwiredParams(resourceType, fhirParams, pushed, resources, s.compiler.SearchParamField)
 	return resources, true, nil
 }
 
