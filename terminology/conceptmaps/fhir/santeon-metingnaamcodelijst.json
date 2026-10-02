@@ -1,0 +1,42 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "santeon-metingnaamcodelijst",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/santeon-metingnaamcodelijst",
+  "name": "SanteonMetingnaamcodelijst",
+  "title": "Santeon Metingnaamcodelijst",
+  "status": "draft",
+  "description": "Carried over from conceptmap_santeon_metingnaamcodelijst.csv, which had no target_valueset_uri column and was never actually loaded by ConceptMapService. Set targetCanonical/targetUri here once the intended FHIR profile binding (valueset) is known, so this map gets picked up during conversion.",
+  "group": [
+    {
+      "target": "http://loinc.org",
+      "element": [
+        { "code": "BMI", "target": [{ "code": "39156-5", "equivalence": "equivalent" }] },
+        { "code": "97816-3", "display": "ASA score", "target": [{ "code": "97816-3", "equivalence": "equivalent" }] },
+        { "code": "NIBP", "target": [{ "code": "8480-6", "equivalence": "equivalent" }] },
+        { "code": "NIBP-2", "target": [{ "code": "8462-4", "equivalence": "equivalent" }] },
+        { "code": "24u urine", "target": [{ "code": "3167-4", "equivalence": "equivalent" }] },
+        { "code": "Gewicht", "target": [{ "code": "29463-7", "equivalence": "equivalent" }] },
+        { "code": "RRdiastol", "target": [{ "code": "8462-4", "equivalence": "equivalent" }] },
+        { "code": "RRsyst", "target": [{ "code": "8480-6", "equivalence": "equivalent" }] },
+        { "code": "FEV1 % prd", "target": [{ "code": "20152-5", "equivalence": "equivalent" }] }
+      ]
+    },
+    {
+      "source": "http://snomed.info/sct",
+      "target": "http://snomed.info/sct",
+      "element": [
+        { "code": "80771000146107", "display": "Sectio (PRN)", "target": [{ "code": "80771000000000", "equivalence": "equivalent" }] },
+        { "code": "80801000146105", "display": "Indicatie sectio caesarea (PRN)", "target": [{ "code": "80801000000000", "equivalence": "equivalent" }] }
+      ]
+    },
+    {
+      "source": "Santeon",
+      "target": "Santeon",
+      "element": [
+        { "code": "MCD_L_A", "display": "Montreal Crohn score", "target": [{ "code": "MCD_A", "equivalence": "equivalent" }] },
+        { "code": "MCD_L_B", "display": "Montreal Crohn score", "target": [{ "code": "MCD_B", "equivalence": "equivalent" }] },
+        { "code": "MCD_L_L", "display": "Montreal Crohn score", "target": [{ "code": "MCD_L", "equivalence": "equivalent" }] }
+      ]
+    }
+  ]
+}

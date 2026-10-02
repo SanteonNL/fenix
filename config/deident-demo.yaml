@@ -13,8 +13,8 @@ staging:
 
 fhir:
   sqlFile: ""
-  profilesDir: terminology/profiles/sim
-  conceptMapsDir: terminology/conceptmaps/flat
+  profilesDir: terminology/profiles/sim-on-fhir
+  conceptMapsDir: terminology/conceptmaps/fhir
 
 output:
   format: pretty

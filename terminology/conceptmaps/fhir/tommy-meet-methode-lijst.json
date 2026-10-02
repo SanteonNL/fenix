@@ -1,0 +1,42 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "tommy-meet-methode-lijst",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/tommy-meet-methode-lijst",
+  "name": "TommyMeetMethodeLijst",
+  "title": "Tommy Meet Methode Lijst",
+  "status": "draft",
+  "targetCanonical": "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354",
+  "group": [
+    {
+      "source": "https://mst.nl/mct",
+      "target": "https//tommytest.nl/tct",
+      "element": [
+        {
+          "code": "M12",
+          "display": "Hele fijne methode",
+          "target": [
+            { "code": "SC_3", "equivalence": "equivalent" }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "https://mst.nl/mct",
+      "target": "https//sdf.nl/tct",
+      "element": [
+        {
+          "code": "M15",
+          "display": "Hele fijne methode",
+          "target": [
+            { "code": "SC_4", "display": "ad", "equivalence": "equivalent" }
+          ]
+        }
+      ],
+      "unmapped": {
+        "mode": "fixed",
+        "code": "SC_5",
+        "display": "ad"
+      }
+    }
+  ]
+}

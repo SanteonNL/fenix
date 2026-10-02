@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FENIX ConceptMap Editor</title>
+<style>
+  :root {
+    /* Palette lifted from santeon.nl: brand blue + the magenta used for its
+       buttons, pill-shaped controls, generously rounded cards. Santeon's own
+       "trenda" webfont isn't available to this local tool, so we fall back
+       to a comparable system sans-serif stack. */
+    --bg: #f4f6f7;
+    --panel: #ffffff;
+    --border: #dde3e6;
+    --text: #1d2b32;
+    --muted: #65767d;
+    --brand-blue: #009ee2;
+    --brand-blue-dark: #0085bd;
+    --accent: #e40050;
+    --accent-dark: #b8003f;
+    --danger: #e40050;
+    --danger-dark: #b8003f;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: "Trenda", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 18px 24px;
+    background: var(--panel);
+    border-bottom: 3px solid var(--brand-blue);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 700; color: var(--text); }
+  header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 7px 16px;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  button:hover { border-color: var(--brand-blue); color: var(--brand-blue-dark); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #fff; color: var(--accent); border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: var(--border); }
+  button.danger:hover { border-color: var(--danger); background: #fdeaf1; color: var(--danger-dark); }
+  button.small { padding: 4px 12px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { background: #fafcfd; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  tr.clickable:hover { background: #e6f7fd; cursor: pointer; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 18px; margin-bottom: 16px; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--brand-blue); }
+  .row { display: flex; gap: 12px; }
+  .row > .field { flex: 1; }
+  .code { font-family: var(--mono); }
+  .group-box { border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 14px; background: #fbfdfe; }
+  .group-box .group-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .group-box .group-head strong { font-size: 13px; color: var(--brand-blue-dark); }
+  .map-table { margin: 10px 0; border-radius: 10px; }
+  .map-table th, .map-table td { padding: 5px 8px; font-size: 13px; vertical-align: middle; }
+  .map-table thead th { padding: 7px 8px; }
+  .map-table td.src-cell { background: #f3f8fa; border-right: 2px solid var(--border); }
+  .map-table td.arrow-cell { text-align: center; color: var(--muted); width: 1%; padding: 5px 4px; }
+  .map-table td.actions-cell { white-space: nowrap; text-align: right; width: 1%; }
+  .map-table input, .map-table select {
+    width: 100%; min-width: 90px; border: 1px solid transparent; background: transparent;
+    padding: 5px 6px; border-radius: 6px; font: inherit; font-size: 13px; color: var(--text);
+  }
+  .map-table input:hover, .map-table select:hover { border-color: var(--border); }
+  .map-table input:focus, .map-table select:focus { outline: none; border-color: var(--brand-blue); background: #fff; }
+  .map-table tbody tr:hover { background: #f0f9fc; }
+  .icon-btn { padding: 2px 9px; font-size: 13px; line-height: 1.6; }
+  .unmapped-box { border: 1px dashed var(--border); border-radius: 10px; padding: 10px; margin-top: 8px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: 999px; background: #e6f7fd; color: var(--brand-blue-dark); }
+  .pill.active { background: #e8f8ef; color: #1a7a4d; }
+  .pill.retired { background: #fdeaf1; color: var(--accent-dark); }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { background: var(--danger-dark); }
+  .empty { text-align: center; padding: 40px; color: var(--muted); }
+  footer.actions { display: flex; justify-content: space-between; margin-top: 8px; }
+  footer.actions .right { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>FENIX ConceptMap Editor</h1>
+    <div class="sub">Edits real FHIR ConceptMap resources used by the converter's code-mapping step</div>
+  </div>
+  <button id="backBtn" style="display:none">&larr; Back to list</button>
+</header>
+<main>
+  <div id="listView">
+    <div class="toolbar">
+      <div class="muted" id="listCount"></div>
+      <button class="primary" id="newBtn">+ New ConceptMap</button>
+    </div>
+    <table id="listTable">
+      <thead>
+        <tr><th>Filename</th><th>Id</th><th>Title / Name</th><th>Status</th><th>Target valueset</th><th>Groups</th><th>Elements</th><th></th></tr>
+      </thead>
+      <tbody id="listBody"></tbody>
+    </table>
+  </div>
+
+  <div id="editView" style="display:none">
+    <div class="panel">
+      <div class="row">
+        <div class="field">
+          <label>Id</label>
+          <input id="f_id" class="code">
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="f_status">
+            <option value="draft">draft</option>
+            <option value="active">active</option>
+            <option value="retired">retired</option>
+            <option value="unknown">unknown</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Name (computer-friendly)</label>
+          <input id="f_name">
+        </div>
+        <div class="field">
+          <label>Title</label>
+          <input id="f_title">
+        </div>
+      </div>
+      <div class="field">
+        <label>Url (canonical identity of this ConceptMap)</label>
+        <input id="f_url" class="code">
+      </div>
+      <div class="field">
+        <label>Target valueset (ConceptMap.targetCanonical &mdash; FHIR profile bindings are matched against this)</label>
+        <input id="f_target" class="code" placeholder="http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1">
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="f_description" rows="2"></textarea>
+      </div>
+    </div>
+
+    <div id="groupsContainer"></div>
+    <button id="addGroupBtn">+ Add group</button>
+
+    <footer class="actions">
+      <div>
+        <button class="danger" id="deleteBtn">Delete</button>
+      </div>
+      <div class="right">
+        <button id="cancelBtn">Cancel</button>
+        <button class="primary" id="saveBtn">Save</button>
+      </div>
+    </footer>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const EQUIVALENCES = ["relatedto","equivalent","equal","wider","subsumes","narrower","specializes","inexact","unmatched","disjoint"];
+const UNMAPPED_MODES = ["provided","fixed","other-map"];
+
+let current = null;     // the ConceptMap object currently being edited
+let currentFile = null; // filename on disk, or null for a not-yet-saved new map
+
+const listView = document.getElementById('listView');
+const editView = document.getElementById('editView');
+const backBtn = document.getElementById('backBtn');
+
+function toast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(() => { t.className = 'toast'; }, 3000);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { const body = await res.json(); if (body.error) msg = body.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function showList() {
+  current = null;
+  currentFile = null;
+  editView.style.display = 'none';
+  listView.style.display = 'block';
+  backBtn.style.display = 'none';
+  loadList();
+}
+
+function showEdit() {
+  listView.style.display = 'none';
+  editView.style.display = 'block';
+  backBtn.style.display = 'inline-block';
+  renderEdit();
+}
+
+async function loadList() {
+  try {
+    const items = await api('/api/conceptmaps');
+    document.getElementById('listCount').textContent = items.length + ' concept map' + (items.length === 1 ? '' : 's');
+    const body = document.getElementById('listBody');
+    body.innerHTML = '';
+    if (items.length === 0) {
+      body.innerHTML = '<tr><td colspan="8" class="empty">No concept maps yet. Click "New ConceptMap" to create one.</td></tr>';
+      return;
+    }
+    for (const it of items) {
+      const tr = document.createElement('tr');
+      tr.className = 'clickable';
+      tr.innerHTML =
+        '<td class="code">' + esc(it.filename) + '</td>' +
+        '<td class="code">' + esc(it.id) + '</td>' +
+        '<td>' + esc(it.title || it.name || '') + '</td>' +
+        '<td><span class="pill ' + esc(it.status) + '">' + esc(it.status) + '</span></td>' +
+        '<td class="code muted">' + esc(it.target || '—') + '</td>' +
+        '<td>' + it.groups + '</td>' +
+        '<td>' + it.elements + '</td>' +
+        '<td><button class="small" data-file="' + esc(it.filename) + '">Edit</button></td>';
+      tr.addEventListener('click', () => openFile(it.filename));
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    toast('Failed to load concept maps: ' + e.message, true);
+  }
+}
+
+async function openFile(filename) {
+  try {
+    const cm = await api('/api/conceptmaps/' + encodeURIComponent(filename));
+    current = normalize(cm);
+    currentFile = filename;
+    showEdit();
+  } catch (e) {
+    toast('Failed to open ' + filename + ': ' + e.message, true);
+  }
+}
+
+function newConceptMap() {
+  current = normalize({ resourceType: 'ConceptMap', status: 'draft', group: [] });
+  currentFile = null;
+  showEdit();
+}
+
+// normalize ensures the fields the editor reads/writes always exist, so the
+// render functions don't need undefined-checks everywhere.
+function normalize(cm) {
+  cm.group = cm.group || [];
+  for (const g of cm.group) {
+    g.element = g.element || [];
+    for (const el of g.element) {
+      el.target = el.target || [];
+    }
+  }
+  return cm;
+}
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---- edit view rendering ----
+
+function renderEdit() {
+  document.getElementById('f_id').value = current.id || '';
+  document.getElementById('f_id').disabled = !!currentFile; // id is fixed once a file exists (it's the filename)
+  document.getElementById('f_status').value = current.status || 'draft';
+  document.getElementById('f_name').value = current.name || '';
+  document.getElementById('f_title').value = current.title || '';
+  document.getElementById('f_url').value = current.url || '';
+  document.getElementById('f_target').value = current.targetCanonical || current.targetUri || '';
+  document.getElementById('f_description').value = current.description || '';
+  document.getElementById('deleteBtn').style.display = currentFile ? 'inline-block' : 'none';
+  renderGroups();
+}
+
+function readHeaderFields() {
+  current.id = document.getElementById('f_id').value.trim();
+  current.status = document.getElementById('f_status').value;
+  current.name = document.getElementById('f_name').value.trim() || undefined;
+  current.title = document.getElementById('f_title').value.trim() || undefined;
+  current.url = document.getElementById('f_url').value.trim() || undefined;
+  current.description = document.getElementById('f_description').value.trim() || undefined;
+  const target = document.getElementById('f_target').value.trim();
+  delete current.targetUri;
+  current.targetCanonical = target || undefined;
+}
+
+function renderGroups() {
+  const container = document.getElementById('groupsContainer');
+  container.innerHTML = '';
+  current.group.forEach((g, gi) => container.appendChild(renderGroup(g, gi)));
+}
+
+function renderGroup(g, gi) {
+  const box = document.createElement('div');
+  box.className = 'group-box';
+
+  const head = document.createElement('div');
+  head.className = 'group-head';
+  head.innerHTML = '<strong>Group ' + (gi + 1) + '</strong>';
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'small danger';
+  removeBtn.textContent = 'Remove group';
+  removeBtn.onclick = () => { current.group.splice(gi, 1); renderGroups(); };
+  head.appendChild(removeBtn);
+  box.appendChild(head);
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.appendChild(textField('Source system', g.source, v => g.source = v || undefined));
+  row.appendChild(textField('Target system', g.target, v => g.target = v || undefined));
+  box.appendChild(row);
+
+  box.appendChild(renderMapTable(g));
+
+  const addElBtn = document.createElement('button');
+  addElBtn.className = 'small';
+  addElBtn.textContent = '+ Add element';
+  addElBtn.onclick = () => { g.element.push({ code: '', target: [{ code: '', equivalence: 'equivalent' }] }); renderGroups(); };
+  box.appendChild(addElBtn);
+
+  box.appendChild(renderUnmapped(g));
+
+  return box;
+}
+
+// renderMapTable renders one group's element/target pairs as a single
+// spreadsheet-like table: one row per (element, target) pair, with the
+// source code/display cells row-spanned across all of an element's targets.
+function renderMapTable(g) {
+  const table = document.createElement('table');
+  table.className = 'map-table';
+  table.innerHTML = '<thead><tr>' +
+    '<th>Source code</th><th>Source display</th><th></th>' +
+    '<th>Target code</th><th>Target display</th><th>Equivalence</th><th></th>' +
+    '</tr></thead>';
+  const tbody = document.createElement('tbody');
+
+  if (g.element.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">No elements yet. Click "+ Add element" below.</td></tr>';
+  }
+
+  g.element.forEach((el, ei) => {
+    if (el.target.length === 0) el.target.push({ code: '', equivalence: 'equivalent' });
+    el.target.forEach((t, ti) => {
+      const tr = document.createElement('tr');
+
+      if (ti === 0) {
+        const srcCode = document.createElement('td');
+        srcCode.className = 'src-cell';
+        srcCode.rowSpan = el.target.length;
+        srcCode.appendChild(cellInput(el.code, v => el.code = v));
+        tr.appendChild(srcCode);
+
+        const srcDisplay = document.createElement('td');
+        srcDisplay.className = 'src-cell';
+        srcDisplay.rowSpan = el.target.length;
+        srcDisplay.appendChild(cellInput(el.display, v => el.display = v || undefined));
+        tr.appendChild(srcDisplay);
+
+        const arrow = document.createElement('td');
+        arrow.className = 'arrow-cell';
+        arrow.rowSpan = el.target.length;
+        arrow.textContent = '→';
+        tr.appendChild(arrow);
+      }
+
+      const tgtCode = document.createElement('td');
+      tgtCode.appendChild(cellInput(t.code, v => t.code = v));
+      tr.appendChild(tgtCode);
+
+      const tgtDisplay = document.createElement('td');
+      tgtDisplay.appendChild(cellInput(t.display, v => t.display = v || undefined));
+      tr.appendChild(tgtDisplay);
+
+      const eq = document.createElement('td');
+      eq.appendChild(cellSelect(EQUIVALENCES, t.equivalence || 'equivalent', v => t.equivalence = v));
+      tr.appendChild(eq);
+
+      const actions = document.createElement('td');
+      actions.className = 'actions-cell';
+      if (ti === el.target.length - 1) {
+        const addTargetBtn = document.createElement('button');
+        addTargetBtn.className = 'small icon-btn';
+        addTargetBtn.title = 'Add another target for this source code';
+        addTargetBtn.textContent = '+';
+        addTargetBtn.onclick = () => { el.target.push({ code: '', equivalence: 'equivalent' }); renderGroups(); };
+        actions.appendChild(addTargetBtn);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'small danger icon-btn';
+      removeBtn.title = el.target.length > 1 ? 'Remove this target' : 'Remove this element';
+      removeBtn.textContent = '✕';
+      removeBtn.onclick = () => {
+        if (el.target.length > 1) {
+          el.target.splice(ti, 1);
+        } else {
+          g.element.splice(ei, 1);
+        }
+        renderGroups();
+      };
+      actions.appendChild(removeBtn);
+      tr.appendChild(actions);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  table.appendChild(tbody);
+  return table;
+}
+
+function cellInput(value, onChange) {
+  const input = document.createElement('input');
+  input.className = 'code';
+  input.value = value || '';
+  input.addEventListener('input', () => onChange(input.value));
+  return input;
+}
+
+function cellSelect(options, value, onChange) {
+  const select = document.createElement('select');
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = opt; o.textContent = opt;
+    if (value === opt) o.selected = true;
+    select.appendChild(o);
+  }
+  select.onchange = () => onChange(select.value);
+  return select;
+}
+
+function renderUnmapped(g) {
+  const box = document.createElement('div');
+  box.className = 'unmapped-box';
+
+  if (!g.unmapped) {
+    const addBtn = document.createElement('button');
+    addBtn.className = 'small';
+    addBtn.textContent = '+ Add "unmapped" fallback (for source codes with no explicit mapping)';
+    addBtn.onclick = () => { g.unmapped = { mode: 'fixed', code: '', display: '' }; renderGroups(); };
+    box.appendChild(addBtn);
+    return box;
+  }
+
+  const head = document.createElement('div');
+  head.className = 'group-head';
+  head.innerHTML = '<strong>Unmapped fallback</strong>';
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'small danger';
+  removeBtn.textContent = 'Remove';
+  removeBtn.onclick = () => { delete g.unmapped; renderGroups(); };
+  head.appendChild(removeBtn);
+  box.appendChild(head);
+
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const modeField = document.createElement('div');
+  modeField.className = 'field';
+  modeField.innerHTML = '<label>Mode</label>';
+  const modeSelect = document.createElement('select');
+  for (const m of UNMAPPED_MODES) {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    if ((g.unmapped.mode || 'fixed') === m) opt.selected = true;
+    modeSelect.appendChild(opt);
+  }
+  modeSelect.onchange = () => { g.unmapped.mode = modeSelect.value; renderGroups(); };
+  modeField.appendChild(modeSelect);
+  row.appendChild(modeField);
+
+  if (g.unmapped.mode === 'other-map') {
+    row.appendChild(textField('Other map url', g.unmapped.url, v => g.unmapped.url = v || undefined));
+  } else {
+    row.appendChild(textField('Fixed code', g.unmapped.code, v => g.unmapped.code = v || undefined));
+    row.appendChild(textField('Fixed display', g.unmapped.display, v => g.unmapped.display = v || undefined));
+  }
+  box.appendChild(row);
+  return box;
+}
+
+function textField(labelText, value, onChange, small) {
+  const field = document.createElement('div');
+  field.className = 'field';
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  const input = document.createElement('input');
+  input.className = 'code';
+  input.value = value || '';
+  input.addEventListener('input', () => onChange(input.value));
+  field.appendChild(label);
+  field.appendChild(input);
+  return field;
+}
+
+// ---- save / delete ----
+
+function stripEmpty(cm) {
+  // Drop empty-string optional fields so we don't write "" into JSON where
+  // the FHIR struct expects the key to be absent.
+  const copy = JSON.parse(JSON.stringify(cm));
+  for (const g of copy.group || []) {
+    if (!g.source) delete g.source;
+    if (!g.target) delete g.target;
+    for (const el of g.element || []) {
+      if (!el.display) delete el.display;
+      for (const t of el.target || []) {
+        if (!t.display) delete t.display;
+      }
+    }
+    if (g.unmapped && !g.unmapped.code && !g.unmapped.url) delete g.unmapped;
+  }
+  return copy;
+}
+
+async function save() {
+  readHeaderFields();
+  if (!current.id) { toast('Id is required', true); return; }
+  const payload = stripEmpty(current);
+  try {
+    if (currentFile) {
+      await api('/api/conceptmaps/' + encodeURIComponent(currentFile), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      toast('Saved ' + currentFile);
+    } else {
+      const created = await api('/api/conceptmaps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      currentFile = created.filename;
+      toast('Created ' + currentFile);
+    }
+    showList();
+  } catch (e) {
+    toast('Save failed: ' + e.message, true);
+  }
+}
+
+async function remove() {
+  if (!currentFile) return;
+  if (!confirm('Delete ' + currentFile + '? This cannot be undone.')) return;
+  try {
+    await api('/api/conceptmaps/' + encodeURIComponent(currentFile), { method: 'DELETE' });
+    toast('Deleted ' + currentFile);
+    showList();
+  } catch (e) {
+    toast('Delete failed: ' + e.message, true);
+  }
+}
+
+document.getElementById('newBtn').addEventListener('click', newConceptMap);
+document.getElementById('addGroupBtn').addEventListener('click', () => { current.group.push({ element: [] }); renderGroups(); });
+document.getElementById('saveBtn').addEventListener('click', save);
+document.getElementById('cancelBtn').addEventListener('click', showList);
+document.getElementById('deleteBtn').addEventListener('click', remove);
+backBtn.addEventListener('click', showList);
+
+showList();
+</script>
+</body>
+</html>

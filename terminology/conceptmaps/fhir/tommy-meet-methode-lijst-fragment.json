@@ -1,0 +1,24 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "tommy-meet-methode-lijst-fragment",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/tommy-meet-methode-lijst-fragment",
+  "name": "TommyMeetMethodeLijstFragment",
+  "title": "Tommy Meet Methode Lijst (incomplete fragment)",
+  "status": "draft",
+  "description": "Carried over as-is from conceptmap_TommyMeetMethodeLijst.csv, where this row's target_valueset_uri was truncated mid-string in the source file. Needs review in the editor - either fix the target valueset or delete this map.",
+  "targetCanonical": "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.",
+  "group": [
+    {
+      "source": "https://mst.nl/mct",
+      "target": "https//sdf.nl/tct",
+      "element": [
+        {
+          "code": "1212",
+          "target": [
+            { "code": "unknown", "display": "ad", "equivalence": "equivalent" }
+          ]
+        }
+      ]
+    }
+  ]
+}

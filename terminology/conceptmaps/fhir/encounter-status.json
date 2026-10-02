@@ -1,0 +1,39 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "encounter-status",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/encounter-status",
+  "name": "EncounterStatus",
+  "title": "Encounter Status",
+  "status": "draft",
+  "targetCanonical": "http://hl7.org/fhir/ValueSet/encounter-status|4.0.1",
+  "group": [
+    {
+      "target": "http://hl7.org/fhir/encounter-status",
+      "element": [
+        {
+          "code": "DONE",
+          "target": [
+            { "code": "finished", "display": "Finished", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "ACTIVE",
+          "target": [
+            { "code": "in-progress", "display": "In Progress", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "PLANNED",
+          "target": [
+            { "code": "planned", "display": "Planned", "equivalence": "equivalent" }
+          ]
+        }
+      ],
+      "unmapped": {
+        "mode": "fixed",
+        "code": "unknown",
+        "display": "Unknown"
+      }
+    }
+  ]
+}

@@ -416,9 +416,10 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 		}
 	}
 
+	conceptMapsDir := resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)
 	conceptMapSvc := converter.NewConceptMapService(*log)
 	if cfg.FHIR.ConceptMapsDir != "" {
-		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
+		if err := conceptMapSvc.LoadDir(conceptMapsDir); err != nil {
 			log.Warn().Err(err).Msg("Failed to load concept maps")
 		}
 	}
@@ -440,7 +441,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 		deidentRuleset = &rs
 	}
 
-	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, *log)
+	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, conceptMapsDir, conceptMapSvc, *log)
 
 	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")

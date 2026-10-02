@@ -1,32 +1,46 @@
 package converter
 
 import (
-	"encoding/csv"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/rs/zerolog"
 )
 
-// ConceptMapEntry represents one row in a flat concept map CSV.
-type ConceptMapEntry struct {
-	SourceCode    string
-	TargetCode    string
-	TargetDisplay string
+// translationEntry is one group.element -> group.element.target pairing,
+// flattened out of a FHIR ConceptMap resource for fast lookup.
+type translationEntry struct {
+	sourceCode    string
+	targetCode    string
+	targetDisplay string
 }
 
-// valuesetMap holds all entries for one valueset and the set of valid target codes.
+// valuesetMap holds every translation entry that targets one valueset
+// (potentially contributed by several ConceptMap resources/files), the set
+// of already-valid target codes, and the fallback for unmapped source codes.
 type valuesetMap struct {
-	entries    []ConceptMapEntry
-	validCodes map[string]bool // all unique code_target values — already-valid codes skip mapping
+	entries    []translationEntry
+	validCodes map[string]bool // every code_target value — already-valid codes skip mapping
+	unmapped   *translationEntry
 }
 
-// ConceptMapService loads flat CSV concept maps indexed by target_valueset_uri.
-// If the source code is already a valid target code for a valueset it is passed
-// through unchanged — no identity rows needed in the CSV.
+// ConceptMapService loads real FHIR ConceptMap resources (JSON files
+// conforming to http://hl7.org/fhir/StructureDefinition/ConceptMap) and
+// indexes them by the valueset they target (ConceptMap.targetCanonical /
+// ConceptMap.targetUri, version suffix stripped) so Translate can be called
+// with the same valueset URI a FHIR profile binding resolves to.
+//
+// If the source code is already a valid target code for a valueset it is
+// passed through unchanged. A group's "unmapped" element (mode "fixed")
+// supplies the fallback for source codes with no explicit mapping — this is
+// the standard FHIR way to express what used to be a "*" wildcard row in the
+// old flat CSV format.
 type ConceptMapService struct {
-	byValueset map[string]*valuesetMap // target_valueset_uri (no version) → map
+	mu         sync.RWMutex
+	byValueset map[string]*valuesetMap // target_valueset_uri (no version) -> map
 	logger     zerolog.Logger
 }
 
@@ -38,84 +52,89 @@ func NewConceptMapService(logger zerolog.Logger) *ConceptMapService {
 	}
 }
 
-// LoadCSV loads a flat semicolon-delimited concept map CSV.
-// The valueset key is taken from the target_valueset_uri column (version suffix stripped).
-// Required header columns: code_source, code_target, target_valueset_uri.
-func (s *ConceptMapService) LoadCSV(filePath string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", filePath, err)
-	}
-	defer f.Close()
-
-	r := csv.NewReader(f)
-	r.Comma = ';'
-	r.TrimLeadingSpace = true
-	r.FieldsPerRecord = -1
-
-	records, err := r.ReadAll()
+// LoadJSON loads one FHIR ConceptMap resource from a JSON file and merges
+// its mappings into the service, keyed by its target valueset.
+// ConceptMap resources with no targetCanonical/targetUri are loaded
+// successfully but can't be looked up by Translate (there's no valueset to
+// index them under) — this is allowed so an editor can still show/edit them.
+func (s *ConceptMapService) LoadJSON(filePath string) error {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", filePath, err)
 	}
-	if len(records) < 2 {
-		return fmt.Errorf("CSV %s has no data rows", filePath)
+
+	cm, err := fhir.UnmarshalConceptMap(data)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", filePath, err)
 	}
 
-	header := records[0]
-	srcIdx := columnIndex(header, "code_source")
-	tgtCodeIdx := columnIndex(header, "code_target")
-	tgtDisplayIdx := columnIndex(header, "display_target")
-	valuesetIdx := columnIndex(header, "target_valueset_uri")
+	vsURI := conceptMapTargetValueset(cm)
+	if vsURI == "" {
+		s.logger.Warn().Str("file", filePath).Msg("ConceptMap has no targetCanonical/targetUri, skipping (not indexable)")
+		return nil
+	}
+	vsURI = stripVersion(vsURI)
 
-	if srcIdx < 0 || tgtCodeIdx < 0 || valuesetIdx < 0 {
-		return fmt.Errorf("CSV %s missing required columns (code_source, code_target, target_valueset_uri)", filePath)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	vm, ok := s.byValueset[vsURI]
+	if !ok {
+		vm = &valuesetMap{validCodes: map[string]bool{}}
+		s.byValueset[vsURI] = vm
 	}
 
-	type rowGroup struct {
-		entries    []ConceptMapEntry
-		validCodes map[string]bool
-	}
-	groups := map[string]*rowGroup{}
-
-	for _, row := range records[1:] {
-		vsURI := stripVersion(safeCol(row, valuesetIdx))
-		if vsURI == "" {
-			continue
+	for _, group := range cm.Group {
+		for _, element := range group.Element {
+			if element.Code == nil {
+				continue
+			}
+			for _, target := range element.Target {
+				if target.Code == nil {
+					continue
+				}
+				entry := translationEntry{
+					sourceCode:    *element.Code,
+					targetCode:    *target.Code,
+					targetDisplay: stringOrEmpty(target.Display),
+				}
+				vm.entries = append(vm.entries, entry)
+				vm.validCodes[entry.targetCode] = true
+			}
 		}
-		g, ok := groups[vsURI]
-		if !ok {
-			g = &rowGroup{validCodes: map[string]bool{}}
-			groups[vsURI] = g
-		}
-		tgt := safeCol(row, tgtCodeIdx)
-		g.entries = append(g.entries, ConceptMapEntry{
-			SourceCode:    safeCol(row, srcIdx),
-			TargetCode:    tgt,
-			TargetDisplay: safeCol(row, tgtDisplayIdx),
-		})
-		if tgt != "" {
-			g.validCodes[tgt] = true
+
+		if group.Unmapped != nil &&
+			group.Unmapped.Mode == fhir.ConceptMapGroupUnmappedModeFixed &&
+			group.Unmapped.Code != nil {
+			vm.unmapped = &translationEntry{
+				targetCode:    *group.Unmapped.Code,
+				targetDisplay: stringOrEmpty(group.Unmapped.Display),
+			}
 		}
 	}
 
-	for vsURI, g := range groups {
-		s.byValueset[vsURI] = &valuesetMap{entries: g.entries, validCodes: g.validCodes}
-	}
 	return nil
 }
 
-// LoadDir loads all .csv files from a directory.
+// LoadDir (re)loads all .json FHIR ConceptMap files from a directory,
+// replacing any previously loaded mappings. Safe to call again at runtime
+// (e.g. after an editor saves a file) to pick up changes without restarting.
 func (s *ConceptMapService) LoadDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
+
+	s.mu.Lock()
+	s.byValueset = make(map[string]*valuesetMap)
+	s.mu.Unlock()
+
 	count := 0
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".csv") {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
 			continue
 		}
-		if err := s.LoadCSV(dir + "/" + e.Name()); err != nil {
+		if err := s.LoadJSON(dir + "/" + e.Name()); err != nil {
 			s.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping concept map")
 		} else {
 			count++
@@ -125,11 +144,15 @@ func (s *ConceptMapService) LoadDir(dir string) error {
 	return nil
 }
 
-// Translate maps sourceCode using the concept map for the given valueset URI.
-// If the code is already a valid target code for this valueset it is returned unchanged.
-// Falls back to the wildcard entry ("*") for unknown codes.
-// Returns the original code when no concept map is loaded for the valueset.
+// Translate maps sourceCode using the concept map(s) loaded for the given
+// valueset URI. If the code is already a valid target code for this valueset
+// it is returned unchanged. Falls back to the group's "unmapped" fixed code
+// for unknown codes, if one was loaded. Returns the original code when no
+// concept map is loaded for the valueset.
 func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	vm, ok := s.byValueset[stripVersion(valuesetURI)]
 	if !ok {
 		return sourceCode, false
@@ -140,31 +163,38 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (string, b
 		return sourceCode, false
 	}
 
-	var wildcard string
-	wildcardFound := false
 	for _, e := range vm.entries {
-		if e.SourceCode == sourceCode {
+		if e.sourceCode == sourceCode {
 			s.logger.Debug().
 				Str("valueset", valuesetURI).
 				Str("from", sourceCode).
-				Str("to", e.TargetCode).
+				Str("to", e.targetCode).
 				Msg("Concept mapped (exact)")
-			return e.TargetCode, true
-		}
-		if e.SourceCode == "*" {
-			wildcard = e.TargetCode
-			wildcardFound = true
+			return e.targetCode, true
 		}
 	}
-	if wildcardFound {
+
+	if vm.unmapped != nil {
 		s.logger.Debug().
 			Str("valueset", valuesetURI).
 			Str("from", sourceCode).
-			Str("to", wildcard).
-			Msg("Concept mapped (wildcard)")
-		return wildcard, true
+			Str("to", vm.unmapped.targetCode).
+			Msg("Concept mapped (unmapped fallback)")
+		return vm.unmapped.targetCode, true
 	}
 	return sourceCode, false
+}
+
+// conceptMapTargetValueset returns the valueset a ConceptMap resource's
+// mappings produce codes for, preferring targetCanonical over targetUri.
+func conceptMapTargetValueset(cm fhir.ConceptMap) string {
+	if cm.TargetCanonical != nil {
+		return *cm.TargetCanonical
+	}
+	if cm.TargetUri != nil {
+		return *cm.TargetUri
+	}
+	return ""
 }
 
 // stripVersion removes a version suffix like "|4.0.1" from a valueset URI.
@@ -175,18 +205,9 @@ func stripVersion(uri string) string {
 	return uri
 }
 
-func columnIndex(header []string, name string) int {
-	for i, h := range header {
-		if strings.TrimSpace(h) == name {
-			return i
-		}
-	}
-	return -1
-}
-
-func safeCol(row []string, idx int) string {
-	if idx < 0 || idx >= len(row) {
+func stringOrEmpty(s *string) string {
+	if s == nil {
 		return ""
 	}
-	return strings.TrimSpace(row[idx])
+	return *s
 }

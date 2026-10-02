@@ -1,0 +1,54 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "administrative-gender-test",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/administrative-gender-test",
+  "name": "AdministrativeGenderTest",
+  "title": "Administrative Gender (test)",
+  "status": "draft",
+  "targetCanonical": "http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1",
+  "group": [
+    {
+      "source": "https://mst.nl/mct",
+      "target": "https://lenytest.nl/lct",
+      "element": [
+        {
+          "code": "M",
+          "display": "Male",
+          "target": [
+            { "code": "male", "display": "Male", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "F",
+          "display": "Female",
+          "target": [
+            { "code": "female", "display": "Female", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "UN",
+          "display": "Undifferentiated",
+          "target": [
+            { "code": "other", "display": "Other", "equivalence": "equivalent" }
+          ]
+        }
+      ],
+      "unmapped": {
+        "mode": "fixed",
+        "code": "unknown",
+        "display": "Unknown"
+      }
+    },
+    {
+      "target": "https://hl7.org/fhir",
+      "element": [
+        {
+          "code": "asd",
+          "target": [
+            { "code": "male", "display": "Male", "equivalence": "equivalent" }
+          ]
+        }
+      ]
+    }
+  ]
+}

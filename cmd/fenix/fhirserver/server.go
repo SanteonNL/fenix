@@ -30,6 +30,9 @@ type Server struct {
 	outputDir string // if non-empty, compiled queries are written here
 	log       zerolog.Logger
 
+	conceptMapsDir string                     // directory of FHIR ConceptMap .json files served/edited by the /conceptmaps UI
+	conceptMapSvc  *converter.ConceptMapService // reloaded in place whenever the editor saves/deletes a file
+
 	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
 	deidentKey     []byte
 
@@ -49,7 +52,11 @@ type Server struct {
 //   - deidentRuleset the effective de-identification ruleset to apply to every
 //     response, or nil to disable de-identification (existing behaviour)
 //   - deidentKey     the HMAC key backing deidentRuleset; ignored when deidentRuleset is nil
-func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source, groupID, outputDir string, deidentRuleset *deident.Ruleset, deidentKey []byte, log zerolog.Logger) *Server {
+//   - conceptMapsDir directory of FHIR ConceptMap .json files backing the /conceptmaps editor UI;
+//     empty disables the editor's API routes (list/get/save/delete still 404-free but inert)
+//   - conceptMapSvc  the same ConceptMapService instance conv's FHIRConverter was built with,
+//     so edits made through the UI take effect on the next request without a restart
+func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source, groupID, outputDir string, deidentRuleset *deident.Ruleset, deidentKey []byte, conceptMapsDir string, conceptMapSvc *converter.ConceptMapService, log zerolog.Logger) *Server {
 	return &Server{
 		compiler:       compiler,
 		converter:      conv,
@@ -58,6 +65,8 @@ func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source
 		outputDir:      outputDir,
 		deidentRuleset: deidentRuleset,
 		deidentKey:     deidentKey,
+		conceptMapsDir: conceptMapsDir,
+		conceptMapSvc:  conceptMapSvc,
 		log:            log,
 		groups:         make(map[string]*fhir.Group),
 		exports:        make(map[string]*exportJob),
@@ -68,6 +77,10 @@ func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/r4/", s.handleSearch)
+	mux.HandleFunc("/conceptmaps", s.handleConceptMapsUI)
+	mux.HandleFunc("/conceptmaps/", s.handleConceptMapsUI)
+	mux.HandleFunc("/api/conceptmaps", s.handleConceptMapsAPI)
+	mux.HandleFunc("/api/conceptmaps/", s.handleConceptMapsAPI)
 	return mux
 }
 

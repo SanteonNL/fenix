@@ -1,0 +1,43 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "sim-administrative-gender",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/sim-administrative-gender",
+  "name": "SimAdministrativeGender",
+  "title": "Sim GeslachtCode to FHIR AdministrativeGender",
+  "status": "active",
+  "description": "Maps the sim source's raw GeslachtCode (test/data/sim/patient.csv) to FHIR's AdministrativeGender codes. group.source is left unset: GeslachtCode is a bare SQL string with no system attached by the pipeline, so asserting one here would overstate what's actually known - the M/F/UN values happen to match the Dutch zib GeslachtCodelijst's source system (http://terminology.hl7.org/CodeSystem/v3-AdministrativeGender, see terminology/valuesets/decor_nictiz_nl_fhir_4_0_san-gen-_ValueSet_2_16_84-18f2ab567f0f.json) but that's inferred from the code values, not confirmed by the source data. Replaces the CASE WHEN that used to live in queries/sim/fhir/patient.sql.",
+  "targetCanonical": "http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1",
+  "group": [
+    {
+      "target": "http://hl7.org/fhir/administrative-gender",
+      "element": [
+        {
+          "code": "M",
+          "display": "Male",
+          "target": [
+            { "code": "male", "display": "Male", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "F",
+          "display": "Female",
+          "target": [
+            { "code": "female", "display": "Female", "equivalence": "equivalent" }
+          ]
+        },
+        {
+          "code": "UN",
+          "display": "Undifferentiated",
+          "target": [
+            { "code": "other", "display": "Other", "equivalence": "equivalent" }
+          ]
+        }
+      ],
+      "unmapped": {
+        "mode": "fixed",
+        "code": "unknown",
+        "display": "Unknown"
+      }
+    }
+  ]
+}

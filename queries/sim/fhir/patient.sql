@@ -6,16 +6,18 @@
 --     Land, Geboortedatum, DatumOverlijden, DatumCheckStatusOverlijden
 
 -- ── Statement 1: Root Patient ──────────────────────────────────────────────
+-- gender is passed through as the raw GeslachtCode, mapped to the FHIR
+-- AdministrativeGender codes at conversion time by the ConceptMap in
+-- terminology/conceptmaps/fhir/sim-administrative-gender.json (NOTE: keep
+-- comments like this one on their own "--" line, never trailing on a SQL
+-- line — SplitStatements naively splits the whole file on every statement
+-- separator character, so one inside a trailing comment corrupts the query).
 SELECT
     Identificatienummer     AS resource_id,
     Identificatienummer     AS id,
     ''                      AS parent_id,
     'Patient'               AS fhir_path,
-    CASE GeslachtCode
-        WHEN 'M' THEN 'male'
-        WHEN 'F' THEN 'female'
-        ELSE          'unknown'
-    END                     AS gender,
+    GeslachtCode            AS gender,
     Geboortedatum           AS birthDate,
     CASE WHEN DatumOverlijden IS NULL OR DatumOverlijden = ''
         THEN 'false'

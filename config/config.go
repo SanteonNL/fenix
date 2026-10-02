@@ -125,7 +125,7 @@ type FHIRConfig struct {
 	SQLFile        string `yaml:"sqlFile"`        // Path to multi-statement SQL conversion file
 	Profile        string `yaml:"profile"`        // FHIR profile name or repo, e.g. "sim-on-fhir"
 	ProfilesDir    string `yaml:"profilesDir"`    // Directory with FHIR StructureDefinition .json files
-	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with flat CSV concept map files
+	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with FHIR ConceptMap .json resources
 }
 
 // OutputConfig selects the output destination via Type ("local" or "datalake").
