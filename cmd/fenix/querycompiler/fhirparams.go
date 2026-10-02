@@ -26,6 +26,13 @@ func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdo
 		}
 		info, ok := resourceIdx[code]
 		if !ok {
+			// Some params (_id, _lastUpdated, ...) are defined once against
+			// the generic "Resource" base rather than listed per concrete
+			// resource type, since they apply polymorphically to all of
+			// them — fall back to that generic entry before giving up.
+			info, ok = idx["Resource"][code]
+		}
+		if !ok {
 			continue // param not defined for this resource type — skip
 		}
 

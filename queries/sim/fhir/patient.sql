@@ -4,6 +4,11 @@
 --   sim_patient
 --     Identificatienummer, GeslachtCode, GeslachtOmschrijving,
 --     Land, Geboortedatum, DatumOverlijden, DatumCheckStatusOverlijden
+--
+-- Template vars: ._id (FHIR _id param, pushdown in
+-- config/queries/sources/sim/sim.yaml) — scopes to one patient, used by
+-- Group/$export (cmd/fenix/fhirserver/export.go) to fire this query once
+-- per member id rather than once for the whole table.
 
 -- ── Statement 1: Root Patient ──────────────────────────────────────────────
 -- gender is passed through as the raw GeslachtCode, mapped to the FHIR
@@ -25,7 +30,9 @@ SELECT
     CASE WHEN DatumOverlijden IS NOT NULL AND DatumOverlijden != ''
         THEN DatumOverlijden
     END                     AS deceasedDateTime
-FROM sim_patient;
+FROM sim_patient
+WHERE 1=1
+{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}};
 
 -- ── Statement 2: Identifier (BSN) ─────────────────────────────────────────
 SELECT
@@ -36,4 +43,6 @@ SELECT
     'official'                                      AS "use",
     'http://fhir.nl/fhir/NamingSystem/bsn'          AS "system",
     Identificatienummer                             AS "value"
-FROM sim_patient;
+FROM sim_patient
+WHERE 1=1
+{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}};

@@ -73,11 +73,11 @@ Accept: application/fhir+json
 ### Poll status — FENIX computes synchronously, so this is already 200 + manifest
 # Copy the job id from kickoffExport's Content-Location response header into the URL below
 # (REST Client doesn't expose response headers as {{var.response.headers.X}} the way it does the body)
-GET {{base}}/$export-status/77e00385-726e-4a53-a615-7bc6f728ea70
+GET {{base}}/$export-status/1528feea-0eb6-4c5e-bed6-bf136495d5eb
 Accept: application/json
 
 ### Download the de-identified Patient NDJSON — only hashed ids, never 123/456/789
-GET {{base}}/$export-files/77e00385-726e-4a53-a615-7bc6f728ea70/Patient.ndjson
+GET {{base}}/$export-files/1528feea-0eb6-4c5e-bed6-bf136495d5eb
 Accept: application/fhir+ndjson
 
 ### Download the de-identified Observation NDJSON — subject references match the Patient file's hashed ids

@@ -1,5 +1,4 @@
 {
-  "resourceType": "ConceptMap",
   "id": "sim-administrative-gender",
   "url": "http://fenix.santeon.nl/fhir/ConceptMap/sim-administrative-gender",
   "name": "SimAdministrativeGender",
@@ -15,21 +14,43 @@
           "code": "M",
           "display": "Male",
           "target": [
-            { "code": "male", "display": "Male", "equivalence": "equivalent" }
+            {
+              "code": "male",
+              "display": "Male",
+              "equivalence": "equivalent"
+            }
           ]
         },
         {
           "code": "F",
           "display": "Female",
           "target": [
-            { "code": "female", "display": "Female", "equivalence": "equivalent" }
+            {
+              "code": "female",
+              "display": "Female",
+              "equivalence": "equivalent"
+            }
           ]
         },
         {
           "code": "UN",
           "display": "Undifferentiated",
           "target": [
-            { "code": "other", "display": "Other", "equivalence": "equivalent" }
+            {
+              "code": "other",
+              "display": "Other",
+              "equivalence": "equivalent"
+            }
+          ]
+        },
+        {
+          "code": "GA",
+          "target": [
+            {
+              "code": "other",
+              "display": "Other",
+              "equivalence": "equivalent"
+            }
           ]
         }
       ],
@@ -39,5 +60,6 @@
         "display": "Unknown"
       }
     }
-  ]
+  ],
+  "resourceType": "ConceptMap"
 }

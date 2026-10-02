@@ -29,12 +29,13 @@ type exportJob struct {
 
 // handleGroupExport kicks off a bulk export of a Group's current members —
 // one call that does everything server-side: membership is resolved, each
-// requested resource type (_type, required) is fetched, optionally narrowed
-// by its own _typeFilter (a FHIR search like "Observation?status=final",
-// independent of the group's own member-filter criteria — see
-// parseTypeFilters), scoped to the group's members internally (by their
-// raw, source-system id), then — when de-identification is configured — de-
-// identified under a single shared RunID across every resource type, so a
+// requested resource type (_type, required) is fetched by firing its query
+// once per member id (searchPerMember) rather than once for the whole
+// table, optionally narrowed by its own _typeFilter (a FHIR search like
+// "Observation?status=final", independent of the group's own member-filter
+// criteria — see parseTypeFilters), then — when de-identification is
+// configured — de-identified under a single shared RunID across every
+// resource type, so a
 // hashed Observation.subject matches the same patient's hashed Patient.id
 // within this job's output (deidentify, by contrast, gives every plain
 // search its own RunID, so two separate /r4/{type} calls never cross-
@@ -93,7 +94,7 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 	}
 
 	for _, resourceType := range resourceTypes {
-		resources, found, err := s.search(resourceType, typeFilters[resourceType])
+		scoped, found, err := s.searchPerMember(resourceType, memberIDs, typeFilters[resourceType])
 		if err != nil {
 			s.log.Error().Err(err).Str("resourceType", resourceType).Str("groupId", groupID).Msg("Export: search failed")
 			fhirError(w, fmt.Sprintf("exporting %s: %v", resourceType, err), http.StatusInternalServerError)
@@ -102,15 +103,6 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		if !found {
 			fhirError(w, fmt.Sprintf("resource type %q is not configured for source %q", resourceType, s.source), http.StatusBadRequest)
 			return
-		}
-
-		scoped := make([]interface{}, 0, len(resources))
-		for _, res := range resources {
-			if pid, ok := extractPatientID(resourceType, res); ok {
-				if _, isMember := memberIDs[pid]; isMember {
-					scoped = append(scoped, res)
-				}
-			}
 		}
 
 		if s.deidentRuleset != nil {
@@ -150,6 +142,56 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 
 	w.Header().Set("Content-Location", "/r4/$export-status/"+job.id)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// idParamCode returns the FHIR search param code that scopes resourceType's
+// query to one patient: the resource's own id for Patient, or the Patient
+// compartment's "patient" reference param (e.g. Observation?patient=123)
+// for every other resource type.
+func idParamCode(resourceType string) string {
+	if resourceType == "Patient" {
+		return "_id"
+	}
+	return "patient"
+}
+
+// searchPerMember fires resourceType's query once per member id — each call
+// scoped via idParamCode to just that patient, rather than one query across
+// the whole table — and merges the results. Results are still checked
+// against the requesting id via extractPatientID: a source/resourceType
+// whose query doesn't actually have the id param wired as pushdown (see
+// config/queries/sources/<source>/<source>.yaml) would otherwise return
+// every row, unfiltered, on every single iteration.
+//
+// found mirrors s.search: false only when resourceType has no queries
+// configured at all for s.source. With no members, the loop below never
+// runs, so that case is checked with one direct s.search call instead.
+func (s *Server) searchPerMember(resourceType string, memberIDs map[string]struct{}, typeFilter map[string]string) (resources []interface{}, found bool, err error) {
+	if len(memberIDs) == 0 {
+		return s.search(resourceType, typeFilter)
+	}
+
+	code := idParamCode(resourceType)
+	for pid := range memberIDs {
+		params := make(map[string]string, len(typeFilter)+1)
+		for k, v := range typeFilter {
+			params[k] = v
+		}
+		params[code] = pid
+
+		res, ok, err := s.search(resourceType, params)
+		if err != nil {
+			return nil, false, fmt.Errorf("patient %q: %w", pid, err)
+		}
+		found = found || ok
+
+		for _, r := range res {
+			if rid, idOK := extractPatientID(resourceType, r); idOK && rid == pid {
+				resources = append(resources, r)
+			}
+		}
+	}
+	return resources, found, nil
 }
 
 // handleExportStatus serves the completed job's manifest. Real async

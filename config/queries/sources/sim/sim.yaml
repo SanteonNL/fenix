@@ -3,10 +3,13 @@
 # compiler, so the FHIR API server (and Group member-filter resolution) can
 # serve Patient/Observation searches for the "sim" source too.
 #
-# Patient has no pushdown: patient.sql has no {{if .xxx}} conditionals, so
-# params are accepted but don't narrow the SQL. Observation does support
-# ?status=, filtering on the real Status column in test/data/sim/AlgemeneMeting.csv
-# (see queries/sim/fhir/observation.sql).
+# Patient supports ?_id=, scoping to one patient's row in
+# test/data/sim/Patient.csv (see queries/sim/fhir/patient.sql). Observation
+# supports ?status= (the real Status column in
+# test/data/sim/AlgemeneMeting.csv) and ?patient= (scoping to one patient's
+# rows, same file). Group/$export (cmd/fenix/fhirserver/export.go) relies on
+# both _id and patient to fire each resource's query once per member id
+# instead of once for the whole table.
 
 source: sim
 
@@ -15,9 +18,10 @@ resources:
     queries:
       - name: main
         sql: queries/sim/fhir/patient.sql
+        pushdown: [_id]
 
   Observation:
     queries:
       - name: main
         sql: queries/sim/fhir/observation.sql
-        pushdown: [status]
+        pushdown: [status, patient]

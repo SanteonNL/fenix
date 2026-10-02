@@ -11,6 +11,9 @@
 -- Template vars: .status (FHIR status param, pushdown in
 -- config/queries/sources/sim/sim.yaml) — filters on the real Status column
 -- instead of the hardcoded 'final' literal this used to have.
+-- .subject (FHIR patient param, same pushdown config) — scopes to one
+-- patient, used by Group/$export (cmd/fenix/fhirserver/export.go) to fire
+-- this query once per member id rather than once for the whole table.
 
 -- ── Statement 1: Root Observation ─────────────────────────────────────────
 -- NULLIF on the valueQuantity.* columns: a coded-only measurement (result
@@ -32,7 +35,8 @@ SELECT
     NULLIF(UitslagWaardeEenheidSysteem, '') AS "valueQuantity.system"
 FROM sim_algemenemeting
 WHERE 1=1
-{{- if .status}} AND Status = '{{.status}}'{{end}};
+{{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
 
 -- ── Statement 2: code.coding (MetingNaam) ─────────────────────────────────
 SELECT
@@ -45,7 +49,8 @@ SELECT
     MetingNaamOmschrijving                  AS display
 FROM sim_algemenemeting
 WHERE MetingNaamCode IS NOT NULL AND MetingNaamCode != ''
-{{- if .status}} AND Status = '{{.status}}'{{end}};
+{{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
 
 -- ── Statement 3: valueCodeableConcept.coding (coded result) ───────────────
 SELECT
@@ -58,4 +63,5 @@ SELECT
     UitslagCodeOmschrijving                 AS display
 FROM sim_algemenemeting
 WHERE UitslagCode IS NOT NULL AND UitslagCode != ''
-{{- if .status}} AND Status = '{{.status}}'{{end}};
+{{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
