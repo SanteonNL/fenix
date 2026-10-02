@@ -29,15 +29,18 @@ type exportJob struct {
 
 // handleGroupExport kicks off a bulk export of a Group's current members —
 // one call that does everything server-side: membership is resolved, each
-// requested resource type is fetched and scoped to the group's members
-// internally (by their raw, source-system id), then — when de-
-// identification is configured — de-identified under a single shared
-// RunID across every resource type, so a hashed Observation.subject
-// matches the same patient's hashed Patient.id within this job's output
-// (deidentify, by contrast, gives every plain search its own RunID, so two
-// separate /r4/{type} calls never cross-reference correctly — see its
-// comment in server.go). The caller never sees a raw patient id: not in
-// this response, and not in the status/NDJSON endpoints it hands back.
+// requested resource type (_type, required) is fetched, optionally narrowed
+// by its own _typeFilter (a FHIR search like "Observation?status=final",
+// independent of the group's own member-filter criteria — see
+// parseTypeFilters), scoped to the group's members internally (by their
+// raw, source-system id), then — when de-identification is configured — de-
+// identified under a single shared RunID across every resource type, so a
+// hashed Observation.subject matches the same patient's hashed Patient.id
+// within this job's output (deidentify, by contrast, gives every plain
+// search its own RunID, so two separate /r4/{type} calls never cross-
+// reference correctly — see its comment in server.go). The caller never
+// sees a raw patient id: not in this response, and not in the
+// status/NDJSON endpoints it hands back.
 func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, groupID string) {
 	if r.Method != http.MethodPost {
 		fhirError(w, "method not allowed; POST to kick off $export", http.StatusMethodNotAllowed)
@@ -59,6 +62,11 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 	}
 	resourceTypes := splitNonEmpty(rawType, ",")
 	elementsByType := parseElements(r.URL.Query().Get("_elements"))
+	typeFilters, err := parseTypeFilters(r.URL.Query()["_typeFilter"])
+	if err != nil {
+		fhirError(w, fmt.Sprintf("invalid _typeFilter: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	members, err := resolveGroupMembers(s, group)
 	if err != nil {
@@ -85,7 +93,7 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 	}
 
 	for _, resourceType := range resourceTypes {
-		resources, found, err := s.search(resourceType, map[string]string{})
+		resources, found, err := s.search(resourceType, typeFilters[resourceType])
 		if err != nil {
 			s.log.Error().Err(err).Str("resourceType", resourceType).Str("groupId", groupID).Msg("Export: search failed")
 			fhirError(w, fmt.Sprintf("exporting %s: %v", resourceType, err), http.StatusInternalServerError)
@@ -240,4 +248,25 @@ func parseElements(raw string) map[string][]string {
 		out[resourceType] = append(out[resourceType], field)
 	}
 	return out
+}
+
+// parseTypeFilters parses the Bulk Data _typeFilter param — zero or more
+// "ResourceType?params" FHIR search strings, one per resource type that
+// needs narrowing beyond plain group membership (e.g.
+// "Observation?status=final") — into a map keyed by resourceType, the exact
+// shape s.search expects as fhirParams. Reuses member-filter's own
+// "ResourceType?params" parser (group.go) since the syntax is identical.
+func parseTypeFilters(raw []string) (map[string]map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]map[string]string, len(raw))
+	for _, filter := range raw {
+		resourceType, params, err := parseMemberFilter(filter)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", filter, err)
+		}
+		out[resourceType] = params
+	}
+	return out, nil
 }

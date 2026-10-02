@@ -40,6 +40,28 @@ func TestParseElements(t *testing.T) {
 	}
 }
 
+func TestParseTypeFilters(t *testing.T) {
+	got, err := parseTypeFilters([]string{"Observation?status=final", "Patient?gender=male"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]map[string]string{
+		"Observation": {"status": "final"},
+		"Patient":     {"gender": "male"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	if got, err := parseTypeFilters(nil); got != nil || err != nil {
+		t.Fatalf("expected (nil, nil) for no filters, got (%v, %v)", got, err)
+	}
+
+	if _, err := parseTypeFilters([]string{"?status=final"}); err == nil {
+		t.Fatal("expected error for a filter missing its resource type")
+	}
+}
+
 // handleGroupExport's own request validation (method, _type, unknown group)
 // doesn't need a real compiler/converter, so it's testable with the same
 // lightweight *Server newTestServer already uses in group_test.go. Resolving

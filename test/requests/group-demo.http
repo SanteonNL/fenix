@@ -84,6 +84,63 @@ Accept: application/fhir+ndjson
 GET {{base}}/$export-files/77e00385-726e-4a53-a615-7bc6f728ea70/Observation.ndjson
 Accept: application/fhir+ndjson
 
+### ─────────────────────────────────────────────────────────────────────
+### _typeFilter — narrows ONE resource type's export independently of the
+### group's own membership. This group's member-filter is just
+### "Observation" (no params), so membership is all 3 patients (123, 456,
+### 789) regardless of status. _typeFilter=Observation?status=final below
+### then narrows ONLY the Observation output to the 4 final rows — Patient
+### still exports all 3 members, including 789, even though 789's own
+### Observation gets excluded from Observation.ndjson by the typeFilter.
+### ─────────────────────────────────────────────────────────────────────
+
+### Broad group: every patient with any Observation, any status — expect 123, 456, 789
+# @name createBroadGroup
+POST {{base}}/Group
+Content-Type: application/fhir+json
+Accept: application/fhir+json
+
+{
+  "resourceType": "Group",
+  "type": "person",
+  "actual": false,
+  "name": "All SIM patients with any Observation",
+  "extension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueString": "Observation"
+    }
+  ]
+}
+
+### Sanity check: membership really is all 3 patients
+GET {{base}}/Group/{{createBroadGroup.response.body.id}}
+Accept: application/fhir+json
+
+### Export with _typeFilter — manifest should show Patient count=3, Observation count=4
+# @name kickoffFilteredExport
+POST {{base}}/Group/{{createBroadGroup.response.body.id}}/$export?_type=Patient,Observation&_typeFilter=Observation%3Fstatus%3Dfinal
+Prefer: respond-async
+Accept: application/fhir+json
+
+### Poll status — paste the job id from kickoffFilteredExport's Content-Location header
+GET {{base}}/$export-status/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER
+Accept: application/json
+
+### Patient.ndjson — all 3 patients (typeFilter doesn't touch Patient, no _typeFilter entry was given for it)
+GET {{base}}/$export-files/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER/Patient.ndjson
+Accept: application/fhir+ndjson
+
+### Observation.ndjson — only the 4 status=final rows; 789's preliminary Observation is excluded here
+### even though 789 IS a group member and DOES appear in Patient.ndjson above
+GET {{base}}/$export-files/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER/Observation.ndjson
+Accept: application/fhir+ndjson
+
+### Malformed _typeFilter (no resource type before '?') -> 400 OperationOutcome
+POST {{base}}/Group/{{createBroadGroup.response.body.id}}/$export?_type=Observation&_typeFilter=%3Fstatus%3Dfinal
+Prefer: respond-async
+Accept: application/fhir+json
+
 ### Unknown export job -> 404 OperationOutcome
 GET {{base}}/$export-status/does-not-exist
 Accept: application/json
