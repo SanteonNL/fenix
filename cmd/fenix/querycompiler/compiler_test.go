@@ -95,6 +95,27 @@ func TestResolve(t *testing.T) {
 			wantQueries:  1,
 			wantInAll:    []string{"FROM encounters", "start_time >= '2024-01-01'"},
 		},
+		{
+			// sim reuses the CLI batch pipeline's existing SQL as-is (see
+			// config/queries/sources/sim/sim.yaml) — no pushdown/template
+			// filtering, so params are accepted but don't narrow the SQL.
+			name:         "sim_Patient",
+			source:       "sim",
+			resourceType: "Patient",
+			params:       map[string]string{},
+			wantQueries:  1,
+			wantInAll:    []string{"FROM sim_patient", "'Patient'"},
+		},
+		{
+			// status is pushed down (config/queries/sources/sim/sim.yaml) and
+			// filters on the real Status column in AlgemeneMeting.csv.
+			name:         "sim_Observation_status",
+			source:       "sim",
+			resourceType: "Observation",
+			params:       map[string]string{"status": "final"},
+			wantQueries:  1,
+			wantInAll:    []string{"FROM sim_algemenemeting", "Status = 'final'"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -1,0 +1,89 @@
+### Group POST/GET/$export demo — see docs/fenix_architecture.md,
+### cmd/fenix/fhirserver/group.go and export.go
+#
+# Uses the REAL "sim" test data (test/data/sim/) through the REAL FHIR
+# conversion SQL (queries/sim/fhir/*.sql), loaded via the real ETL pipeline
+# and wired into the live query compiler by
+# config/queries/sources/sim/sim.yaml.
+#
+# Setup (once):
+#   go run ./cmd/fenix -config config/group-demo.yaml -cmd load
+#   FENIX_DEIDENT_KEY=ZGVtby1vbmx5LW5vdC1hLXJlYWwtc2VjcmV0 go run ./cmd/fenix -config config/group-demo.yaml -cmd serve -source sim
+# (de-identification is enabled in config/group-demo.yaml, so $export below
+# proves patient numbers are hashed, never raw, in its output — same demo-only
+# key `make deident-pipeline-demo` uses, never a real secret)
+#
+# Seeded patients:
+#   123 — two Observations, both status=final        (test/data/sim/AlgemeneMeting.csv)
+#   456 — two Observations, both status=final
+#   789 — one Observation,  status=preliminary
+# So Observation?status=final is a genuine dynamic SUBSET: 123 and 456 only,
+# 789 excluded.
+
+@base = http://127.0.0.1:8080/r4
+
+### Sanity check: every Observation (5 rows: 4 final, 1 preliminary)
+GET {{base}}/Observation
+Accept: application/fhir+json
+
+### Sanity check: status=final narrows to patients 123 and 456 only
+GET {{base}}/Observation?status=final
+Accept: application/fhir+json
+
+### Create a Group whose membership is dynamically filtered to status=final — expect 123 and 456, NOT 789
+# @name createGroup
+POST {{base}}/Group
+Content-Type: application/fhir+json
+Accept: application/fhir+json
+
+{
+  "resourceType": "Group",
+  "type": "person",
+  "actual": false,
+  "name": "SIM patients with a final Observation",
+  "extension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueString": "Observation?status=final"
+    }
+  ]
+}
+
+### GET the group above — membership is resolved fresh on every call
+GET {{base}}/Group/{{createGroup.response.body.id}}
+Accept: application/fhir+json
+
+### Unknown group id -> 404 OperationOutcome
+GET {{base}}/Group/does-not-exist
+Accept: application/fhir+json
+
+### ─────────────────────────────────────────────────────────────────────
+### Bulk $export — one call does everything: resolve membership, fetch
+### Patient + Observation, scope to members, de-identify under one shared
+### RunID (so a hashed Observation.subject matches the same patient's
+### hashed Patient.id), return NDJSON. The caller never sees 123/456/789.
+### ─────────────────────────────────────────────────────────────────────
+
+### Kick off the export — 202 Accepted + Content-Location header
+# @name kickoffExport
+POST {{base}}/Group/{{createGroup.response.body.id}}/$export?_type=Patient,Observation
+Prefer: respond-async
+Accept: application/fhir+json
+
+### Poll status — FENIX computes synchronously, so this is already 200 + manifest
+# Copy the job id from kickoffExport's Content-Location response header into the URL below
+# (REST Client doesn't expose response headers as {{var.response.headers.X}} the way it does the body)
+GET {{base}}/$export-status/77e00385-726e-4a53-a615-7bc6f728ea70
+Accept: application/json
+
+### Download the de-identified Patient NDJSON — only hashed ids, never 123/456/789
+GET {{base}}/$export-files/77e00385-726e-4a53-a615-7bc6f728ea70/Patient.ndjson
+Accept: application/fhir+ndjson
+
+### Download the de-identified Observation NDJSON — subject references match the Patient file's hashed ids
+GET {{base}}/$export-files/77e00385-726e-4a53-a615-7bc6f728ea70/Observation.ndjson
+Accept: application/fhir+ndjson
+
+### Unknown export job -> 404 OperationOutcome
+GET {{base}}/$export-status/does-not-exist
+Accept: application/json

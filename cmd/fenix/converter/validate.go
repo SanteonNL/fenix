@@ -34,7 +34,7 @@ func validateThroughStruct(raw map[string]interface{}, logger zerolog.Logger) (i
 	rawBefore, _ := json.MarshalIndent(raw, "", "  ")
 	logger.Debug().RawJSON("raw_before_coerce", rawBefore).Str("type", resourceType).Msg("Before coercing SQLite types")
 
-	coerceSQLiteTypes(raw)
+	coerceSQLiteTypes(raw, resourceType)
 
 	// Normalize nested array fields - wrap scalars in arrays where struct expects arrays
 	normalizeNestedArrays(raw, resourceType)
@@ -63,43 +63,102 @@ func validateThroughStruct(raw map[string]interface{}, logger zerolog.Logger) (i
 	return target, nil
 }
 
-// coerceSQLiteTypes converts string values that look like booleans or numbers
-// to their native Go types, recursively for nested maps and slices.
-// SQLite has no native bool/int columns when loaded from CSV — everything
-// comes back as string or []byte.
-func coerceSQLiteTypes(obj map[string]interface{}) {
+// coerceSQLiteTypes converts string values that are genuinely booleans in the
+// target FHIR struct to their native Go bool, recursively for nested maps
+// and slices. SQLite has no native bool column when loaded from CSV —
+// booleans come back as the strings "true"/"false"/"1"/"0" like everything
+// else — but a *value* that merely looks boolean is not necessarily a
+// boolean *field*: an id, code, or identifier value of "1" is extremely
+// common and must stay a string. typeName drives the distinction via
+// reflection (same cachedFHIRType lookup normalizeNestedArrays already
+// uses) — only a field the FHIR struct actually declares as bool gets
+// coerced; every other field (including ones we can't resolve a type for)
+// is left untouched.
+func coerceSQLiteTypes(obj map[string]interface{}, typeName string) {
+	t, ok := cachedFHIRType(typeName)
+	if !ok {
+		return
+	}
 	for k, v := range obj {
 		switch val := v.(type) {
 		case []byte:
-			obj[k] = string(val)
-			coerceStringValue(obj, k, string(val))
+			obj[k] = coerceIfBool(string(val), isBoolField(t, k))
 		case string:
-			oldType := fmt.Sprintf("%T", val)
-			coerceStringValue(obj, k, val)
-			newType := fmt.Sprintf("%T", obj[k])
-			if oldType != newType {
-				// Type was coerced from string to something else
-				_ = fmt.Sprintf("Field '%s': coerced %s -> %s (value: %v)", k, oldType, newType, obj[k])
-			}
+			obj[k] = coerceIfBool(val, isBoolField(t, k))
 		case map[string]interface{}:
-			coerceSQLiteTypes(val)
+			coerceSQLiteTypes(val, nestedTypeName(t, k))
 		case []interface{}:
+			nested := nestedTypeName(t, k)
 			for _, item := range val {
 				if m, ok := item.(map[string]interface{}); ok {
-					coerceSQLiteTypes(m)
+					coerceSQLiteTypes(m, nested)
 				}
 			}
 		}
 	}
 }
 
-func coerceStringValue(obj map[string]interface{}, key, val string) {
+// coerceIfBool returns true/false for a recognised boolean string when the
+// target field is actually declared bool in the FHIR struct; otherwise it
+// returns val unchanged (as a string).
+func coerceIfBool(val string, isBoolField bool) interface{} {
+	if !isBoolField {
+		return val
+	}
 	switch val {
 	case "true", "True", "TRUE", "1":
-		obj[key] = true
+		return true
 	case "false", "False", "FALSE", "0":
-		obj[key] = false
+		return false
 	}
+	return val
+}
+
+// isBoolField reports whether t's field tagged with JSON key jsonKey is (or
+// points to) a bool.
+func isBoolField(t reflect.Type, jsonKey string) bool {
+	field, ok := fieldByJSONKey(t, jsonKey)
+	if !ok {
+		return false
+	}
+	ft := field.Type
+	if ft.Kind() == reflect.Ptr {
+		ft = ft.Elem()
+	}
+	return ft.Kind() == reflect.Bool
+}
+
+// nestedTypeName returns the struct type name to recurse into for t's field
+// tagged with JSON key jsonKey — the slice element type for a slice field,
+// or the (possibly pointed-to) type itself for a plain object field.
+func nestedTypeName(t reflect.Type, jsonKey string) string {
+	field, ok := fieldByJSONKey(t, jsonKey)
+	if !ok {
+		return ""
+	}
+	ft := field.Type
+	if ft.Kind() == reflect.Slice {
+		ft = ft.Elem()
+	}
+	if ft.Kind() == reflect.Ptr {
+		ft = ft.Elem()
+	}
+	if ft.Kind() == reflect.Struct {
+		return ft.Name()
+	}
+	return ""
+}
+
+// fieldByJSONKey finds t's struct field whose JSON tag matches jsonKey.
+func fieldByJSONKey(t reflect.Type, jsonKey string) (reflect.StructField, bool) {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		name := strings.Split(f.Tag.Get("json"), ",")[0]
+		if name == jsonKey {
+			return f, true
+		}
+	}
+	return reflect.StructField{}, false
 }
 
 // normalizeNestedArrays recursively wraps scalar values in arrays where the FHIR struct expects arrays

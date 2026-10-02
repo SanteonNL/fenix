@@ -1,0 +1,23 @@
+# Wires the existing SIM FHIR conversion SQL (queries/sim/fhir/*.sql, already
+# used by the CLI batch pipeline against test/data/sim/) into the live query
+# compiler, so the FHIR API server (and Group member-filter resolution) can
+# serve Patient/Observation searches for the "sim" source too.
+#
+# Patient has no pushdown: patient.sql has no {{if .xxx}} conditionals, so
+# params are accepted but don't narrow the SQL. Observation does support
+# ?status=, filtering on the real Status column in test/data/sim/AlgemeneMeting.csv
+# (see queries/sim/fhir/observation.sql).
+
+source: sim
+
+resources:
+  Patient:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/patient.sql
+
+  Observation:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/observation.sql
+        pushdown: [status]

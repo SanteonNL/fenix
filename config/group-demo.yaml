@@ -1,0 +1,55 @@
+# Self-contained config for trying out POST/GET /r4/Group (Bulk Export cohort
+# resolution, see docs/fenix_architecture.md) against the real "sim" test
+# data in test/data/sim/, loaded through the real ETL pipeline and served via
+# the real query-compiler config at config/queries/sources/sim/sim.yaml.
+# Not a template for production use.
+#
+# Setup:
+#   go run ./cmd/fenix -config config/group-demo.yaml -cmd load
+#   go run ./cmd/fenix -config config/group-demo.yaml -cmd serve -source sim
+#
+# Then POST/GET Group as shown in test/requests/group-demo.http — Observation
+# now supports ?status= filtering (queries/sim/fhir/observation.sql), with
+# patient 789 in the fixture data specifically to make a member-filter's
+# subsetting visible (status=final matches 123/456 but not 789).
+#
+# De-identification is enabled here so POST .../Group/{id}/$export proves the
+# real requirement: the caller only ever sees hashed Patient ids in the
+# export output, never the raw ones (test/data/sim's 123/456/789) — requires
+# FENIX_DEIDENT_KEY in the environment, e.g.:
+#   FENIX_DEIDENT_KEY=ZGVtby1vbmx5LW5vdC1hLXJlYWwtc2VjcmV0 go run ./cmd/fenix -config config/group-demo.yaml -cmd serve -source sim
+# (same demo-only key used by `make deident-pipeline-demo` — never a real secret)
+#
+# (scripts/seed_group_demo.go + "-source hix" is still available separately —
+# it hand-seeds a synthetic DB matching hix's schema/params, useful since hix
+# has no real local test data of its own.)
+
+environment: dev
+logLevel: info
+
+staging:
+  database: sqlite
+  path: output/group-demo/staging.db
+
+fhir:
+  sqlFile: ""
+  profilesDir: terminology/profiles/sim
+  conceptMapsDir: terminology/conceptmaps/flat
+
+output:
+  format: pretty
+  type: local
+  local:
+    dir: output/group-demo
+    useTimestamp: false
+    archiveCount: 0
+
+# deident:
+#   enabled: true
+#   rulesetFile: config/deident/sim-demo-ruleset.json
+
+sources:
+  sim:
+    type: local
+    dir: "test/data/sim"
+    delimiter: ";"

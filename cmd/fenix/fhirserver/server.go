@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/SanteonNL/fenix/cmd/fenix/converter"
 	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 	"github.com/SanteonNL/fenix/internal/deident"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
@@ -30,6 +32,12 @@ type Server struct {
 
 	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
 	deidentKey     []byte
+
+	groupsMu sync.RWMutex
+	groups   map[string]*fhir.Group // Bulk Export Group definitions posted via POST /r4/Group, keyed by id
+
+	exportsMu sync.RWMutex
+	exports   map[string]*exportJob // $export jobs kicked off via POST /r4/Group/{id}/$export, keyed by job id
 }
 
 // New creates a Server.
@@ -51,6 +59,8 @@ func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source
 		deidentRuleset: deidentRuleset,
 		deidentKey:     deidentKey,
 		log:            log,
+		groups:         make(map[string]*fhir.Group),
+		exports:        make(map[string]*exportJob),
 	}
 }
 
@@ -62,16 +72,55 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		fhirError(w, "method not allowed", http.StatusMethodNotAllowed)
+	// Extract path segments from /r4/{resourceType}[/{id}[/$export]], or the
+	// special /r4/$export-status/{jobId} and /r4/$export-files/{jobId}/{file}
+	// paths a kicked-off export's Content-Location/manifest point at.
+	rest := strings.TrimPrefix(r.URL.Path, "/r4/")
+	segments := strings.Split(rest, "/")
+	resourceType := segments[0]
+	if resourceType == "" {
+		fhirError(w, "missing resource type in path", http.StatusBadRequest)
 		return
 	}
 
-	// Extract resource type from /r4/{resourceType}
-	resourceType := strings.TrimPrefix(r.URL.Path, "/r4/")
-	resourceType = strings.SplitN(resourceType, "/", 2)[0]
-	if resourceType == "" {
-		fhirError(w, "missing resource type in path", http.StatusBadRequest)
+	switch resourceType {
+	case "Group":
+		// Group has its own lifecycle (POST to define, GET to dynamically
+		// resolve membership, POST .../$export to bulk-export its members)
+		// instead of the GET-only search below — see group.go/export.go.
+		switch len(segments) {
+		case 1:
+			s.handleGroup(w, r, "")
+		case 2:
+			s.handleGroup(w, r, segments[1])
+		case 3:
+			if segments[2] != "$export" {
+				fhirError(w, "not found", http.StatusNotFound)
+				return
+			}
+			s.handleGroupExport(w, r, segments[1])
+		default:
+			fhirError(w, "not found", http.StatusNotFound)
+		}
+		return
+	case "$export-status":
+		if len(segments) != 2 {
+			fhirError(w, "not found", http.StatusNotFound)
+			return
+		}
+		s.handleExportStatus(w, segments[1])
+		return
+	case "$export-files":
+		if len(segments) != 3 {
+			fhirError(w, "not found", http.StatusNotFound)
+			return
+		}
+		s.handleExportFile(w, segments[1], segments[2])
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		fhirError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -89,35 +138,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Any("params", fhirParams).
 		Msg("FHIR search request")
 
-	// Compile SQL using the query compiler
-	rendered, err := s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
+	resources, found, err := s.search(resourceType, fhirParams)
 	if err != nil {
-		s.log.Error().Err(err).Str("resourceType", resourceType).Msg("Query resolution failed")
-		fhirError(w, fmt.Sprintf("query resolution failed: %v", err), http.StatusInternalServerError)
+		s.log.Error().Err(err).Str("resourceType", resourceType).Msg("FHIR search failed")
+		fhirError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if len(rendered) == 0 {
+	if !found {
 		fhirError(w, fmt.Sprintf("no queries configured for resource type %q in source %q", resourceType, s.source), http.StatusNotFound)
-		return
-	}
-
-	// Write each rendered query to the output folder for inspection
-	s.writeCompiledQueries(resourceType, rendered)
-
-	// Join all rendered queries into one multi-statement SQL string.
-	// ConvertSQL handles ";" as statement separator, so results from all queries
-	// are merged into a single resource map keyed by resource_id.
-	sqlParts := make([]string, len(rendered))
-	for i, rq := range rendered {
-		sqlParts[i] = rq.SQL
-	}
-	combinedSQL := strings.Join(sqlParts, ";\n")
-
-	// Execute SQL and convert rows to FHIR structs
-	resources, err := s.converter.ConvertSQL(combinedSQL)
-	if err != nil {
-		s.log.Error().Err(err).Str("resourceType", resourceType).Msg("FHIR conversion failed")
-		fhirError(w, fmt.Sprintf("conversion failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -147,6 +175,39 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// search compiles SQL for (resourceType, fhirParams) against s.source/s.groupID
+// and converts the resulting rows to FHIR resources. found is false when the
+// source has no queries configured for resourceType at all (distinct from a
+// configured query that simply matched zero rows). It implements the searcher
+// interface (see group.go), which Group membership resolution depends on.
+func (s *Server) search(resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error) {
+	rendered, err := s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
+	if err != nil {
+		return nil, false, fmt.Errorf("query resolution failed: %w", err)
+	}
+	if len(rendered) == 0 {
+		return nil, false, nil
+	}
+
+	// Write each rendered query to the output folder for inspection
+	s.writeCompiledQueries(resourceType, rendered)
+
+	// Join all rendered queries into one multi-statement SQL string.
+	// ConvertSQL handles ";" as statement separator, so results from all queries
+	// are merged into a single resource map keyed by resource_id.
+	sqlParts := make([]string, len(rendered))
+	for i, rq := range rendered {
+		sqlParts[i] = rq.SQL
+	}
+	combinedSQL := strings.Join(sqlParts, ";\n")
+
+	resources, err = s.converter.ConvertSQL(combinedSQL)
+	if err != nil {
+		return nil, true, fmt.Errorf("conversion failed: %w", err)
+	}
+	return resources, true, nil
+}
+
 // deidentify de-identifies resources (all of resourceType, per this
 // handler's single-type search) in place against s.deidentRuleset, using a
 // fresh per-request RunID so repeated requests aren't linkable to each
@@ -159,26 +220,31 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // Observation.subject) is hashed by its own id (deident.Deidentify), which
 // only matches that other resource's own hashed id — from a *separate*
 // request to /r4/{otherType} — if both requests share the same RunID. They
-// don't: each request gets its own. Fixing that properly needs the actual
-// bulk $export job concept (one RunID per export run, shared across every
-// resource type it returns) — out of scope today, same as the rest of the
-// async $export API. The CLI batch path doesn't have this problem: one CLI
-// invocation already shares a single RunID across every SQL file/resource
-// type it converts (see cmd/fenix/main.go).
-
+// don't: each request gets its own. $export (group.go/export.go) doesn't
+// have this problem: one export job shares a single RunID across every
+// resource type it returns, via deidentifyWithRunID below — same fix the
+// CLI batch path already has (one RunID per CLI invocation, see
+// cmd/fenix/main.go).
 func (s *Server) deidentify(resourceType string, resources []interface{}, rawElements string) error {
+	var elements map[string][]string
+	if rawElements != "" {
+		elements = map[string][]string{resourceType: strings.Split(rawElements, ",")}
+	}
+	return s.deidentifyWithRunID(resources, elements, uuid.NewString())
+}
+
+// deidentifyWithRunID is deidentify's shared core, taking an explicit RunID
+// and a pre-built elements map (keyed by resourceType, so a caller — e.g.
+// $export — can de-identify several resource types under one RunID and
+// still restrict _elements per type).
+func (s *Server) deidentifyWithRunID(resources []interface{}, elements map[string][]string, runID string) error {
 	deidResources := make([]deident.Resource, len(resources))
 	for i, r := range resources {
 		rt, val, _ := converter.Unwrap(r)
 		deidResources[i] = deident.Resource{Type: rt, Value: val}
 	}
 
-	var elements map[string][]string
-	if rawElements != "" {
-		elements = map[string][]string{resourceType: strings.Split(rawElements, ",")}
-	}
-
-	ctx := deident.RunContext{Key: s.deidentKey, RunID: uuid.NewString()}
+	ctx := deident.RunContext{Key: s.deidentKey, RunID: runID}
 	_, err := deident.Deidentify(deidResources, *s.deidentRuleset, elements, ctx, nil)
 	return err
 }

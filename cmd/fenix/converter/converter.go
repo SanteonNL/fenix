@@ -308,6 +308,16 @@ func buildFHIRResource(result ResourceResult, rootPath string) (map[string]inter
 	resource["resourceType"] = rootPath // e.g. "Patient"
 
 	rootRow := rootRows[0]
+	// The SQL row format's own "id" column (see package doc) is metadata for
+	// linking parent/child rows (processRow strips it out of Data for that
+	// reason) — but it's also the resource's own FHIR .id, the same value
+	// every other resource's "subject.reference" etc. already points at via
+	// 'Patient/' || patient_id. Without this, every resource FENIX produces
+	// has no .id at all, which both contradicts the de-identification
+	// ruleset (Patient.id/Observation.id both have explicit rules — see
+	// config/deident/sim-demo-ruleset.json) and breaks anything trying to
+	// correlate a resource back to its own id (e.g. Group export scoping).
+	resource["id"] = rootRow.ID
 
 	// Set leaf fields from root row; support dot-notation for simple scalar nesting
 	for k, v := range rootRow.Data {

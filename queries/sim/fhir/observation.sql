@@ -6,7 +6,11 @@
 --     MetingNaamCodeSysteem, MetingNaamCode, MetingNaamOmschrijving,
 --     UitslagWaarde, UitslagWaardeEenheidSysteem, UitslagWaardeEenheid,
 --     UitslagCode, UitslagCodeOmschrijving,
---     MetingDatumTijd
+--     MetingDatumTijd, Status
+--
+-- Template vars: .status (FHIR status param, pushdown in
+-- config/queries/sources/sim/sim.yaml) — filters on the real Status column
+-- instead of the hardcoded 'final' literal this used to have.
 
 -- ── Statement 1: Root Observation ─────────────────────────────────────────
 -- NULLIF on the valueQuantity.* columns: a coded-only measurement (result
@@ -20,13 +24,15 @@ SELECT
     MetingID                                AS id,
     ''                                      AS parent_id,
     'Observation'                           AS fhir_path,
-    'final'                                 AS status,
+    Status                                  AS status,
     MetingDatumTijd                         AS effectiveDateTime,
     'Patient/' || Identificatienummer       AS "subject.reference",
     NULLIF(UitslagWaarde, '')               AS "valueQuantity.value",
     NULLIF(UitslagWaardeEenheid, '')        AS "valueQuantity.unit",
     NULLIF(UitslagWaardeEenheidSysteem, '') AS "valueQuantity.system"
-FROM sim_algemenemeting;
+FROM sim_algemenemeting
+WHERE 1=1
+{{- if .status}} AND Status = '{{.status}}'{{end}};
 
 -- ── Statement 2: code.coding (MetingNaam) ─────────────────────────────────
 SELECT
@@ -38,7 +44,8 @@ SELECT
     MetingNaamCode                          AS code,
     MetingNaamOmschrijving                  AS display
 FROM sim_algemenemeting
-WHERE MetingNaamCode IS NOT NULL AND MetingNaamCode != '';
+WHERE MetingNaamCode IS NOT NULL AND MetingNaamCode != ''
+{{- if .status}} AND Status = '{{.status}}'{{end}};
 
 -- ── Statement 3: valueCodeableConcept.coding (coded result) ───────────────
 SELECT
@@ -50,4 +57,5 @@ SELECT
     UitslagCode                             AS code,
     UitslagCodeOmschrijving                 AS display
 FROM sim_algemenemeting
-WHERE UitslagCode IS NOT NULL AND UitslagCode != '';
+WHERE UitslagCode IS NOT NULL AND UitslagCode != ''
+{{- if .status}} AND Status = '{{.status}}'{{end}};

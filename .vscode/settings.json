@@ -38,5 +38,14 @@
         "*.tsv": "duckdb.dataFileViewer",
         "*.xlsx": "duckdb.dataFileViewer"
     },
-    "r.lsp.promptToInstall": false
+    "r.lsp.promptToInstall": false,
+    "duckdb.databases": [
+        {
+            "alias": "fhir",
+            "type": "file",
+            "path": "c:\\Users\\t.hetterscheid\\Repo\\fenix\\test\\fhir-flatquack\\output\\fhir.duckdb",
+            "attached": true
+        }
+    ],
+    "duckdb.defaultDatabase": "fhir"
 }

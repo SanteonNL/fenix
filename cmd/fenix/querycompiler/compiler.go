@@ -99,7 +99,7 @@ func (c *Compiler) Resolve(source, groupID, resourceType string, fhirParams map[
 			vars["extra_where"] = groupRes.Where
 		}
 
-		sql, err := render(sqlText, vars)
+		sql, err := RenderSQL(sqlText, vars)
 		if err != nil {
 			return nil, fmt.Errorf("rendering query %q: %w", q.Name, err)
 		}
@@ -146,7 +146,13 @@ func (c *Compiler) resolveQuerySQL(q QueryConfig, groupRes GroupResourceConfig) 
 	return filepath.Join(c.sqlBaseDir, q.SQL), nil
 }
 
-func render(sqlTmpl string, vars map[string]interface{}) (string, error) {
+// RenderSQL renders a SQL file's Go template directives ({{if .status}}, etc.)
+// against vars. Exported so the CLI batch pipeline (main.go runFHIRConversion)
+// can render the same queries/<source>/fhir/*.sql files Resolve does — those
+// files are executed as raw SQL there with no vars at all, so any {{if}}
+// conditional simply evaluates false/absent, same as "no filter" (a full
+// batch export, as opposed to a live per-request search).
+func RenderSQL(sqlTmpl string, vars map[string]interface{}) (string, error) {
 	tmpl, err := template.New("query").Parse(sqlTmpl)
 	if err != nil {
 		return "", fmt.Errorf("parsing SQL template: %w", err)

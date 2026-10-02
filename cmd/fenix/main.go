@@ -285,6 +285,16 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		log.Error().Err(err).Str("file", sqlPath).Msg("Failed to read SQL file")
 		return
 	}
+	// Render with no vars: any {{if .xxx}} pushdown filter (see
+	// queries/sim/fhir/observation.sql, hix's SQL) simply evaluates to
+	// false/absent, i.e. no filter — correct for a full batch export, as
+	// opposed to the live server's per-request querycompiler.Resolve, which
+	// supplies real vars from the request's query params.
+	renderedQuery, err := querycompiler.RenderSQL(string(query), nil)
+	if err != nil {
+		log.Error().Err(err).Str("file", sqlPath).Msg("Failed to render SQL template")
+		return
+	}
 
 	profileSvc := converter.NewProfileService(*log)
 	if cfg.FHIR.ProfilesDir != "" {
@@ -300,7 +310,7 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		}
 	}
 
-	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(string(query))
+	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(renderedQuery)
 	if err != nil {
 		log.Error().Err(err).Msg("Conversion failed")
 		return
