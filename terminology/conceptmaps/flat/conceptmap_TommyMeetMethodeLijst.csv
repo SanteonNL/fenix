@@ -1,5 +1,0 @@
-system_source      ;code_source ;display_source     ;system_target           ;code_target ;display_target ;target_validation ;target_valueset_uri
-https://mst.nl/mct ;M12         ;Hele fijne methode ;https//tommytest.nl/tct ;SC_3        ;               ;                  ;https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354
-https://mst.nl/mct ;M15         ;Hele fijne methode ;https//sdf.nl/tct       ;SC_4        ;ad             ;Valid             ;https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354
-https://mst.nl/mct ;*           ;e                  ;https//sdf.nl/tct       ;SC_5        ;ad             ;Valid             ;https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354
-https://mst.nl/mct ;1212         ;                   ;https//sdf.nl/tct       ;unknown        ;ad             ;Valid             ;https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.
