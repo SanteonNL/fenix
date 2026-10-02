@@ -1,0 +1,24 @@
+{
+  "resourceType": "ConceptMap",
+  "id": "sim-observation-code",
+  "url": "http://fenix.santeon.nl/fhir/ConceptMap/sim-observation-code",
+  "name": "SimObservationCode",
+  "title": "Sim MetingNaamCode to a real code system",
+  "status": "draft",
+  "description": "Example ConceptMap demonstrating CodeableConcept mapping: translates Observation.code.coding[].code (built from the sim source's MetingNaamCode/MetingNaamCodeSysteem columns, see queries/sim/fhir/observation.sql statement 2). Unlike gender, the source system here IS genuinely known - MetingNaamCodeSysteem flows straight through the pipeline into Observation.code.coding.system - so group.source is a real fact, not an inference. 'MayoEndoscopicScore' (test/data/sim/AlgemeneMeting.csv row 4) isn't a real code from that system; LA6751-7 below is illustrative only and should be checked against a real LOINC browser before this map is used for anything beyond demoing the Coding/CodeableConcept mapping path - verify before relying on it. The other MetingNaamCode values in that test file (MCD_A, MCD_L, MCD_B, MCD_P) are intentionally left unmapped here.",
+  "targetCanonical": "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354",
+  "group": [
+    {
+      "source": "https://santeon.nl/sct",
+      "target": "http://loinc.org",
+      "element": [
+        {
+          "code": "MayoEndoscopicScore",
+          "target": [
+            { "code": "LA6751-7", "display": "Mayo endoscopic subscore (illustrative - verify)", "equivalence": "inexact" }
+          ]
+        }
+      ]
+    }
+  ]
+}

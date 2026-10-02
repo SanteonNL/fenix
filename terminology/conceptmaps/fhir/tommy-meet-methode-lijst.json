@@ -5,6 +5,7 @@
   "name": "TommyMeetMethodeLijst",
   "title": "Tommy Meet Methode Lijst",
   "status": "draft",
+  "description": "Scratch/test data carried over from the legacy conceptmap_TommyMeetMethodeLijst.csv. targetCanonical happens to be the same valueset the sim-on-fhir Observation.code binding uses, so this map's entries are live for real sim Observation conversions - its 'unmapped' fixed-fallback (SC_5) was removed because it was silently stamping every non-matching real Observation.code with SC_5/'ad' once Coding/CodeableConcept mapping was added. Review/clean up or retarget before relying on this file.",
   "targetCanonical": "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354",
   "group": [
     {
@@ -31,12 +32,7 @@
             { "code": "SC_4", "display": "ad", "equivalence": "equivalent" }
           ]
         }
-      ],
-      "unmapped": {
-        "mode": "fixed",
-        "code": "SC_5",
-        "display": "ad"
-      }
+      ]
     }
   ]
 }

@@ -11,11 +11,14 @@ import (
 )
 
 // translationEntry is one group.element -> group.element.target pairing,
-// flattened out of a FHIR ConceptMap resource for fast lookup.
+// flattened out of a FHIR ConceptMap resource for fast lookup. targetSystem
+// comes from the parent group's own "target" field (the code system the
+// group's codes belong to) — every entry from the same group shares it.
 type translationEntry struct {
 	sourceCode    string
 	targetCode    string
 	targetDisplay string
+	targetSystem  string
 }
 
 // valuesetMap holds every translation entry that targets one valueset
@@ -85,6 +88,8 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 	}
 
 	for _, group := range cm.Group {
+		targetSystem := stringOrEmpty(group.Target)
+
 		for _, element := range group.Element {
 			if element.Code == nil {
 				continue
@@ -97,6 +102,7 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 					sourceCode:    *element.Code,
 					targetCode:    *target.Code,
 					targetDisplay: stringOrEmpty(target.Display),
+					targetSystem:  targetSystem,
 				}
 				vm.entries = append(vm.entries, entry)
 				vm.validCodes[entry.targetCode] = true
@@ -109,6 +115,7 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 			vm.unmapped = &translationEntry{
 				targetCode:    *group.Unmapped.Code,
 				targetDisplay: stringOrEmpty(group.Unmapped.Display),
+				targetSystem:  targetSystem,
 			}
 		}
 	}
@@ -147,20 +154,25 @@ func (s *ConceptMapService) LoadDir(dir string) error {
 // Translate maps sourceCode using the concept map(s) loaded for the given
 // valueset URI. If the code is already a valid target code for this valueset
 // it is returned unchanged. Falls back to the group's "unmapped" fixed code
-// for unknown codes, if one was loaded. Returns the original code when no
-// concept map is loaded for the valueset.
-func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (string, bool) {
+// for unknown codes, if one was loaded. Returns the original code (and no
+// display/system) when no concept map is loaded for the valueset or the code
+// is already valid — changed is false in both cases, so callers that also
+// carry sibling fields (Coding.display, Coding.system) know not to touch
+// them. targetSystem is "" when the matching group left its own "target"
+// field unset — callers should likewise leave the existing system alone then,
+// rather than blank it out.
+func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCode, targetDisplay, targetSystem string, changed bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	vm, ok := s.byValueset[stripVersion(valuesetURI)]
 	if !ok {
-		return sourceCode, false
+		return sourceCode, "", "", false
 	}
 
 	// Already a valid FHIR target code — no mapping needed
 	if vm.validCodes[sourceCode] {
-		return sourceCode, false
+		return sourceCode, "", "", false
 	}
 
 	for _, e := range vm.entries {
@@ -170,7 +182,7 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (string, b
 				Str("from", sourceCode).
 				Str("to", e.targetCode).
 				Msg("Concept mapped (exact)")
-			return e.targetCode, true
+			return e.targetCode, e.targetDisplay, e.targetSystem, true
 		}
 	}
 
@@ -180,9 +192,9 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (string, b
 			Str("from", sourceCode).
 			Str("to", vm.unmapped.targetCode).
 			Msg("Concept mapped (unmapped fallback)")
-		return vm.unmapped.targetCode, true
+		return vm.unmapped.targetCode, vm.unmapped.targetDisplay, vm.unmapped.targetSystem, true
 	}
-	return sourceCode, false
+	return sourceCode, "", "", false
 }
 
 // conceptMapTargetValueset returns the valueset a ConceptMap resource's

@@ -91,8 +91,21 @@ func (p *ProfileService) ValuesetURI(fhirPath string) string {
 // applyConceptMappings recursively walks a raw FHIR resource map.
 // currentPath is the FHIR path of the current map level (e.g. "Encounter" at root,
 // "Encounter.statusHistory" when recursing into statusHistory items).
-// For each string field it looks up the valueset binding from the profile and
-// translates the code via the concept map service if a mapping exists.
+//
+// A profile binding can sit on three different shapes of element:
+//   - a plain `code` field (e.g. Patient.gender) — the field's own string
+//     value is the code to translate.
+//   - a `Coding` (e.g. a valueCoding) — the code lives in that object's own
+//     "code" field.
+//   - a `CodeableConcept` (e.g. Observation.code) — the codes live one level
+//     deeper, in its "coding" array's "code" fields. Every coding under one
+//     CodeableConcept is translated against the same binding, since FHIR
+//     doesn't let a profile bind per-coding-system within one element.
+//
+// Either way, concepts.Translate is only told the bare code — it has no
+// notion of which coding system a given code belongs to (see
+// ConceptMapService.Translate), so entries from different source systems
+// that happen to share a literal code value cannot be disambiguated.
 func applyConceptMappings(raw map[string]any, currentPath string, profile *ProfileService, concepts *ConceptMapService) {
 	if profile == nil || concepts == nil {
 		return
@@ -100,30 +113,87 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 
 	for field, val := range raw {
 		childPath := currentPath + "." + field
+		vsURI := profile.ValuesetURI(childPath)
 
 		switch v := val.(type) {
 		case string:
-			if vsURI := profile.ValuesetURI(childPath); vsURI != "" {
-				if mapped, changed := concepts.Translate(vsURI, v); changed {
+			if vsURI != "" {
+				if mapped, _, _, changed := concepts.Translate(vsURI, v); changed {
 					raw[field] = mapped
 				}
 			}
 		case []byte:
-			strVal := string(v)
-			if vsURI := profile.ValuesetURI(childPath); vsURI != "" {
-				if mapped, changed := concepts.Translate(vsURI, strVal); changed {
+			if vsURI != "" {
+				if mapped, _, _, changed := concepts.Translate(vsURI, string(v)); changed {
 					raw[field] = mapped
 				}
 			}
 		case map[string]any:
+			if vsURI != "" {
+				translateCodingLike(v, vsURI, concepts)
+			}
 			applyConceptMappings(v, childPath, profile, concepts)
 		case []any:
 			for _, elem := range v {
 				if m, ok := elem.(map[string]any); ok {
+					if vsURI != "" {
+						translateCodingLike(m, vsURI, concepts)
+					}
 					applyConceptMappings(m, childPath, profile, concepts)
 				}
 			}
 		}
+	}
+}
+
+// translateCodingLike translates the code(s) inside a Coding or
+// CodeableConcept JSON object bound to vsURI. A CodeableConcept carries its
+// codes in a "coding" array; a bare Coding carries "code" directly on v.
+//
+// "coding" can still be a single bare object rather than a one-element
+// array at this point: applyConceptMappings runs before
+// validateThroughStruct's normalizeNestedArrays, which is what wraps a
+// single row's coding into an array to match the FHIR struct's []Coding
+// field — so both shapes have to be handled here.
+func translateCodingLike(v map[string]any, vsURI string, concepts *ConceptMapService) {
+	if codingsRaw, ok := v["coding"]; ok {
+		switch codings := codingsRaw.(type) {
+		case []any:
+			for _, c := range codings {
+				if coding, ok := c.(map[string]any); ok {
+					translateCode(coding, vsURI, concepts)
+				}
+			}
+		case map[string]any:
+			translateCode(codings, vsURI, concepts)
+		}
+		return
+	}
+	translateCode(v, vsURI, concepts)
+}
+
+// translateCode translates m["code"] in place, and syncs m["display"] and
+// m["system"] to the mapping's target display/system — but only when the
+// mapping actually supplied one, so a mapping that left display_target or
+// its group's target system unset doesn't blank out what was already there.
+// Leaving system stale would otherwise be actively wrong: a translated code
+// from a different code system (e.g. a LOINC code) left under the source's
+// original system URI misrepresents what the code actually is.
+func translateCode(m map[string]any, vsURI string, concepts *ConceptMapService) {
+	code, ok := m["code"].(string)
+	if !ok {
+		return
+	}
+	mapped, display, system, changed := concepts.Translate(vsURI, code)
+	if !changed {
+		return
+	}
+	m["code"] = mapped
+	if display != "" {
+		m["display"] = display
+	}
+	if system != "" {
+		m["system"] = system
 	}
 }
 
