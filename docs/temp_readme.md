@@ -1,0 +1,1 @@
+PS C:\Users\t.hetterscheid\Repo\fenix> go run ./cmd/fenix -config config/group-demo.yaml -cmd serve -source sim
