@@ -20,14 +20,15 @@
 # So Observation?status=final is a genuine dynamic SUBSET: 123 and 456 only,
 # 789 excluded.
 
-@base = http://127.0.0.1:8080/r4
+@host = http://127.0.0.1:8080
+@base = {{host}}/r4
 
 ### Sanity check: every Observation (5 rows: 4 final, 1 preliminary)
 GET {{base}}/Observation
 Accept: application/fhir+json
 
 ### Sanity check: status=final narrows to patients 123 and 456 only
-GET {{base}}/Observation?status=final
+GET {{base}}/Patient
 Accept: application/fhir+json
 
 ### ─────────────────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ Accept: application/fhir+json
       "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
       "valueString": "Observation?status=final"
     }
+  
   ]
 }
 
@@ -115,17 +117,18 @@ Prefer: respond-async
 Accept: application/fhir+json
 
 ### Poll status — FENIX computes synchronously, so this is already 200 + manifest
-# Copy the job id from kickoffExport's Content-Location response header into the URL below
-# (REST Client doesn't expose response headers as {{var.response.headers.X}} the way it does the body)
-GET {{base}}/$export-status/1528feea-0eb6-4c5e-bed6-bf136495d5eb
+# Content-Location is a relative path (/r4/$export-status/<jobId>), so prefix the host.
+# @name pollExport
+GET {{host}}{{kickoffExport.response.headers.Content-Location}}
 Accept: application/json
 
 ### Download the de-identified Patient NDJSON — only hashed ids, never 123/456/789
-GET {{base}}/$export-files/1528feea-0eb6-4c5e-bed6-bf136495d5eb
+# The manifest lists each file URL (job id included), sorted by type: [0]=Observation, [1]=Patient.
+GET {{host}}{{pollExport.response.body.output[1].url}}
 Accept: application/fhir+ndjson
 
 ### Download the de-identified Observation NDJSON — subject references match the Patient file's hashed ids
-GET {{base}}/$export-files/77e00385-726e-4a53-a615-7bc6f728ea70/Observation.ndjson
+GET {{host}}{{pollExport.response.body.output[0].url}}
 Accept: application/fhir+ndjson
 
 ### ─────────────────────────────────────────────────────────────────────
@@ -152,7 +155,7 @@ Accept: application/fhir+json
   "extension": [
     {
       "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
-      "valueString": "Observation"
+      "valueString": "Observation?status=final"
     }
   ]
 }
@@ -167,17 +170,18 @@ POST {{base}}/Group/{{createBroadGroup.response.body.id}}/$export?_type=Patient,
 Prefer: respond-async
 Accept: application/fhir+json
 
-### Poll status — paste the job id from kickoffFilteredExport's Content-Location header
-GET {{base}}/$export-status/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER
+### Poll status
+# @name pollFilteredExport
+GET {{host}}{{kickoffFilteredExport.response.headers.Content-Location}}
 Accept: application/json
 
 ### Patient.ndjson — all 3 patients (typeFilter doesn't touch Patient, no _typeFilter entry was given for it)
-GET {{base}}/$export-files/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER/Patient.ndjson
+GET {{host}}{{pollFilteredExport.response.body.output[1].url}}
 Accept: application/fhir+ndjson
 
 ### Observation.ndjson — only the 4 status=final rows; 789's preliminary Observation is excluded here
 ### even though 789 IS a group member and DOES appear in Patient.ndjson above
-GET {{base}}/$export-files/PASTE_JOB_ID_FROM_CONTENT_LOCATION_HEADER/Observation.ndjson
+GET {{host}}{{pollFilteredExport.response.body.output[0].url}}
 Accept: application/fhir+ndjson
 
 ### Malformed _typeFilter (no resource type before '?') -> 400 OperationOutcome
