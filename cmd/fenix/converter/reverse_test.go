@@ -22,9 +22,15 @@ func TestReverseTranslate_SimObservationCode(t *testing.T) {
 		t.Fatalf("got (%v, exact=%v, mapped=%v)", got, exact, mapped)
 	}
 
+	// MCD_B is mapped to the made-up DEMO_B, which the group-demo uses
+	got, _, _ = svc.ReverseTranslate(vs, "DEMO_B")
+	if !reflect.DeepEqual(got, []string{"MCD_B", "DEMO_B"}) {
+		t.Fatalf("got %v", got)
+	}
+
 	// an unmapped source code stays as is
-	got, _, _ = svc.ReverseTranslate(vs, "MCD_B")
-	if !reflect.DeepEqual(got, []string{"MCD_B"}) {
+	got, _, _ = svc.ReverseTranslate(vs, "MCD_A")
+	if !reflect.DeepEqual(got, []string{"MCD_A"}) {
 		t.Fatalf("got %v", got)
 	}
 

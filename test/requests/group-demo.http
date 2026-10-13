@@ -33,26 +33,28 @@ Accept: application/fhir+json
 
 ### ─────────────────────────────────────────────────────────────────────
 ### Struct-based param fallback (cmd/fenix/fhirserver/paramfilter.go) —
-### ?code= isn't configured as SQL pushdown for Observation
-### (config/queries/sources/sim/sim.yaml only lists status/patient), so the
-### SQL itself returns every row regardless of ?code=. filterUnwiredParams
-### catches it afterwards instead: it looks up "code"'s SearchParameter type
+### A param that isn't configured as SQL pushdown (config/queries/sources/sim/sim.yaml)
+### is not applied by the SQL, which then returns every row. filterUnwiredParams
+### catches it afterwards instead: it looks up the param's SearchParameter type
 ### (token) in terminology/searchparameter/search-parameter.json and
 ### filters the already-converted FHIR structs in Go. Same observations as
 ### test/data/sim/AlgemeneMeting.csv: 123 has codes MCD_A/MCD_L, 456 has
-### MCD_B/LA6751-7, 789 (preliminary) has MCD_P.
+### MCD_B/LA6751-7, 789 (preliminary) has MCD_P. MCD_B is concept-mapped to DEMO_B
+### (terminology/conceptmaps/fhir/sim-observation-code.json), so FHIR searches use DEMO_B.
 ### ─────────────────────────────────────────────────────────────────────
 
-### Unwired token param alone — only the one observation coded MCD_A (patient 123)
+### Token param alone — only the one observation coded MCD_A (patient 123). code IS pushed down
+### for Observation, so this runs in SQL; MCD_A has no concept map, so it is compared as is.
 GET {{base}}/Observation?code=MCD_A
 Accept: application/fhir+json
 
-### Combine a pushed-down param (status) with an unwired one (code) — only patient 456's MCD_B observation
-GET {{base}}/Observation?status=final&code=MCD_B
+### Combine two pushed-down params (status, code) — only patient 456's observation, found by the TARGET code DEMO_B
+### (reverse concept map: SQL runs with MetingNaamCode IN ('MCD_B', 'DEMO_B'))
+GET {{base}}/Observation?status=final&code=DEMO_B
 Accept: application/fhir+json
 
 ### FHIR token "system|code" syntax also works — same single match as above
-GET {{base}}/Observation?code=https://santeon.nl/sct|MCD_B
+GET {{base}}/Observation?code=https://fenix.santeon.nl/CodeSystem/demo|DEMO_B
 Accept: application/fhir+json
 
 ### date is also unwired (not in sim.yaml's pushdown list), and maps to the
@@ -197,7 +199,7 @@ Accept: application/json
 ### Observation + Patient filters combined: ONE group query joins both
 ### on patient number, both params pushed down into SQL (see the member_filter:
 ### blocks in config/queries/sources/sim/sim.yaml).
-###   Observation?code=MCD_B  -> patient 456 only
+###   Observation?code=DEMO_B  -> patient 456 only (stored as MCD_B, reverse concept mapped)
 ###   Patient?birthdate=ge2021-11-01 -> 456 (2021-12-31) and 789 (2022-02-14)
 ### Joined -> expect only 456. After the export, the folder
 ### output/.../exports/<jobId>/ holds Group_<name>.sql with the joined query.
@@ -217,7 +219,7 @@ Accept: application/fhir+json
   "extension": [
     {
       "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
-      "valueString": "Observation?code=MCD_B"
+      "valueString": "Observation?code=DEMO_B"
     },
     {
       "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
