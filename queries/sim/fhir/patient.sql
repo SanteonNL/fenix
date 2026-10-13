@@ -5,7 +5,8 @@
 --     Identificatienummer, GeslachtCode, GeslachtOmschrijving,
 --     Land, Geboortedatum, DatumOverlijden, DatumCheckStatusOverlijden
 --
--- Template vars: ._id (FHIR _id param, pushdown in
+-- Template vars: .birthDate_from / .birthDate_to (FHIR birthdate param, date
+-- prefixes ge/le/..., column Geboortedatum), ._id (FHIR _id param, pushdown in
 -- config/queries/sources/sim/sim.yaml) — scopes to one patient, used by
 -- Group/$export (cmd/fenix/fhirserver/export.go) to fire this query once
 -- per member id rather than once for the whole table.
@@ -32,7 +33,9 @@ SELECT
     END                     AS deceasedDateTime
 FROM sim_patient
 WHERE 1=1
-{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}};
+{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}}
+{{- if .birthDate_from}} AND Geboortedatum >= '{{.birthDate_from}}'{{end}}
+{{- if .birthDate_to}} AND Geboortedatum <= '{{.birthDate_to}}'{{end}};
 
 -- ── Statement 2: Identifier (BSN) ─────────────────────────────────────────
 SELECT
@@ -45,4 +48,6 @@ SELECT
     Identificatienummer                             AS "value"
 FROM sim_patient
 WHERE 1=1
-{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}};
+{{- if ._id}} AND Identificatienummer = '{{._id}}'{{end}}
+{{- if .birthDate_from}} AND Geboortedatum >= '{{.birthDate_from}}'{{end}}
+{{- if .birthDate_to}} AND Geboortedatum <= '{{.birthDate_to}}'{{end}};

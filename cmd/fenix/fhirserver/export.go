@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )
 
@@ -29,9 +32,8 @@ type exportJob struct {
 
 // handleGroupExport kicks off a bulk export of a Group's current members —
 // one call that does everything server-side: membership is resolved, each
-// requested resource type (_type, required) is fetched by firing its query
-// once per member id (searchPerMember) rather than once for the whole
-// table, optionally narrowed by its own _typeFilter (a FHIR search like
+// requested resource type (_type, required) is fetched with its query
+// restricted in SQL to the group's members query (searchInGroup), optionally narrowed by its own _typeFilter (a FHIR search like
 // "Observation?status=final", independent of the group's own member-filter
 // criteria — see parseTypeFilters), then — when de-identification is
 // configured — de-identified under a single shared RunID across every
@@ -69,17 +71,15 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		return
 	}
 
-	members, err := resolveGroupMembers(s, group)
+	// The group's membership as ONE SQL query (member-filters joined on
+	// patient number). It is embedded in every resource's query below, so
+	// each type is fetched already scoped to the group — no per-patient
+	// queries and no filtering afterwards.
+	membersSQL, err := groupMembersSQL(s, group)
 	if err != nil {
-		s.log.Error().Err(err).Str("groupId", groupID).Msg("Failed to resolve Group members for export")
+		s.log.Error().Err(err).Str("groupId", groupID).Msg("Failed to build Group members query for export")
 		fhirError(w, fmt.Sprintf("failed to resolve group members: %v", err), http.StatusInternalServerError)
 		return
-	}
-	memberIDs := make(map[string]struct{}, len(members))
-	for _, m := range members {
-		if m.Entity.Reference != nil {
-			memberIDs[strings.TrimPrefix(*m.Entity.Reference, "Patient/")] = struct{}{}
-		}
 	}
 
 	// One RunID for the whole job — the fix for the cross-resource-type
@@ -93,8 +93,33 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		counts:          make(map[string]int, len(resourceTypes)),
 	}
 
+	// Everything this export ran is written to <outputDir>/exports/
+	// <timestamp>_<group_name>/, so the queries and their results can be inspected:
+	//   queries/  Group_<group_name>.sql and one <Type>_<queryName>.sql per compiled query
+	//   data/     the resulting <Type>.ndjson per resource type
+	groupFile := groupQueryFileName(group)
+	var queriesDir, dataDir string
+	if s.outputDir != "" {
+		exportDir, err := createExportDir(filepath.Join(s.outputDir, "exports"), job.transactionTime, group)
+		if err == nil {
+			queriesDir = filepath.Join(exportDir, "queries")
+			dataDir = filepath.Join(exportDir, "data")
+			for _, d := range []string{queriesDir, dataDir} {
+				if err = os.Mkdir(d, 0755); err != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			s.log.Warn().Err(err).Str("dir", exportDir).Msg("Export: failed to create export folders")
+			queriesDir, dataDir = "", ""
+		} else if err := os.WriteFile(filepath.Join(queriesDir, groupFile), []byte(membersSQL), 0644); err != nil {
+			s.log.Warn().Err(err).Msg("Export: failed to write group query")
+		}
+	}
+
 	for _, resourceType := range resourceTypes {
-		scoped, found, err := s.searchPerMember(resourceType, memberIDs, typeFilters[resourceType])
+		scoped, found, err := s.searchInGroup(resourceType, typeFilters[resourceType], membersSQL, queriesDir, groupFile)
 		if err != nil {
 			s.log.Error().Err(err).Str("resourceType", resourceType).Str("groupId", groupID).Msg("Export: search failed")
 			fhirError(w, fmt.Sprintf("exporting %s: %v", resourceType, err), http.StatusInternalServerError)
@@ -124,6 +149,12 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 			return
 		}
 
+		if dataDir != "" {
+			if err := os.WriteFile(filepath.Join(dataDir, resourceType+".ndjson"), ndjson, 0644); err != nil {
+				s.log.Warn().Err(err).Str("resourceType", resourceType).Msg("Export: failed to write result file")
+			}
+		}
+
 		job.output[resourceType] = ndjson
 		job.counts[resourceType] = len(scoped)
 	}
@@ -136,7 +167,6 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		Str("groupId", groupID).
 		Str("jobId", job.id).
 		Strs("types", resourceTypes).
-		Int("members", len(memberIDs)).
 		Bool("deidentified", s.deidentRuleset != nil).
 		Msg("Export job completed")
 
@@ -144,54 +174,64 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// idParamCode returns the FHIR search param code that scopes resourceType's
-// query to one patient: the resource's own id for Patient, or the Patient
-// compartment's "patient" reference param (e.g. Observation?patient=123)
-// for every other resource type.
-func idParamCode(resourceType string) string {
-	if resourceType == "Patient" {
-		return "_id"
+// groupQueryFileName names the file holding a Group's members query:
+// "Group_" plus the Group's name with spaces (and anything not safe in a file
+// name) replaced by underscores, e.g. "Group_SIM_patients_with_a_final_Observation.sql".
+// A Group without a name falls back to its id.
+func groupQueryFileName(group *fhir.Group) string {
+	slug := groupSlug(group)
+	if slug == "" {
+		return "Group.sql"
 	}
-	return "patient"
+	return "Group_" + slug + ".sql"
 }
 
-// searchPerMember fires resourceType's query once per member id — each call
-// scoped via idParamCode to just that patient, rather than one query across
-// the whole table — and merges the results. Results are still checked
-// against the requesting id via extractPatientID: a source/resourceType
-// whose query doesn't actually have the id param wired as pushdown (see
-// config/queries/sources/<source>/<source>.yaml) would otherwise return
-// every row, unfiltered, on every single iteration.
-//
-// found mirrors s.search: false only when resourceType has no queries
-// configured at all for s.source. With no members, the loop below never
-// runs, so that case is checked with one direct s.search call instead.
-func (s *Server) searchPerMember(resourceType string, memberIDs map[string]struct{}, typeFilter map[string]string) (resources []interface{}, found bool, err error) {
-	if len(memberIDs) == 0 {
-		return s.search(resourceType, typeFilter)
+// groupSlug is the Group's name made safe for a file or folder name: spaces
+// and anything else odd become underscores. A Group without a name falls
+// back to its id; "" when it has neither.
+func groupSlug(group *fhir.Group) string {
+	name := ""
+	if group.Name != nil {
+		name = *group.Name
 	}
-
-	code := idParamCode(resourceType)
-	for pid := range memberIDs {
-		params := make(map[string]string, len(typeFilter)+1)
-		for k, v := range typeFilter {
-			params[k] = v
+	if strings.TrimSpace(name) == "" && group.Id != nil {
+		name = *group.Id
+	}
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			return r
 		}
-		params[code] = pid
+		return '_'
+	}, name)
+	return strings.Trim(safe, "_")
+}
 
-		res, ok, err := s.search(resourceType, params)
-		if err != nil {
-			return nil, false, fmt.Errorf("patient %q: %w", pid, err)
+// createExportDir creates <parent>/<YYYYMMDD_HHMMSS>_<group_name>, e.g.
+// "20261013_143005_SIM_patients_with_a_final_Observation", in local time.
+// If that folder already exists (two exports in the same second) a _2, _3, ...
+// suffix is added, so one export never writes into another's folder.
+func createExportDir(parent string, t time.Time, group *fhir.Group) (string, error) {
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return "", err
+	}
+	name := t.Local().Format("20060102_150405")
+	if slug := groupSlug(group); slug != "" {
+		name += "_" + slug
+	}
+	for n := 1; ; n++ {
+		dir := filepath.Join(parent, name)
+		if n > 1 {
+			dir = fmt.Sprintf("%s_%d", filepath.Join(parent, name), n)
 		}
-		found = found || ok
-
-		for _, r := range res {
-			if rid, idOK := extractPatientID(resourceType, r); idOK && rid == pid {
-				resources = append(resources, r)
-			}
+		err := os.Mkdir(dir, 0755)
+		if err == nil {
+			return dir, nil
+		}
+		if !os.IsExist(err) {
+			return "", err
 		}
 	}
-	return resources, found, nil
 }
 
 // handleExportStatus serves the completed job's manifest. Real async

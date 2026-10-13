@@ -197,6 +197,50 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCod
 	return sourceCode, "", "", false
 }
 
+// ReverseTranslate is Translate backwards: given a code of the TARGET
+// valueset (what a FHIR client searches for), it returns the SOURCE codes
+// that Translate turns into it, so a search can be pushed down into SQL
+// against the untranslated source column.
+//   - mapped is false when no concept map is loaded for the valueset (the
+//     code is then compared as is).
+//   - A source code can map to several targets; Translate uses the first, so
+//     only sources whose first target is targetCode are returned.
+//   - The code itself is included when Translate would pass it through
+//     unchanged.
+//   - exact is false when targetCode is also the map's fixed "unmapped"
+//     fallback: every unknown source code then maps to it, which can't be
+//     listed — callers must not push such a search down into SQL.
+func (s *ConceptMapService) ReverseTranslate(valuesetURI, targetCode string) (sourceCodes []string, exact, mapped bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	vm, ok := s.byValueset[stripVersion(valuesetURI)]
+	if !ok {
+		return nil, true, false
+	}
+
+	seen := map[string]bool{}
+	firstTarget := map[string]string{}
+	for _, e := range vm.entries {
+		if _, ok := firstTarget[e.sourceCode]; !ok {
+			firstTarget[e.sourceCode] = e.targetCode
+		}
+	}
+	for _, e := range vm.entries {
+		if e.targetCode == targetCode && firstTarget[e.sourceCode] == targetCode && !seen[e.sourceCode] {
+			seen[e.sourceCode] = true
+			sourceCodes = append(sourceCodes, e.sourceCode)
+		}
+	}
+	// Translate passes the code through unchanged when it is a valid target
+	// code, or when there is no unmapped fallback to replace it with.
+	if (vm.validCodes[targetCode] || vm.unmapped == nil) && !seen[targetCode] {
+		sourceCodes = append(sourceCodes, targetCode)
+	}
+	exact = vm.unmapped == nil || vm.unmapped.targetCode != targetCode
+	return sourceCodes, exact, true
+}
+
 // conceptMapTargetValueset returns the valueset a ConceptMap resource's
 // mappings produce codes for, preferring targetCanonical over targetUri.
 func conceptMapTargetValueset(cm fhir.ConceptMap) string {

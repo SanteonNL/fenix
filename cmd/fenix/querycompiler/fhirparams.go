@@ -15,7 +15,16 @@ import "strings"
 // clause alongside the actual DB column name (e.g. effective_date):
 //
 //	{{if .effective_from}} AND effective_date >= '{{.effective_from}}'{{end}}
-func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdownCodes []string, idx searchParamIndex) map[string]interface{} {
+//
+// Token params (type "token", e.g. Observation.code) additionally get
+// <field>_in: a ready-made SQL list for "col IN ({{.code_in}})". The FHIR
+// search code is a TARGET code, so when translate is set and a concept map
+// covers the element, <field>_in holds the SOURCE codes that map to it
+// (reverse concept mapping). Otherwise it holds the code itself, and
+// <field>_system carries the "system|" part of the search value; after a
+// reverse mapping the system is dropped, as it names the target system, not
+// the source column's.
+func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdownCodes []string, idx searchParamIndex, translate ParamTranslator) map[string]interface{} {
 	vars := make(map[string]interface{})
 
 	for _, code := range pushdownCodes {
@@ -43,6 +52,24 @@ func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdo
 			}
 		} else {
 			vars[field] = value
+			if info.paramType == "token" {
+				system, code, hasSystem := strings.Cut(value, "|")
+				if !hasSystem {
+					system, code = "", value
+				}
+				if translate != nil {
+					if sources, exact, mapped := translate(resourceType, field, code); mapped {
+						if exact {
+							vars[field+"_in"] = sqlList(sources)
+						} // inexact: no SQL filter, the in-Go filter handles it
+						continue
+					}
+				}
+				vars[field+"_in"] = sqlList([]string{code})
+				if system != "" {
+					vars[field+"_system"] = system
+				}
+			}
 		}
 	}
 	return vars
@@ -71,4 +98,22 @@ func splitDateValue(value string) (from, to string) {
 	}
 	// No recognised prefix — treat as exact match
 	return value, value
+}
+
+// ParamTranslator reverse-maps a FHIR search code of resourceType.field to
+// the source codes stored in the database (see converter.SourceCodes).
+type ParamTranslator func(resourceType, field, code string) (sourceCodes []string, exact, mapped bool)
+
+// sqlList renders values as a quoted, comma-separated SQL list ('a', 'b').
+// An empty list renders NULL, so "IN (NULL)" matches nothing instead of
+// being a syntax error.
+func sqlList(values []string) string {
+	if len(values) == 0 {
+		return "NULL"
+	}
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = "'" + strings.ReplaceAll(v, "'", "''") + "'"
+	}
+	return strings.Join(quoted, ", ")
 }

@@ -57,6 +57,7 @@ type Server struct {
 //   - conceptMapSvc  the same ConceptMapService instance conv's FHIRConverter was built with,
 //     so edits made through the UI take effect on the next request without a restart
 func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source, groupID, outputDir string, deidentRuleset *deident.Ruleset, deidentKey []byte, conceptMapsDir string, conceptMapSvc *converter.ConceptMapService, log zerolog.Logger) *Server {
+	compiler.SetParamTranslator(conv.SourceCodes)
 	return &Server{
 		compiler:       compiler,
 		converter:      conv,
@@ -191,8 +192,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // search compiles SQL for (resourceType, fhirParams) against s.source/s.groupID
 // and converts the resulting rows to FHIR resources. found is false when the
 // source has no queries configured for resourceType at all (distinct from a
-// configured query that simply matched zero rows). It implements the searcher
-// interface (see group.go), which Group membership resolution depends on.
+// configured query that simply matched zero rows).
 //
 // Not every param in fhirParams necessarily narrowed the SQL above: only
 // params listed in a query's `pushdown:` config (config/queries/sources/
@@ -200,7 +200,20 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // rest — it re-checks them against the converted resources in Go, so a
 // param still filters correctly even before it's wired as pushdown.
 func (s *Server) search(resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error) {
-	rendered, err := s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
+	return s.searchInGroup(resourceType, fhirParams, "", "", "")
+}
+
+// searchInGroup is search restricted in SQL to the patients of membersSQL (see
+// querycompiler.Compiler.ResolveGroupMembersSQL); an empty membersSQL means no restriction.
+// Compiled queries are written to queryDir, or outputDir/compiled when empty;
+// groupFile names the file holding the group query, for the header of each.
+func (s *Server) searchInGroup(resourceType string, fhirParams map[string]string, membersSQL, queryDir, groupFile string) (resources []interface{}, found bool, err error) {
+	var rendered []querycompiler.RenderedQuery
+	if membersSQL == "" {
+		rendered, err = s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
+	} else {
+		rendered, err = s.compiler.ResolveInGroup(s.source, s.groupID, resourceType, fhirParams, membersSQL)
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("query resolution failed: %w", err)
 	}
@@ -209,7 +222,10 @@ func (s *Server) search(resourceType string, fhirParams map[string]string) (reso
 	}
 
 	// Write each rendered query to the output folder for inspection
-	s.writeCompiledQueries(resourceType, rendered)
+	if queryDir == "" && s.outputDir != "" {
+		queryDir = filepath.Join(s.outputDir, "compiled")
+	}
+	s.writeCompiledQueries(queryDir, resourceType, rendered, groupFile)
 
 	// Join all rendered queries into one multi-statement SQL string.
 	// ConvertSQL handles ";" as statement separator, so results from all queries
@@ -226,6 +242,9 @@ func (s *Server) search(resourceType string, fhirParams map[string]string) (reso
 	}
 
 	pushed := s.compiler.PushdownCodes(s.source, resourceType)
+	for code := range s.compiler.InexactParams(resourceType, fhirParams) {
+		delete(pushed, code) // not applied in SQL (see InexactParams), so filter it in Go
+	}
 	resources = filterUnwiredParams(resourceType, fhirParams, pushed, resources, s.compiler.SearchParamField)
 	return resources, true, nil
 }
@@ -271,12 +290,16 @@ func (s *Server) deidentifyWithRunID(resources []interface{}, elements map[strin
 	return err
 }
 
-// writeCompiledQueries writes each rendered query to outputDir/compiled/{resourceType}_{name}.sql.
-func (s *Server) writeCompiledQueries(resourceType string, rendered []querycompiler.RenderedQuery) {
-	if s.outputDir == "" {
+// writeCompiledQueries writes each rendered query to dir/{resourceType}_{name}.sql
+// (one file per named query, so several Observation queries stay separate).
+// An empty dir disables writing.
+//
+// With groupFile set, the file holds the query as it is on its own (PlainSQL)
+// under a header saying it was run restricted to that group's patients.
+func (s *Server) writeCompiledQueries(dir, resourceType string, rendered []querycompiler.RenderedQuery, groupFile string) {
+	if dir == "" {
 		return
 	}
-	dir := filepath.Join(s.outputDir, "compiled")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		s.log.Warn().Err(err).Str("dir", dir).Msg("Failed to create compiled output directory")
 		return
@@ -284,7 +307,7 @@ func (s *Server) writeCompiledQueries(resourceType string, rendered []querycompi
 	for _, rq := range rendered {
 		name := fmt.Sprintf("%s_%s.sql", resourceType, rq.Name)
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(rq.SQL), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(compiledFileContent(rq, groupFile)), 0644); err != nil {
 			s.log.Warn().Err(err).Str("file", path).Msg("Failed to write compiled query")
 			continue
 		}
@@ -304,4 +327,16 @@ func fhirError(w http.ResponseWriter, msg string, code int) {
 			"details":  map[string]interface{}{"text": msg},
 		}},
 	})
+}
+
+// compiledFileContent is what a compiled-query file contains: the query as it
+// is on its own. For a query run inside a group export, a header notes that
+// it was executed restricted to the group's patients (the restriction itself
+// is only a wrapper, left out here to keep the query readable).
+func compiledFileContent(rq querycompiler.RenderedQuery, groupFile string) string {
+	if groupFile == "" || rq.PlainSQL == "" {
+		return rq.SQL
+	}
+	return "-- Run for a group export, restricted to the patients selected by " + groupFile + ".\n" +
+		"-- Shown below as the query is on its own, without that restriction.\n\n" + rq.PlainSQL
 }

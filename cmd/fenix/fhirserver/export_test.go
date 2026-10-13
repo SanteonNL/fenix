@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
 func TestSplitNonEmpty(t *testing.T) {
@@ -16,6 +20,42 @@ func TestSplitNonEmpty(t *testing.T) {
 	}
 	if got := splitNonEmpty("", ","); got != nil {
 		t.Fatalf("expected nil for empty input, got %v", got)
+	}
+}
+
+func TestGroupQueryFileName(t *testing.T) {
+	name := "SIM patients with a final Observation"
+	id := "abc-123"
+	if got := groupQueryFileName(&fhir.Group{Name: &name, Id: &id}); got != "Group_SIM_patients_with_a_final_Observation.sql" {
+		t.Fatalf("got %q", got)
+	}
+	if got := groupQueryFileName(&fhir.Group{Id: &id}); got != "Group_abc-123.sql" {
+		t.Fatalf("got %q", got)
+	}
+	if got := groupQueryFileName(&fhir.Group{}); got != "Group.sql" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCreateExportDir(t *testing.T) {
+	parent := t.TempDir()
+	name := "SIM patients with a final Observation"
+	g := &fhir.Group{Name: &name}
+	at := time.Date(2026, 10, 13, 14, 30, 5, 0, time.Local)
+
+	first, err := createExportDir(parent, at, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Base(first), "20261013_143005_SIM_patients_with_a_final_Observation"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	second, err := createExportDir(parent, at, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Base(second), "20261013_143005_SIM_patients_with_a_final_Observation_2"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

@@ -11,11 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )
 
-// Group implements the Bulk Export IG's Group-based cohort pattern (see
+// Group implements the Bulk Export IG's Group-based group pattern (see
 // docs/fenix_architecture.md, "Generated — Group.json"): a Group is POSTed
 // once with member-filter extensions describing its criteria, and every GET
 // re-evaluates those criteria against the live source data — membership is
@@ -54,12 +55,84 @@ func (g groupJSON) MarshalJSON() ([]byte, error) {
 	return out, nil
 }
 
-// searcher resolves a FHIR search to converted FHIR resources. *Server
-// implements it via search (server.go). Group membership resolution depends
-// on this interface, not *Server directly, so it can be tested without a
-// real query compiler/converter/database.
-type searcher interface {
-	search(resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error)
+// groupMembersResolver turns a Group's member-filters into one SQL query that
+// joins the filters' resource queries on patient number, and runs it. *Server
+// implements it; membership resolution depends on this interface, not *Server
+// directly, so it can be tested without a real query compiler/database.
+type groupMembersResolver interface {
+	resolveGroupMembersSQL(filters []querycompiler.GroupFilter) (membersSQL string, err error)
+	queryIDs(sql string) ([]string, error)
+	// pushedDown reports whether a filter can run entirely inside the group
+	// query; matchingPatients is the fallback for one that can't.
+	pushedDown(resourceType string, params map[string]string) bool
+	matchingPatients(resourceType string, params map[string]string) ([]string, error)
+}
+
+func (s *Server) pushedDown(resourceType string, params map[string]string) bool {
+	return s.compiler.PushedDownByAll(s.source, resourceType, params)
+}
+
+// matchingPatients is the after-filtering fallback for a member-filter with
+// params that aren't pushed down: the normal search (SQL pushdown for what is
+// wired, in-Go filtering for the rest — see filterUnwiredParams), reduced to
+// the patient numbers of the matching resources.
+func (s *Server) matchingPatients(resourceType string, params map[string]string) ([]string, error) {
+	resources, found, err := s.search(resourceType, params)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("resource type %q is not configured for source %q", resourceType, s.source)
+	}
+	seen := make(map[string]struct{}, len(resources))
+	var ids []string
+	for _, res := range resources {
+		if pid, ok := extractPatientID(resourceType, res); ok {
+			if _, dup := seen[pid]; !dup {
+				seen[pid] = struct{}{}
+				ids = append(ids, pid)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// extractPatientID returns the patient id a converted resource belongs to:
+// its own id for Patient, or the id referenced by its "subject" element
+// otherwise. Resources without a recognisable subject are skipped.
+func extractPatientID(resourceType string, resource interface{}) (string, bool) {
+	b, err := json.Marshal(resource)
+	if err != nil {
+		return "", false
+	}
+
+	if resourceType == "Patient" {
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(b, &p); err != nil || p.ID == "" {
+			return "", false
+		}
+		return p.ID, true
+	}
+
+	var r struct {
+		Subject *struct {
+			Reference string `json:"reference"`
+		} `json:"subject"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil || r.Subject == nil || r.Subject.Reference == "" {
+		return "", false
+	}
+	return strings.TrimPrefix(r.Subject.Reference, "Patient/"), true
+}
+
+func (s *Server) resolveGroupMembersSQL(filters []querycompiler.GroupFilter) (string, error) {
+	return s.compiler.ResolveGroupMembersSQL(s.source, s.groupID, filters)
+}
+
+func (s *Server) queryIDs(sql string) ([]string, error) {
+	return s.converter.QueryStrings(sql)
 }
 
 // handleGroup dispatches /r4/Group[/{id}] requests: POST to the collection
@@ -144,55 +217,72 @@ func (s *Server) handleGroupRead(w http.ResponseWriter, id string) {
 	}
 }
 
-// resolveGroupMembers evaluates a Group's member-filter extensions and
-// returns the resulting member list. Each extension's valueString is a FHIR
-// search of the form "ResourceType?params" (e.g.
-// "Condition?code=363346000&clinical-status=active"); a patient must match
-// every filter to be included (AND semantics across filters), matching the
-// multi-filter cohort example in docs/fenix_architecture.md. A Group with no
-// member-filter extensions is static — its own Member list is returned
-// unchanged.
-func resolveGroupMembers(s searcher, group *fhir.Group) ([]fhir.GroupMember, error) {
+// groupMembersSQL returns the single SQL query selecting a Group's patient
+// numbers. Each member-filter's valueString is a FHIR search of the form
+// "ResourceType?params" (e.g. "Condition?code=363346000&clinical-status=active");
+// the filters' resource queries are INNER JOINed on patient number in SQL
+// (querycompiler.ResolveGroupMembersSQL), so a patient must match every filter (AND
+// semantics), matching the multi-filter group example in
+// docs/fenix_architecture.md, with nothing left to filter afterwards. A Group
+// with no member-filter extensions is static — its own Member list is the group.
+// A filter with a param that isn't pushed down falls back to the normal search
+// plus in-Go filtering for that one filter, and its patient numbers are joined
+// into the same group query.
+func groupMembersSQL(s groupMembersResolver, group *fhir.Group) (string, error) {
 	filters := extractMemberFilters(group.Extension)
 	if len(filters) == 0 {
-		return group.Member, nil
+		ids := make([]string, 0, len(group.Member))
+		for _, m := range group.Member {
+			if m.Entity.Reference != nil {
+				ids = append(ids, strings.TrimPrefix(*m.Entity.Reference, "Patient/"))
+			}
+		}
+		return querycompiler.StaticGroupMembers(ids), nil
 	}
 
-	var patientIDs map[string]struct{}
+	groupFilters := make([]querycompiler.GroupFilter, len(filters))
 	for i, filter := range filters {
 		resourceType, params, err := parseMemberFilter(filter)
 		if err != nil {
-			return nil, fmt.Errorf("invalid member-filter %q: %w", filter, err)
+			return "", fmt.Errorf("invalid member-filter %q: %w", filter, err)
 		}
-
-		resources, found, err := s.search(resourceType, params)
-		if err != nil {
-			return nil, fmt.Errorf("resolving member-filter %q: %w", filter, err)
-		}
-		if !found {
-			return nil, fmt.Errorf("member-filter %q: resource type %q is not configured for this source", filter, resourceType)
-		}
-
-		matched := make(map[string]struct{}, len(resources))
-		for _, res := range resources {
-			if pid, ok := extractPatientID(resourceType, res); ok {
-				matched[pid] = struct{}{}
+		cf := querycompiler.GroupFilter{ResourceType: resourceType, Params: params}
+		if !s.pushedDown(resourceType, params) {
+			ids, err := s.matchingPatients(resourceType, params)
+			if err != nil {
+				return "", fmt.Errorf("resolving member-filter %q: %w", filter, err)
 			}
+			cf.Static, cf.PatientIDs = true, ids
 		}
-
-		if i == 0 {
-			patientIDs = matched
-			continue
-		}
-		for pid := range patientIDs {
-			if _, ok := matched[pid]; !ok {
-				delete(patientIDs, pid)
-			}
-		}
+		groupFilters[i] = cf
 	}
 
-	members := make([]fhir.GroupMember, 0, len(patientIDs))
-	for pid := range patientIDs {
+	membersSQL, err := s.resolveGroupMembersSQL(groupFilters)
+	if err != nil {
+		return "", fmt.Errorf("building group query: %w", err)
+	}
+	return membersSQL, nil
+}
+
+// resolveGroupMembers runs a Group's group query and returns the resulting
+// member list. A Group with no member-filter extensions is static — its own
+// Member list is returned unchanged.
+func resolveGroupMembers(s groupMembersResolver, group *fhir.Group) ([]fhir.GroupMember, error) {
+	if len(extractMemberFilters(group.Extension)) == 0 {
+		return group.Member, nil
+	}
+
+	membersSQL, err := groupMembersSQL(s, group)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.queryIDs(membersSQL)
+	if err != nil {
+		return nil, fmt.Errorf("running group query: %w", err)
+	}
+
+	members := make([]fhir.GroupMember, 0, len(ids))
+	for _, pid := range ids {
 		ref := "Patient/" + pid
 		members = append(members, fhir.GroupMember{Entity: fhir.Reference{Reference: &ref}})
 	}
@@ -234,38 +324,6 @@ func parseMemberFilter(filter string) (resourceType string, params map[string]st
 		}
 	}
 	return resourceType, params, nil
-}
-
-// extractPatientID returns the patient id a converted resource belongs to:
-// its own id for Patient, or the id referenced by its "subject" element
-// (Condition, Encounter, Observation, ...) otherwise. Resources without a
-// recognisable subject reference are skipped rather than erroring, since a
-// cohort filter may legitimately include resources with no subject.
-func extractPatientID(resourceType string, resource interface{}) (string, bool) {
-	b, err := json.Marshal(resource)
-	if err != nil {
-		return "", false
-	}
-
-	if resourceType == "Patient" {
-		var p struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(b, &p); err != nil || p.ID == "" {
-			return "", false
-		}
-		return p.ID, true
-	}
-
-	var r struct {
-		Subject *struct {
-			Reference string `json:"reference"`
-		} `json:"subject"`
-	}
-	if err := json.Unmarshal(b, &r); err != nil || r.Subject == nil || r.Subject.Reference == "" {
-		return "", false
-	}
-	return strings.TrimPrefix(r.Subject.Reference, "Patient/"), true
 }
 
 // withMembersRefreshed returns exts with any existing members-refreshed

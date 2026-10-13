@@ -7,9 +7,23 @@
 # test/data/sim/Patient.csv (see queries/sim/fhir/patient.sql). Observation
 # supports ?status= (the real Status column in
 # test/data/sim/AlgemeneMeting.csv) and ?patient= (scoping to one patient's
-# rows, same file). Group/$export (cmd/fenix/fhirserver/export.go) relies on
-# both _id and patient to fire each resource's query once per member id
-# instead of once for the whole table.
+# rows, same file).
+#
+# Per query, two contexts:
+#   pushdown  FHIR params applied in SQL when the query runs as a STANDALONE
+#             search (GET /r4/<Type>?...).
+#   member_filter  how the same query behaves as a Group member-filter / $export
+#             (cmd/fenix/querycompiler/group.go). All members optional:
+#       patient   SQL expression over the query's FIRST (root) statement
+#                 giving the patient number. Default: CAST(id AS TEXT) for
+#                 Patient, SUBSTR("subject.reference", 9) for other types.
+#       pushdown  params applied in SQL when used as a Group member-filter.
+#                 Default: the standalone pushdown list. A member-filter with
+#                 a param outside it still works: that filter falls back to
+#                 the normal search + in-Go filtering, and its patient numbers
+#                 are joined into the Group members query.
+#             A resource with several queries is only pushed down for a param
+#             when EVERY one of its queries lists it.
 
 source: sim
 
@@ -18,10 +32,16 @@ resources:
     queries:
       - name: main
         sql: queries/sim/fhir/patient.sql
-        pushdown: [_id]
+        pushdown: [_id, birthdate]
+        member_filter:
+          patient: CAST(id AS TEXT)
+          pushdown: [birthdate]
 
   Observation:
     queries:
       - name: main
         sql: queries/sim/fhir/observation.sql
-        pushdown: [status, patient]
+        pushdown: [status, patient, code]
+        member_filter:
+          patient: SUBSTR("subject.reference", 9)
+          pushdown: [status, code]

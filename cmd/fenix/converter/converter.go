@@ -147,6 +147,43 @@ func (fc *FHIRConverter) ConvertSQL(query string) ([]interface{}, error) {
 	return fc.buildResources(resources, rootPaths), nil
 }
 
+// SourceCodes reverse-maps a FHIR search code for resourceType.field (e.g.
+// Observation.code) through the profile's valueset binding and its concept
+// map(s) to the source codes stored in the database — see
+// ConceptMapService.ReverseTranslate for the meaning of exact and mapped.
+func (fc *FHIRConverter) SourceCodes(resourceType, field, targetCode string) (codes []string, exact, mapped bool) {
+	if fc.profile == nil || fc.conceptMap == nil {
+		return nil, true, false
+	}
+	vsURI := fc.profile.ValuesetURI(resourceType + "." + field)
+	if vsURI == "" {
+		return nil, true, false
+	}
+	return fc.conceptMap.ReverseTranslate(vsURI, targetCode)
+}
+
+// QueryStrings runs query and returns the first column of every row as a
+// string — used for single-column id lists such as a Group's members query.
+func (fc *FHIRConverter) QueryStrings(query string) ([]string, error) {
+	rows, err := fc.db.Queryx(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var v interface{}
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v != nil {
+			out = append(out, toString(v))
+		}
+	}
+	return out, rows.Err()
+}
+
 // executeStatement runs one SQL statement and feeds its rows into resources.
 func (fc *FHIRConverter) executeStatement(stmt string, n int, resources map[string]ResourceResult, rootPaths map[string]string) error {
 	rows, err := fc.db.Queryx(stmt)

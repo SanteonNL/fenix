@@ -10,10 +10,48 @@ import (
 
 // QueryConfig is one named SQL query for a resource type.
 // A resource can have multiple named queries (e.g. "vitals" and "labs" for Observation).
+//
+// pushdown lists the FHIR params this query applies in SQL when it runs as a
+// standalone search (GET /r4/<Type>?...). The optional group block says how
+// the same query behaves when it is used as a Group member-filter / $export
+// group instead (see group.go).
 type QueryConfig struct {
-	Name     string   `yaml:"name"`
-	SQL      string   `yaml:"sql"`
-	Pushdown []string `yaml:"pushdown"`
+	Name     string       `yaml:"name"`
+	SQL      string       `yaml:"sql"`
+	Pushdown []string     `yaml:"pushdown"`
+	MemberFilter   MemberFilterConfig `yaml:"member_filter,omitempty"`
+}
+
+// MemberFilterConfig is a query's behaviour inside a Group's member-filter. Both fields are
+// optional and default to the standalone behaviour / naming convention.
+//   - Patient: SQL expression over the query's FIRST (root) statement that
+//     yields the patient number. Default: `CAST(id AS TEXT)` for Patient,
+//     SUBSTR("subject.reference", 9) (past 'Patient/') for everything else.
+//   - Pushdown: FHIR params this query applies in SQL when used as a group
+//     filter. Default: the query's standalone pushdown list. A filter using a
+//     param outside it falls back to the normal search + in-Go filtering.
+type MemberFilterConfig struct {
+	Patient  string   `yaml:"patient,omitempty"`
+	Pushdown []string `yaml:"pushdown,omitempty"`
+}
+
+// memberFilterPushdown is the pushdown list in effect when q runs as a group filter.
+func (q QueryConfig) memberFilterPushdown() []string {
+	if q.MemberFilter.Pushdown != nil {
+		return q.MemberFilter.Pushdown
+	}
+	return q.Pushdown
+}
+
+// patientExpr is the SQL expression, over q's root statement, yielding the patient number.
+func (q QueryConfig) patientExpr(resourceType string) string {
+	if q.MemberFilter.Patient != "" {
+		return q.MemberFilter.Patient
+	}
+	if resourceType == "Patient" {
+		return "CAST(id AS TEXT)"
+	}
+	return `SUBSTR("subject.reference", 9)`
 }
 
 // ResourceConfig defines the set of queries for one resource type.

@@ -3,42 +3,48 @@ package fhirserver
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/rs/zerolog"
 )
 
-// fakeSearcher simulates the query-compiler+converter pipeline for a fixed
-// set of resourceType -> resources, so Group membership resolution can be
-// tested without a real database.
-type fakeSearcher struct {
-	byType map[string][]interface{}
+// fakeGroupMembers records the filters it is asked to join and answers the group
+// query with a fixed id list, so Group membership resolution can be tested
+// without a real database.
+type fakeGroupMembers struct {
+	ids     []string
+	filters []querycompiler.GroupFilter
+	err     error
+
+	notPushed map[string]bool     // resource types whose filters can't be pushed down
+	matching  map[string][]string // resource type -> patients found by the fallback search
 }
 
-func (f fakeSearcher) search(resourceType string, _ map[string]string) ([]interface{}, bool, error) {
-	resources, ok := f.byType[resourceType]
-	if !ok {
-		return nil, false, nil
-	}
-	return resources, true, nil
+func (f *fakeGroupMembers) pushedDown(resourceType string, _ map[string]string) bool {
+	return !f.notPushed[resourceType]
 }
 
-func condition(subjectID string) map[string]interface{} {
-	return map[string]interface{}{
-		"resourceType": "Condition",
-		"subject":      map[string]interface{}{"reference": "Patient/" + subjectID},
-	}
+func (f *fakeGroupMembers) matchingPatients(resourceType string, _ map[string]string) ([]string, error) {
+	return f.matching[resourceType], nil
 }
 
-func encounter(subjectID string) map[string]interface{} {
-	return map[string]interface{}{
-		"resourceType": "Encounter",
-		"subject":      map[string]interface{}{"reference": "Patient/" + subjectID},
+func (f *fakeGroupMembers) resolveGroupMembersSQL(filters []querycompiler.GroupFilter) (string, error) {
+	f.filters = filters
+	return "COHORT SQL", f.err
+}
+
+func (f *fakeGroupMembers) queryIDs(sql string) ([]string, error) {
+	if sql != "COHORT SQL" {
+		return nil, fmt.Errorf("unexpected sql %q", sql)
 	}
+	return f.ids, nil
 }
 
 func memberFilterExt(filter string) fhir.Extension {
@@ -63,23 +69,11 @@ func TestParseMemberFilter(t *testing.T) {
 	}
 }
 
-func TestExtractPatientID(t *testing.T) {
-	if id, ok := extractPatientID("Patient", map[string]interface{}{"resourceType": "Patient", "id": "p1"}); !ok || id != "p1" {
-		t.Fatalf("Patient extraction = %q, %v", id, ok)
-	}
-	if id, ok := extractPatientID("Condition", condition("p2")); !ok || id != "p2" {
-		t.Fatalf("Condition extraction = %q, %v", id, ok)
-	}
-	if _, ok := extractPatientID("Condition", map[string]interface{}{"resourceType": "Condition"}); ok {
-		t.Fatal("expected no match for Condition without subject")
-	}
-}
-
 func TestResolveGroupMembers_NoFilters_ReturnsStaticMembers(t *testing.T) {
 	ref := "Patient/static-1"
 	group := &fhir.Group{Member: []fhir.GroupMember{{Entity: fhir.Reference{Reference: &ref}}}}
 
-	members, err := resolveGroupMembers(fakeSearcher{}, group)
+	members, err := resolveGroupMembers(&fakeGroupMembers{}, group)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,59 +82,62 @@ func TestResolveGroupMembers_NoFilters_ReturnsStaticMembers(t *testing.T) {
 	}
 }
 
-func TestResolveGroupMembers_SingleFilter(t *testing.T) {
-	group := &fhir.Group{
-		Extension: []fhir.Extension{memberFilterExt("Condition?code=X")},
-	}
-	fs := fakeSearcher{byType: map[string][]interface{}{
-		"Condition": {condition("p1"), condition("p2")},
-	}}
-
-	members, err := resolveGroupMembers(fs, group)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(members) != 2 {
-		t.Fatalf("got %d members, want 2: %+v", len(members), members)
-	}
-}
-
-func TestResolveGroupMembers_MultipleFilters_Intersect(t *testing.T) {
+func TestResolveGroupMembers_FiltersJoinedIntoOneQuery(t *testing.T) {
 	group := &fhir.Group{
 		Extension: []fhir.Extension{
 			memberFilterExt("Condition?code=X"),
 			memberFilterExt("Encounter?date=ge2023-01-01"),
 		},
 	}
-	fs := fakeSearcher{byType: map[string][]interface{}{
-		"Condition": {condition("p1"), condition("p2"), condition("p3")},
-		"Encounter": {encounter("p2"), encounter("p3"), encounter("p4")},
-	}}
+	fc := &fakeGroupMembers{ids: []string{"p3", "p2"}}
 
-	members, err := resolveGroupMembers(fs, group)
+	members, err := resolveGroupMembers(fc, group)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := map[string]bool{}
-	for _, m := range members {
-		got[*m.Entity.Reference] = true
+	// One group query carrying BOTH filters — nothing is intersected in Go.
+	want := []querycompiler.GroupFilter{
+		{ResourceType: "Condition", Params: map[string]string{"code": "X"}},
+		{ResourceType: "Encounter", Params: map[string]string{"date": "ge2023-01-01"}},
 	}
-	want := map[string]bool{"Patient/p2": true, "Patient/p3": true}
-	if len(got) != len(want) {
-		t.Fatalf("members = %v, want %v", got, want)
+	if !reflect.DeepEqual(fc.filters, want) {
+		t.Fatalf("filters = %+v, want %+v", fc.filters, want)
 	}
-	for ref := range want {
-		if !got[ref] {
-			t.Fatalf("missing %s in %v", ref, got)
-		}
+	if len(members) != 2 || *members[0].Entity.Reference != "Patient/p2" || *members[1].Entity.Reference != "Patient/p3" {
+		t.Fatalf("members = %+v, want sorted p2,p3", members)
 	}
 }
 
-func TestResolveGroupMembers_UnconfiguredResourceType_Errors(t *testing.T) {
+func TestResolveGroupMembers_UnpushedFilterFallsBackToStaticIDs(t *testing.T) {
+	group := &fhir.Group{
+		Extension: []fhir.Extension{
+			memberFilterExt("Observation?code=X"),
+			memberFilterExt("Patient?birthdate=ge2000-01-01"),
+		},
+	}
+	fc := &fakeGroupMembers{
+		ids:       []string{"p1"},
+		notPushed: map[string]bool{"Observation": true},
+		matching:  map[string][]string{"Observation": {"p1", "p2"}},
+	}
+
+	if _, err := resolveGroupMembers(fc, group); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []querycompiler.GroupFilter{
+		{ResourceType: "Observation", Params: map[string]string{"code": "X"}, Static: true, PatientIDs: []string{"p1", "p2"}},
+		{ResourceType: "Patient", Params: map[string]string{"birthdate": "ge2000-01-01"}},
+	}
+	if !reflect.DeepEqual(fc.filters, want) {
+		t.Fatalf("filters = %+v, want %+v", fc.filters, want)
+	}
+}
+
+func TestResolveGroupMembers_QueryError(t *testing.T) {
 	group := &fhir.Group{Extension: []fhir.Extension{memberFilterExt("Observation?code=X")}}
 
-	if _, err := resolveGroupMembers(fakeSearcher{}, group); err == nil {
-		t.Fatal("expected error for unconfigured resource type")
+	if _, err := resolveGroupMembers(&fakeGroupMembers{err: fmt.Errorf("not pushed down")}, group); err == nil {
+		t.Fatal("expected error to propagate")
 	}
 }
 
@@ -154,7 +151,7 @@ func newTestServer() *Server {
 func TestHandleGroup_CreateAndReadStaticGroup(t *testing.T) {
 	s := newTestServer()
 
-	body := []byte(`{"resourceType":"Group","type":"person","actual":true,"name":"Test cohort"}`)
+	body := []byte(`{"resourceType":"Group","type":"person","actual":true,"name":"Test group"}`)
 	req := httptest.NewRequest(http.MethodPost, "/r4/Group", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -192,7 +189,7 @@ func TestHandleGroup_CreateAndReadStaticGroup(t *testing.T) {
 	if err := json.Unmarshal(getRec.Body.Bytes(), &fetched); err != nil {
 		t.Fatalf("decoding fetched Group: %v", err)
 	}
-	if fetched.Name == nil || *fetched.Name != "Test cohort" {
+	if fetched.Name == nil || *fetched.Name != "Test group" {
 		t.Fatalf("fetched Group = %+v", fetched)
 	}
 }

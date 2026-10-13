@@ -8,7 +8,10 @@
 --     UitslagCode, UitslagCodeOmschrijving,
 --     MetingDatumTijd, Status
 --
--- Template vars: .status (FHIR status param, pushdown in
+-- Template vars: .code_in / .code_system (FHIR code param, a token. .code_in is
+-- a ready SQL list holding the SOURCE codes that the concept map turns into
+-- the requested code, columns MetingNaamCode / MetingNaamCodeSysteem).
+-- .status (FHIR status param, pushdown in
 -- config/queries/sources/sim/sim.yaml) — filters on the real Status column
 -- instead of the hardcoded 'final' literal this used to have.
 -- .subject (FHIR patient param, same pushdown config) — scopes to one
@@ -36,6 +39,8 @@ SELECT
 FROM sim_algemenemeting
 WHERE 1=1
 {{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .code_in}} AND MetingNaamCode IN ({{.code_in}}){{end}}
+{{- if .code_system}} AND MetingNaamCodeSysteem = '{{.code_system}}'{{end}}
 {{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
 
 -- ── Statement 2: code.coding (MetingNaam) ─────────────────────────────────
@@ -50,6 +55,8 @@ SELECT
 FROM sim_algemenemeting
 WHERE MetingNaamCode IS NOT NULL AND MetingNaamCode != ''
 {{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .code_value}} AND MetingNaamCode = '{{.code_value}}'{{end}}
+{{- if .code_system}} AND MetingNaamCodeSysteem = '{{.code_system}}'{{end}}
 {{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
 
 -- ── Statement 3: valueCodeableConcept.coding (coded result) ───────────────
@@ -64,4 +71,6 @@ SELECT
 FROM sim_algemenemeting
 WHERE UitslagCode IS NOT NULL AND UitslagCode != ''
 {{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .code_value}} AND MetingNaamCode = '{{.code_value}}'{{end}}
+{{- if .code_system}} AND MetingNaamCodeSysteem = '{{.code_system}}'{{end}}
 {{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};

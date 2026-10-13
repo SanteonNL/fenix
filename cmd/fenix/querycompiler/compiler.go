@@ -12,8 +12,10 @@ import (
 // RenderedQuery is one rendered SQL string with its query name.
 // A resource can produce multiple RenderedQueries (e.g. "vitals" and "labs").
 type RenderedQuery struct {
-	Name string
-	SQL  string
+	Name        string
+	SQL         string
+	PlainSQL    string // SQL before any group restriction (what the query is on its own)
+	PatientExpr string // SQL over the root statement yielding the patient number (see MemberFilterConfig)
 }
 
 // Compiler resolves a (source, groupID, resourceType, FHIR params) tuple to rendered SQL.
@@ -29,6 +31,7 @@ type Compiler struct {
 	globalSubs  map[string]string
 	sources     map[string]SourceConfig
 	searchIndex searchParamIndex
+	translate   ParamTranslator // reverse concept mapping for token params, may be nil
 }
 
 // New creates a Compiler.
@@ -58,9 +61,56 @@ func New(configDir, sqlBaseDir string) (*Compiler, error) {
 	}, nil
 }
 
+// SetParamTranslator sets the reverse concept mapping applied to pushed-down
+// token params (e.g. Observation.code), see buildTemplateVars.
+func (c *Compiler) SetParamTranslator(t ParamTranslator) { c.translate = t }
+
+// InexactParams returns the token params whose reverse concept mapping can't
+// be listed (the code is the concept map's catch-all "unmapped" target).
+// They are not applied in SQL at all, so callers must filter them in Go
+// even though they are listed in pushdown.
+func (c *Compiler) InexactParams(resourceType string, fhirParams map[string]string) map[string]bool {
+	out := map[string]bool{}
+	if c.translate == nil {
+		return out
+	}
+	for code, value := range fhirParams {
+		info, ok := lookupSearchParam(c.searchIndex, resourceType, code)
+		if !ok || info.paramType != "token" {
+			continue
+		}
+		field := fieldName(resourceType, info.expression)
+		if field == "" {
+			field = code
+		}
+		_, bare, hasSystem := strings.Cut(value, "|")
+		if !hasSystem {
+			bare = value
+		}
+		if _, exact, mapped := c.translate(resourceType, field, bare); mapped && !exact {
+			out[code] = true
+		}
+	}
+	return out
+}
+
 // Resolve returns rendered SQL for every query defined for (source, groupID, resourceType).
 // groupID may be empty for no group-level overrides.
 func (c *Compiler) Resolve(source, groupID, resourceType string, fhirParams map[string]string) ([]RenderedQuery, error) {
+	return c.resolve(source, groupID, resourceType, fhirParams, "", false)
+}
+
+// ResolveInGroup is Resolve restricted to the patients selected by
+// membersSQL (as built by ResolveGroupMembersSQL): every statement of every query is
+// wrapped so it only returns rows of resources whose patient is in the
+// group. The restriction happens in SQL, so callers need no post-filtering.
+func (c *Compiler) ResolveInGroup(source, groupID, resourceType string, fhirParams map[string]string, membersSQL string) ([]RenderedQuery, error) {
+	return c.resolve(source, groupID, resourceType, fhirParams, membersSQL, false)
+}
+
+// resolve renders the queries. asGroupFilter selects each query's group
+// pushdown list (MemberFilterConfig.Pushdown) instead of its standalone one.
+func (c *Compiler) resolve(source, groupID, resourceType string, fhirParams map[string]string, membersSQL string, asGroupFilter bool) ([]RenderedQuery, error) {
 	queries, groupRes := c.resolveQueries(source, groupID, resourceType)
 
 	// Merge substitutions: global first, then source-specific on top.
@@ -92,7 +142,11 @@ func (c *Compiler) Resolve(source, groupID, resourceType string, fhirParams map[
 		for k, v := range subs {
 			vars[k] = v
 		}
-		for k, v := range buildTemplateVars(resourceType, fhirParams, q.Pushdown, c.searchIndex) {
+		pushdown := q.Pushdown
+		if asGroupFilter {
+			pushdown = q.memberFilterPushdown()
+		}
+		for k, v := range buildTemplateVars(resourceType, fhirParams, pushdown, c.searchIndex, c.translate) {
 			vars[k] = v
 		}
 		if groupRes.Where != "" {
@@ -103,7 +157,11 @@ func (c *Compiler) Resolve(source, groupID, resourceType string, fhirParams map[
 		if err != nil {
 			return nil, fmt.Errorf("rendering query %q: %w", q.Name, err)
 		}
-		result = append(result, RenderedQuery{Name: q.Name, SQL: sql})
+		plain := sql
+		if membersSQL != "" {
+			sql = restrictToGroup(q.patientExpr(resourceType), sql, membersSQL)
+		}
+		result = append(result, RenderedQuery{Name: q.Name, SQL: sql, PlainSQL: plain, PatientExpr: q.patientExpr(resourceType)})
 	}
 	return result, nil
 }

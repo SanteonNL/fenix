@@ -192,3 +192,51 @@ Accept: application/fhir+json
 ### Unknown export job -> 404 OperationOutcome
 GET {{base}}/$export-status/does-not-exist
 Accept: application/json
+
+### ─────────────────────────────────────────────────────────────────────
+### Observation + Patient filters combined: ONE group query joins both
+### on patient number, both params pushed down into SQL (see the member_filter:
+### blocks in config/queries/sources/sim/sim.yaml).
+###   Observation?code=MCD_B  -> patient 456 only
+###   Patient?birthdate=ge2021-11-01 -> 456 (2021-12-31) and 789 (2022-02-14)
+### Joined -> expect only 456. After the export, the folder
+### output/.../exports/<jobId>/ holds Group_<name>.sql with the joined query.
+### ─────────────────────────────────────────────────────────────────────
+
+### Create the combined group — expect member Patient/456 only
+# @name createCombinedGroup
+POST {{base}}/Group
+Content-Type: application/fhir+json
+Accept: application/fhir+json
+
+{
+  "resourceType": "Group",
+  "type": "person",
+  "actual": false,
+  "name": "wo-longkanker",
+  "extension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueString": "Observation?code=MCD_B"
+    },
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueString": "Patient?birthdate=ge2021-11-01"
+    }
+  ]
+}
+
+### Membership: expect Patient/456
+GET {{base}}/Group/{{createCombinedGroup.response.body.id}}
+Accept: application/fhir+json
+
+### Export it
+POST {{base}}/Group/{{createCombinedGroup.response.body.id}}/$export?_type=Patient,Observation
+Prefer: respond-async
+Accept: application/fhir+json
+
+
+### Export it
+POST {{base}}/Group/{{createCombinedGroup.response.body.id}}/$export?_type=Patient,Observation&_typeFilter=Patient%3Fbirthdate%3Dge2021-11-01  
+Prefer: respond-async
+Accept: application/fhir+json
