@@ -11,10 +11,9 @@ staging:
   database: sqlite
   path: "" # in-memory
 
-fhir:
-  sqlFile: ""
-  profilesDir: terminology/profiles/sim-on-fhir
-  conceptMapsDir: test/data/conceptmaps/fhir
+inputs:
+  profiles:    {source: repo, path: terminology/profiles/sim-on-fhir}
+  conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
 
 output:
   format: pretty

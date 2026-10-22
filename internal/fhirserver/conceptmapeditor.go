@@ -51,7 +51,7 @@ func (s *Server) handleConceptMapsUI(w http.ResponseWriter, r *http.Request) {
 // picks up the change immediately, without a server restart.
 func (s *Server) handleConceptMapsAPI(w http.ResponseWriter, r *http.Request) {
 	if s.conceptMapsDir == "" {
-		apiError(w, "concept map editing is not configured (fhir.conceptMapsDir is empty)", http.StatusServiceUnavailable)
+		apiError(w, "concept map editing is not configured (inputs.conceptMaps is not set)", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -31,10 +31,9 @@ staging:
   database: sqlite
   path: output/group-demo/staging.db
 
-fhir:
-  sqlFile: ""
-  profilesDir: terminology/profiles/sim-on-fhir
-  conceptMapsDir: test/data/conceptmaps/fhir
+inputs:
+  profiles:    {source: repo, path: terminology/profiles/sim-on-fhir}
+  conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
 
 output:
   format: pretty

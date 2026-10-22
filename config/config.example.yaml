@@ -1,31 +1,30 @@
-# CSV to FHIR Converter Configuration
+# FENIX configuration. Blocks are ordered by dependency, each is defined before it is used:
+#   sources   connections to the outside: databases, APIs, SFTP, directories, git repositories
+#   inputs    which of those FENIX reads queries and terminology from
+#   staging   where loaded data lands
+#   output    where FHIR output goes
+#   deident   optional de-identification of the output
 
 environment: dev  # dev (colored console output) | prod (JSON output)
 logLevel: info    # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
 
-staging:
-  database: sqlite        # sqlite (default) | postgres | sqlserver
-  #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
-  path: output/staging.db # persist to file — useful for debugging SQL queries after a run
-  # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
-  # connection: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix_staging;encrypt=false;TrustServerCertificate=true" # sqlserver
-  # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
-  # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
-
-fhir:
-  sqlFile: ""
-  profilesDir: terminology/profiles/sim-on-fhir
-  conceptMapsDir: test/data/conceptmaps/fhir
-
-output:
-  format: pretty          # json | ndjson | pretty
-  type: local
-  local:
-    dir: output
-    useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
-    archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
-
+# One entry per connection. What a source is used for follows from how it is referenced:
+# loaded into staging as data (default), and/or named under inputs: as a place that holds files.
+# "repo" is always available without declaring it: it is this FENIX checkout, files only.
 sources:
+  # Files only, not loaded into staging. A private git repository with queries:
+  # fenix-queries:
+  #   type: git                         # git sources never load into staging
+  #   url: https://github.com/SanteonNL/fenix-queries.git
+  #   ref: main                         # branch or tag, default: remote default branch
+  #   token_env: FENIX_QUERIES_TOKEN    # env var with a read-only access token (Contents)
+  #   cache_dir: .cache/sources/fenix-queries   # default
+  # A plain directory with terminology:
+  # terminology:
+  #   type: local
+  #   dir: terminology                  # relative to the FENIX checkout, or absolute
+  #   load: false                       # a local dir is loaded as data unless you say not to
+
   hix-test:
     type: sqlserver
     connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
@@ -73,6 +72,35 @@ sources:
     key_file: "C:\\Users\\t.hetterscheid\\.ssh\\zbj-test-svc-id_rsa"
     remote_dir: "/"
     delimiter: ";"
+
+
+# Which files FENIX uses, as {source, path}. A left-out entry uses the default shown.
+inputs:
+  # Root that holds queries/<source>/fhir|dwh/*.sql and queries/dwh/cross. It REPLACES the
+  # local queries/, including for the SQL paths in the queryConfig YAMLs.
+  queries: {source: repo}                                  # default
+  # queries: {source: fenix-queries}
+  queryConfig: {source: repo, path: config/queries}        # default; -query-config overrides
+  # FHIR StructureDefinitions and ConceptMaps. Nothing is loaded when left out.
+  profiles:    {source: repo, path: terminology/profiles/sim-on-fhir}
+  conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
+
+staging:
+  database: sqlite        # sqlite (default) | postgres | sqlserver
+  #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
+  path: output/staging.db # persist to file — useful for debugging SQL queries after a run
+  # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
+  # connection: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix_staging;encrypt=false;TrustServerCertificate=true" # sqlserver
+  # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
+  # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
+
+output:
+  format: pretty          # json | ndjson | pretty
+  type: local
+  local:
+    dir: output
+    useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
+    archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
 
 # De-identification (internal/deident) — disabled by default. See
 # docs/fenix_architecture.md, "❻ De-identification".

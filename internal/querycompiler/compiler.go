@@ -61,6 +61,11 @@ func New(configDir, sqlBaseDir string) (*Compiler, error) {
 	}, nil
 }
 
+// SetSQLBaseDir changes the directory SQL paths in the query config are
+// resolved against (e.g. a checked-out queries repository). The search
+// parameter index still comes from the repo root given to New.
+func (c *Compiler) SetSQLBaseDir(dir string) { c.sqlBaseDir = dir }
+
 // SetParamTranslator sets the reverse concept mapping applied to pushed-down
 // token params (e.g. Observation.code), see buildTemplateVars.
 func (c *Compiler) SetParamTranslator(t ParamTranslator) { c.translate = t }

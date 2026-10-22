@@ -2,9 +2,11 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 
 	"github.com/SanteonNL/fenix/internal/source"
+	"github.com/SanteonNL/fenix/internal/source/git"
 	"github.com/SanteonNL/fenix/internal/source/stagingfiles"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
@@ -55,6 +57,67 @@ func BuildSource(name string, sc SourceConfig, repoRoot string, watermarkPath st
 	return source.Build(sc.Type, name, configMap, log)
 }
 
+// ResolveDir returns the local directory a DirRef points at.
+//   - ref.Source set: "repo" is the FENIX checkout (repoRoot) unless a source of that name
+//     is declared; any other name must be declared under sources: and be of a type that
+//     holds files (local, git). A git source is cloned/updated first. ref.Path is joined
+//     onto the source's directory.
+//   - ref.Source empty: nothing is configured, "" is returned.
+func ResolveDir(ctx context.Context, cfg *Config, ref DirRef, repoRoot string, log zerolog.Logger) (string, error) {
+	if ref.Source == "" {
+		return "", nil
+	}
+	sc, ok := cfg.Sources[ref.Source]
+	if !ok {
+		if ref.Source == BuiltinSource {
+			return filepath.Join(repoRoot, ref.Path), nil
+		}
+		return "", fmt.Errorf("source %q not found in config (declare it under sources:)", ref.Source)
+	}
+	dir, err := sc.dir(ctx, ref.Source, repoRoot, log)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ref.Path), nil
+}
+
+// dir returns the source's local directory, fetching it first when needed.
+func (sc SourceConfig) dir(ctx context.Context, name, repoRoot string, log zerolog.Logger) (string, error) {
+	switch sc.Type {
+	case "local":
+		if sc.Dir == "" {
+			return "", fmt.Errorf("source %q: type local needs 'dir'", name)
+		}
+		return resolvePath(repoRoot, sc.Dir), nil
+	case "git":
+		if sc.URL == "" {
+			return "", fmt.Errorf("source %q: type git needs 'url'", name)
+		}
+		cache := sc.CacheDir
+		if cache == "" {
+			cache = filepath.Join(".cache", "sources", name)
+		}
+		return git.New(name, sc.URL, sc.Ref, sc.TokenEnv, resolvePath(repoRoot, cache), log).Dir(ctx)
+	default:
+		return "", fmt.Errorf("source %q (type %q) cannot provide files, only local and git can", name, sc.Type)
+	}
+}
+
+// QueriesRoot returns the directory that holds the queries/ tree: the repo
+// root unless inputs.queries points elsewhere (e.g. a private git repository).
+// On error it logs and falls back to repoRoot so the local queries keep working.
+func (c *Config) QueriesRoot(ctx context.Context, repoRoot string, log zerolog.Logger) string {
+	dir, err := ResolveDir(ctx, c, c.Inputs.Queries, repoRoot, log)
+	if err != nil {
+		log.Error().Err(err).Msg("queries source unavailable, falling back to local queries/")
+		return repoRoot
+	}
+	if dir == "" {
+		return repoRoot
+	}
+	return dir
+}
+
 // NewFileWriter creates a staging file writer from cfg, or returns nil when
 // staging.files is not configured. The caller should log any returned error
 // and continue — file output is best-effort alongside the staging database.
@@ -82,6 +145,9 @@ func LoadAllSources(ctx context.Context, db *sqlx.DB, cfg *Config, repoRoot stri
 	}
 
 	for name, sc := range cfg.Sources {
+		if !sc.LoadsData() {
+			continue
+		}
 		src, err := BuildSource(name, sc, repoRoot, watermarkPath, log)
 		if err != nil {
 			log.Error().Err(err).Str("source", name).Msg("failed to build source")

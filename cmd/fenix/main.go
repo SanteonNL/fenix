@@ -11,12 +11,12 @@ import (
 
 	"net/http"
 
+	"github.com/SanteonNL/fenix/internal/config"
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/fhirserver"
 	"github.com/SanteonNL/fenix/internal/output"
 	"github.com/SanteonNL/fenix/internal/querycompiler"
-	"github.com/SanteonNL/fenix/internal/config"
-	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/source"
 	_ "github.com/SanteonNL/fenix/internal/source/local"
 	_ "github.com/SanteonNL/fenix/internal/source/luscii"
@@ -159,10 +159,10 @@ func initializeStagingDatabase(cfg *config.Config, repoRoot string, log *zerolog
 func convertToFHIR(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
 	sqlPath := *sqlFile
 	if sqlPath == "" {
-		sqlPath = cfg.FHIR.SQLFile
+		sqlPath = cfg.Inputs.SQLFile
 	}
 	if sqlPath == "" {
-		log.Debug().Msg("No fhir.sqlFile configured, skipping generic FHIR conversion")
+		log.Debug().Msg("No inputs.sqlFile configured, skipping generic FHIR conversion")
 		return
 	}
 	runFHIRConversion(db, cfg, resolvePath(repoRoot, sqlPath), repoRoot, outputMgr, runID, log)
@@ -207,6 +207,9 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 	}
 
 	for name, sc := range sources {
+		if !sc.LoadsData() {
+			continue
+		}
 		src, err := config.BuildSource(name, sc, repoRoot, watermarkPath, *log)
 		if err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to build source")
@@ -232,8 +235,12 @@ func runTransforms(db *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolo
 
 // runSourceQueries runs FHIR conversion for every SQL file found in queries/<sourceName>/fhir/.
 func runSourceQueries(db *sqlx.DB, cfg *config.Config, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
-	for name := range cfg.Sources {
-		queriesDir := resolvePath(repoRoot, "queries/"+name+"/fhir")
+	root := cfg.QueriesRoot(context.Background(), repoRoot, *log)
+	for name, sc := range cfg.Sources {
+		if !sc.LoadsData() {
+			continue
+		}
+		queriesDir := resolvePath(root, "queries/"+name+"/fhir")
 		entries, err := os.ReadDir(queriesDir)
 		if err != nil {
 			log.Warn().Str("dir", queriesDir).Msg("No query directory found, skipping FHIR conversion")
@@ -296,19 +303,7 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		return
 	}
 
-	profileSvc := converter.NewProfileService(*log)
-	if cfg.FHIR.ProfilesDir != "" {
-		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
-			log.Warn().Err(err).Msg("Failed to load profiles")
-		}
-	}
-
-	conceptMapSvc := converter.NewConceptMapService(*log)
-	if cfg.FHIR.ConceptMapsDir != "" {
-		if err := conceptMapSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)); err != nil {
-			log.Warn().Err(err).Msg("Failed to load concept maps")
-		}
-	}
+	profileSvc, conceptMapSvc, _ := loadTerminology(cfg, repoRoot, log)
 
 	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(renderedQuery)
 	if err != nil {
@@ -395,6 +390,32 @@ func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger)
 	return db
 }
 
+// loadTerminology loads FHIR profiles and ConceptMaps from wherever the config
+// points: the repositories referenced by inputs.profiles / inputs.conceptMaps. It also returns the resolved ConceptMaps
+// directory, which the ConceptMap editor writes back to.
+func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*converter.ProfileService, *converter.ConceptMapService, string) {
+	ctx := context.Background()
+
+	profileSvc := converter.NewProfileService(*log)
+	profilesDir, err := config.ResolveDir(ctx, cfg, cfg.Inputs.Profiles, repoRoot, *log)
+	if err == nil && profilesDir != "" {
+		err = profileSvc.LoadDir(profilesDir)
+	}
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to load profiles")
+	}
+
+	conceptMapSvc := converter.NewConceptMapService(*log)
+	conceptMapsDir, err := config.ResolveDir(ctx, cfg, cfg.Inputs.ConceptMaps, repoRoot, *log)
+	if err == nil && conceptMapsDir != "" {
+		err = conceptMapSvc.LoadDir(conceptMapsDir)
+	}
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to load concept maps")
+	}
+	return profileSvc, conceptMapSvc, conceptMapsDir
+}
+
 // startFHIRServer starts the FHIR API server. It blocks until the server exits.
 func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
 	db := stagingDB
@@ -403,26 +424,27 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 		defer db.Close()
 	}
 
-	configDir := resolvePath(repoRoot, *queryConfigDir)
+	// An explicit -query-config flag wins; otherwise inputs.queryConfig, else config/queries.
+	qcRef := cfg.Inputs.QueryConfig
+	if qcRef.Source == "" {
+		qcRef = config.DirRef{Source: config.BuiltinSource, Path: "config/queries"}
+	}
+	configDir, err := config.ResolveDir(context.Background(), cfg, qcRef, repoRoot, *log)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to resolve query config")
+	}
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "query-config" {
+			configDir = resolvePath(repoRoot, *queryConfigDir)
+		}
+	})
 	compiler, err := querycompiler.New(configDir, repoRoot)
 	if err != nil {
 		log.Fatal().Err(err).Str("configDir", configDir).Msg("Failed to initialise query compiler")
 	}
+	compiler.SetSQLBaseDir(cfg.QueriesRoot(context.Background(), repoRoot, *log))
 
-	profileSvc := converter.NewProfileService(*log)
-	if cfg.FHIR.ProfilesDir != "" {
-		if err := profileSvc.LoadDir(resolvePath(repoRoot, cfg.FHIR.ProfilesDir)); err != nil {
-			log.Warn().Err(err).Msg("Failed to load profiles")
-		}
-	}
-
-	conceptMapsDir := resolvePath(repoRoot, cfg.FHIR.ConceptMapsDir)
-	conceptMapSvc := converter.NewConceptMapService(*log)
-	if cfg.FHIR.ConceptMapsDir != "" {
-		if err := conceptMapSvc.LoadDir(conceptMapsDir); err != nil {
-			log.Warn().Err(err).Msg("Failed to load concept maps")
-		}
-	}
+	profileSvc, conceptMapSvc, conceptMapsDir := loadTerminology(cfg, repoRoot, log)
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
@@ -508,7 +530,7 @@ Configuration (config.yaml):
     inputDir: data/csv
     delimiter: ","
     hasHeader: true
-  fhir:
+  inputs:
     sqlFile: queries/hix/flat/patient_1.sql
   output:
     dir: output

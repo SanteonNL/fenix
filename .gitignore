@@ -47,3 +47,5 @@ test/**/parameters.*.json
 
 config/config.yaml
 !config/config.example.yaml
+# Checkouts of git sources (queries, terminology)
+/.cache/

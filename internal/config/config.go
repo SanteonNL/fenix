@@ -13,13 +13,39 @@ import (
 )
 
 type Config struct {
-	Environment string        `yaml:"environment"` // "dev" (colored output) or "prod" (JSON output)
-	LogLevel    string        `yaml:"logLevel"`    // trace, debug, info, warn, error — defaults to debug in dev, info in prod
-	Staging     StagingConfig `yaml:"staging"`
-	FHIR        FHIRConfig    `yaml:"fhir"`
-	Output      OutputConfig  `yaml:"output"`
-	Sources     SourcesConfig `yaml:"sources"`
-	Deident     DeidentConfig `yaml:"deident"`
+	Environment string `yaml:"environment"` // "dev" (colored output) or "prod" (JSON output)
+	LogLevel    string `yaml:"logLevel"`    // trace, debug, info, warn, error — defaults to debug in dev, info in prod
+
+	// Field order mirrors the YAML order: each block is defined before it is referenced.
+	Sources SourcesConfig `yaml:"sources"` // connections: where data and files come from
+	Inputs  InputsConfig  `yaml:"inputs"`  // which files FENIX uses, as references into sources
+	Staging StagingConfig `yaml:"staging"`
+	Output  OutputConfig  `yaml:"output"`
+	Deident DeidentConfig `yaml:"deident"`
+}
+
+// BuiltinSource is the name every config can reference without declaring it:
+// the FENIX checkout itself (the repo root). Declare a source with the same
+// name to override it.
+const BuiltinSource = "repo"
+
+// InputsConfig says which non-data files FENIX uses. Every entry is a DirRef into
+// a source, so queries and terminology can live in their own (private) git
+// repository instead of next to the binary. An unset entry means the default
+// shown per field, i.e. a path inside the built-in "repo" source.
+type InputsConfig struct {
+	Queries     DirRef `yaml:"queries"`     // root that holds queries/<source>/fhir|dwh/*.sql and queries/dwh/cross; default: the repo root
+	QueryConfig DirRef `yaml:"queryConfig"` // query compiler config (substitutions.yaml, sources/*); default: config/queries
+	Profiles    DirRef `yaml:"profiles"`    // FHIR StructureDefinition .json files
+	ConceptMaps DirRef `yaml:"conceptMaps"` // FHIR ConceptMap .json files
+	SQLFile     string `yaml:"sqlFile"`     // optional single multi-statement SQL file, relative to the repo root (same as the -sql flag)
+}
+
+// DirRef points at a directory inside a source. Only sources that hold files
+// (type local or git) can be referenced.
+type DirRef struct {
+	Source string `yaml:"source"` // key in sources:, or "repo" for the FENIX checkout
+	Path   string `yaml:"path"`   // sub-path inside the source
 }
 
 // DeidentConfig configures de-identification of FHIR output (internal/deident).
@@ -55,6 +81,7 @@ type EndpointConfig struct {
 
 // SourceConfig configures one external data source.
 // type: "luscii" calls the Luscii REST API; "local" reads files from a local directory;
+// "git" is a clone of a (possibly private) git repository, files only;
 // "sqldb" queries an external SQL database and loads results into staging;
 // "sftp" downloads CSV/JSON files from a remote SFTP server.
 type SourceConfig struct {
@@ -72,6 +99,20 @@ type SourceConfig struct {
 	RemoteDir        string                 `yaml:"remote_dir"`        // sftp: remote directory to download files from
 	Endpoints        []EndpointConfig       `yaml:"endpoints"`         // luscii: list of API endpoints to fetch
 	JSONOptions      map[string]interface{} `yaml:"json_options"`      // local/sftp: per-file JSON flattening config
+	URL              string                 `yaml:"url"`               // git: repository URL
+	Ref              string                 `yaml:"ref"`               // git: branch or tag; empty = remote default branch
+	TokenEnv         string                 `yaml:"token_env"`         // git: env var holding an access token (private repos)
+	CacheDir         string                 `yaml:"cache_dir"`         // git: checkout directory, default .cache/sources/<name>
+	Load             *bool                  `yaml:"load"`              // load into staging; default true, except for git. Set false for a local dir that only holds files
+}
+
+// LoadsData reports whether the source is loaded into the staging database. Sources that only
+// provide files (queries, terminology) are not, and have no per-source query conventions either.
+func (sc SourceConfig) LoadsData() bool {
+	if sc.Load != nil {
+		return *sc.Load
+	}
+	return sc.Type != "git"
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:
@@ -119,13 +160,6 @@ func (sc *StagingConfig) SQLiteDriver() string {
 		return sc.Driver
 	}
 	return "sqlite"
-}
-
-type FHIRConfig struct {
-	SQLFile        string `yaml:"sqlFile"`        // Path to multi-statement SQL conversion file
-	Profile        string `yaml:"profile"`        // FHIR profile name or repo, e.g. "sim-on-fhir"
-	ProfilesDir    string `yaml:"profilesDir"`    // Directory with FHIR StructureDefinition .json files
-	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with FHIR ConceptMap .json resources
 }
 
 // OutputConfig selects the output destination via Type ("local" or "datalake").

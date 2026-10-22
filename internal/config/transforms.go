@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,15 @@ import (
 // Files within a directory run in lexicographic order, so prefix with "01_", "02_", etc. when
 // one transform depends on another.
 func RunTransforms(db *sqlx.DB, cfg *Config, repoRoot string, log *zerolog.Logger) {
-	for name := range cfg.Sources {
-		dir := resolveTransformPath(repoRoot, filepath.Join("queries", name, "dwh"))
+	root := cfg.QueriesRoot(context.Background(), repoRoot, *log)
+	for name, sc := range cfg.Sources {
+		if !sc.LoadsData() {
+			continue
+		}
+		dir := resolveTransformPath(root, filepath.Join("queries", name, "dwh"))
 		runTransformDir(db, dir, nil, cfg, log)
 	}
-	runTransformDir(db, resolveTransformPath(repoRoot, filepath.Join("queries", "dwh", "cross")), parseRequires, cfg, log)
+	runTransformDir(db, resolveTransformPath(root, filepath.Join("queries", "dwh", "cross")), parseRequires, cfg, log)
 }
 
 // runTransformDir executes every *.sql file in dir, in lexicographic order. If checkRequires is
