@@ -25,6 +25,10 @@ Content-Type: application/fhir+json
   ]
 }
 
+### 1b. Read the group: returns Group.quantity (member count), not the members
+GET {{base}}/Group/{{createGroup.response.body.$.id}}
+Accept: application/fhir+json
+
 ### 2. Kick off the export (returns 202 immediately; copy the Content-Location header)
 # @name kickoff
 POST {{base}}/Group/{{createGroup.response.body.$.id}}/$export?_type=Patient,Observation

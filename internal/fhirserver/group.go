@@ -186,9 +186,9 @@ func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGroupRead looks up a stored Group and returns it with Member freshly
-// resolved from its member-filter extensions — every call re-evaluates the
-// criteria, so the result always reflects the current source data.
+// handleGroupRead looks up a stored Group and returns it with Quantity freshly
+// computed from its member-filter extensions — every call re-evaluates the
+// criteria, so the count always reflects the current source data.
 func (s *Server) handleGroupRead(w http.ResponseWriter, id string) {
 	s.groupsMu.RLock()
 	stored, ok := s.groups[id]
@@ -207,8 +207,12 @@ func (s *Server) handleGroupRead(w http.ResponseWriter, id string) {
 
 	// Build a response copy rather than mutating the stored definition —
 	// membership is recomputed fresh on every read, never cached.
+	// Only the member count is returned (Group.quantity), not the Patient
+	// references themselves — GET stays small for large cohorts.
 	out := *stored
-	out.Member = members
+	count := len(members)
+	out.Quantity = &count
+	out.Member = nil
 	out.Extension = withMembersRefreshed(stored.Extension, time.Now().UTC())
 
 	w.Header().Set("Content-Type", "application/fhir+json")
