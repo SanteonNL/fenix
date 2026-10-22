@@ -34,7 +34,7 @@ staging:
 fhir:
   sqlFile: ""
   profilesDir: terminology/profiles/sim-on-fhir
-  conceptMapsDir: terminology/conceptmaps/fhir
+  conceptMapsDir: test/data/conceptmaps/fhir
 
 output:
   format: pretty
@@ -53,3 +53,4 @@ sources:
     type: local
     dir: "test/data/sim"
     delimiter: ";"
+

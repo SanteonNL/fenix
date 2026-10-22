@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/rs/zerolog"
 )

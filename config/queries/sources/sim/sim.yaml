@@ -13,7 +13,7 @@
 #   pushdown  FHIR params applied in SQL when the query runs as a STANDALONE
 #             search (GET /r4/<Type>?...).
 #   member_filter  how the same query behaves as a Group member-filter / $export
-#             (cmd/fenix/querycompiler/group.go). All members optional:
+#             (internal/querycompiler/group.go). All members optional:
 #       patient   SQL expression over the query's FIRST (root) statement
 #                 giving the patient number. Default: CAST(id AS TEXT) for
 #                 Patient, SUBSTR("subject.reference", 9) for other types.

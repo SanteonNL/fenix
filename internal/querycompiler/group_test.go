@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/converter"
-	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	_ "modernc.org/sqlite"
 )
 

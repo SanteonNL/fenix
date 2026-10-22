@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )

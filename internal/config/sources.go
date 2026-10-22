@@ -4,8 +4,8 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/SanteonNL/fenix/source"
-	"github.com/SanteonNL/fenix/source/stagingfiles"
+	"github.com/SanteonNL/fenix/internal/source"
+	"github.com/SanteonNL/fenix/internal/source/stagingfiles"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
@@ -13,10 +13,10 @@ import (
 // BuildSource constructs the Source for the given config entry using the source registry.
 // The caller must blank-import the source type packages they need so their init() runs:
 //
-//	_ "github.com/SanteonNL/fenix/source/luscii"
-//	_ "github.com/SanteonNL/fenix/source/sqldb"
-//	_ "github.com/SanteonNL/fenix/source/local"
-//	_ "github.com/SanteonNL/fenix/source/sftp"
+//	_ "github.com/SanteonNL/fenix/internal/source/luscii"
+//	_ "github.com/SanteonNL/fenix/internal/source/sqldb"
+//	_ "github.com/SanteonNL/fenix/internal/source/local"
+//	_ "github.com/SanteonNL/fenix/internal/source/sftp"
 func BuildSource(name string, sc SourceConfig, repoRoot string, watermarkPath string, log zerolog.Logger) (source.Source, error) {
 	stagingDir := sc.StagingDir
 	if stagingDir == "" {

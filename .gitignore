@@ -39,7 +39,7 @@ output/temp/*.json
 
 tmp/
 
-terminology/conceptmaps/fhir/converted/
+test/data/conceptmaps/fhir/converted/
 
 # Sensitive parameter files — keep only templates tracked
 test/**/parameters.*.json

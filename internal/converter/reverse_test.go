@@ -12,7 +12,7 @@ import (
 // source rows that hold the source code.
 func TestReverseTranslate_SimObservationCode(t *testing.T) {
 	svc := NewConceptMapService(zerolog.Nop())
-	if err := svc.LoadJSON("../../../terminology/conceptmaps/fhir/sim-observation-code.json"); err != nil {
+	if err := svc.LoadJSON("../../test/data/conceptmaps/fhir/sim-observation-code.json"); err != nil {
 		t.Fatal(err)
 	}
 	const vs = "https://decor.nictiz.nl/fhir/4.0/sansa-/ValueSet/2.16.840.1.113883.2.4.3.11.60.909.11.2--20241203090354"

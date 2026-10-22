@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/converter"
-	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 )
 
 const (
-	configDir  = "../../../config/queries"
-	sqlBaseDir = "../../../"
-	outputDir  = "../../../output/query-compile-test"
+	configDir  = "../../config/queries"
+	sqlBaseDir = "../../"
+	outputDir  = "../../output/query-compile-test"
 )
 
 func TestResolve(t *testing.T) {
@@ -129,7 +129,7 @@ func TestResolve(t *testing.T) {
 		},
 		{
 			// patient is pushed down too, scoping to one patient's rows —
-			// used by Group/$export (cmd/fenix/fhirserver/export.go) to fire
+			// used by Group/$export (internal/fhirserver/export.go) to fire
 			// this query once per member id.
 			name:         "sim_Observation_patient",
 			source:       "sim",

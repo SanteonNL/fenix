@@ -1,5 +1,5 @@
 ### Group POST/GET/$export demo — see docs/fenix_architecture.md,
-### cmd/fenix/fhirserver/group.go and export.go
+### internal/fhirserver/group.go and export.go
 #
 # Uses the REAL "sim" test data (test/data/sim/) through the REAL FHIR
 # conversion SQL (queries/sim/fhir/*.sql), loaded via the real ETL pipeline
@@ -32,7 +32,7 @@ GET {{base}}/Patient
 Accept: application/fhir+json
 
 ### ─────────────────────────────────────────────────────────────────────
-### Struct-based param fallback (cmd/fenix/fhirserver/paramfilter.go) —
+### Struct-based param fallback (internal/fhirserver/paramfilter.go) —
 ### A param that isn't configured as SQL pushdown (config/queries/sources/sim/sim.yaml)
 ### is not applied by the SQL, which then returns every row. filterUnwiredParams
 ### catches it afterwards instead: it looks up the param's SearchParameter type
@@ -40,7 +40,7 @@ Accept: application/fhir+json
 ### filters the already-converted FHIR structs in Go. Same observations as
 ### test/data/sim/AlgemeneMeting.csv: 123 has codes MCD_A/MCD_L, 456 has
 ### MCD_B/LA6751-7, 789 (preliminary) has MCD_P. MCD_B is concept-mapped to DEMO_B
-### (terminology/conceptmaps/fhir/sim-observation-code.json), so FHIR searches use DEMO_B.
+### (test/data/conceptmaps/fhir/sim-observation-code.json), so FHIR searches use DEMO_B.
 ### ─────────────────────────────────────────────────────────────────────
 
 ### Token param alone — only the one observation coded MCD_A (patient 123). code IS pushed down
@@ -60,7 +60,7 @@ Accept: application/fhir+json
 ### date is also unwired (not in sim.yaml's pushdown list), and maps to the
 ### choice-type field Observation.effective[x] — filterUnwiredParams resolves
 ### that to the actual JSON key (effectiveDateTime here) via resolveField's
-### prefix fallback (cmd/fenix/fhirserver/paramfilter.go). All 5 seeded
+### prefix fallback (internal/fhirserver/paramfilter.go). All 5 seeded
 ### observations are dated 2023-10-13, so ge2023-10-14 proves the filter is
 ### real (0 results, not just passed through) while ge2023-10-13 proves it
 ### isn't over-filtering (all 5 still come back).

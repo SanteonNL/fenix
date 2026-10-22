@@ -33,7 +33,7 @@
       "label": "go: test",
       "type": "shell",
       "command": "go",
-      "args": ["test", "-v", "./cmd/fenix/..."],
+      "args": ["test", "-v", "./..."],
       "options": {
         "env": {
           "CGO_ENABLED": "0"

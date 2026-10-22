@@ -40,8 +40,8 @@ func main() {
 	// Filter concept maps
 	cms = utils.FilterConceptMaps(cms, os.Getenv("ORGANIZATION")+"_"+os.Getenv("SOURCE")+"_")
 
-	var ARTDECOR_PATH = "../../terminology/conceptmaps/artdecor"
-	var FHIR_PATH = "../../terminology/conceptmaps/fhir"
+	var ARTDECOR_PATH = "../../test/data/conceptmaps/artdecor"
+	var FHIR_PATH = "../../test/data/conceptmaps/fhir"
 	var FORMAT = "json"
 
 	// Create directories if they don't exist

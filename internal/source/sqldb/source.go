@@ -10,7 +10,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/SanteonNL/fenix/source"
+	"github.com/SanteonNL/fenix/internal/source"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/microsoft/go-mssqldb"
 	"github.com/rs/zerolog"

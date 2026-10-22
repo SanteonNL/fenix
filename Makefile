@@ -1,4 +1,5 @@
 .PHONY: serve build load test tidy docker-up docker-down kill-port deident-demo deident-pipeline-demo
+sim: go run ./cmd/fenix -config config/group-demo.yaml -cmd serve -source sim
 
 serve: docker-up kill-port
 	air
@@ -11,7 +12,7 @@ load: docker-up
 	CGO_ENABLED=0 go run ./cmd/fenix -cmd load $(SOURCE)
 
 test:
-	CGO_ENABLED=0 go test -v ./cmd/fenix/... ./internal/deident/...
+	CGO_ENABLED=0 go test -v ./...
 
 # Prints a Patient + Observation before/after internal/deident, with the
 # coverage report in between — see cmd/deidentdemo.

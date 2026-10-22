@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/querycompiler"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )
@@ -34,7 +34,7 @@ const (
 // groupJSON marshals a Group with "resourceType" as the first JSON property.
 // The FHIR spec doesn't require this (json.html: "parsers cannot assume that
 // the resourceType property will come first"), but it's the convention every
-// other FENIX response follows — see fhirOutput in cmd/fenix/converter,
+// other FENIX response follows — see fhirOutput in internal/converter,
 // which exists for exactly this reason, because the generated fhir.* models'
 // own MarshalJSON always appends resourceType last.
 type groupJSON fhir.Group

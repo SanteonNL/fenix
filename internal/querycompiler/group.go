@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/SanteonNL/fenix/cmd/fenix/converter"
+	"github.com/SanteonNL/fenix/internal/converter"
 )
 
 // groupCol is the single column of a group query: the patient number.

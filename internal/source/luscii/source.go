@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	lusciiclient "github.com/SanteonNL/fenix/models/luscii/client"
-	"github.com/SanteonNL/fenix/source"
-	"github.com/SanteonNL/fenix/source/local"
+	lusciiclient "github.com/SanteonNL/fenix/internal/models/luscii/client"
+	"github.com/SanteonNL/fenix/internal/source"
+	"github.com/SanteonNL/fenix/internal/source/local"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
