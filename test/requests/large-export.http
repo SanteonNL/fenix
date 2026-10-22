@@ -1,0 +1,54 @@
+### Large Group $export — see config/large-export.yaml for setup.
+#
+# $export is asynchronous: the POST returns 202 at once with a status URL in
+# Content-Location; poll it until it answers 200 with the manifest, then
+# download each file. Run the requests below in order.
+
+@host = http://127.0.0.1:8080
+@base = {{host}}/r4
+
+### 1. Create a group: every patient with a final Observation
+# @name createGroup
+POST {{base}}/Group
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Group",
+  "type": "person",
+  "actual": true,
+  "name": "Large export - patients with a final Observation",
+  "extension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueString": "Observation?status=final"
+    }
+  ]
+}
+
+### 2. Kick off the export (returns 202 immediately; copy the Content-Location header)
+# @name kickoff
+POST {{base}}/Group/{{createGroup.response.body.$.id}}/$export?_type=Patient,Observation
+Prefer: respond-async
+
+### 3. Poll: 202 + X-Progress while running, 200 + manifest when done,
+###    or the failure's own status + OperationOutcome if it failed
+GET {{host}}{{kickoff.response.headers.Content-Location}}
+
+### 4. Download a file from the manifest (streamed from disk)
+GET {{host}}/r4/$export-files/dfcb4d3a-809b-4357-b039-94a69b0151a3/Observation.ndjson
+
+### 5. Cancel a running export / discard a finished one
+DELETE {{host}}{{kickoff.response.headers.Content-Location}}
+
+### ─────────────────────────────────────────────────────────────────────
+### Paged search: _count/_offset page the result in SQL; the Bundle carries
+### `total` and a `next` link while more follows.
+### ─────────────────────────────────────────────────────────────────────
+
+### First page of 500 Observations
+GET {{base}}/Observation?status=final&_count=500
+Accept: application/fhir+json
+
+### Third page
+GET {{base}}/Observation?status=final&_count=500&_offset=1000
+Accept: application/fhir+json

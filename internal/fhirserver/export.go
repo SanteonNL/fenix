@@ -1,49 +1,95 @@
 package fhirserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )
 
-// exportJob is the result of one completed $export run. FENIX computes the
-// full export synchronously at kickoff time (small SQLite-backed datasets —
-// no real background worker needed) but still exposes the standard Bulk
-// Data Access IG shape (kickoff -> status -> NDJSON), so a real async
-// client (FLARE, see docs/fenix_architecture.md) works against it
-// unmodified: POST .../$export returns 202 immediately, and the status
-// endpoint below simply already has the manifest ready on the first poll.
+// Lifecycle of an exportJob.
+const (
+	exportRunning  = "in-progress"
+	exportComplete = "complete"
+	exportFailed   = "failed"
+)
+
+// exportJob is one $export run. POST .../$export validates the request and
+// returns 202 straight away; the export itself runs in the background and the
+// client polls the status endpoint (Bulk Data Access IG): 202 + X-Progress
+// while running, the manifest when complete, the failure's own status and an
+// OperationOutcome when it failed.
 type exportJob struct {
 	id              string
 	groupID         string
 	transactionTime time.Time
-	output          map[string][]byte // resourceType -> NDJSON bytes
-	counts          map[string]int    // resourceType -> resource count
+
+	cancel    context.CancelFunc // stops the background run (DELETE on the status URL)
+	spoolDir  string             // where the NDJSON files are spooled
+	ownsSpool bool               // spoolDir is a temp folder of this job, removed with it
+
+	mu        sync.Mutex
+	state     string
+	progress  string            // human-readable, served as X-Progress while running
+	errMsg    string            // why it failed
+	errStatus int               // HTTP status to report for the failure
+	files     map[string]string // resourceType -> path of its NDJSON file (spooled to disk, not held in memory)
+	counts    map[string]int    // resourceType -> resource count
+}
+
+func (j *exportJob) setProgress(p string) {
+	j.mu.Lock()
+	j.progress = p
+	j.mu.Unlock()
+}
+
+// removeSpool deletes the job's temp folder, if it owns one. The folder of an
+// export that was given an output directory is kept: it is there to be inspected.
+func (j *exportJob) removeSpool() {
+	if j.ownsSpool {
+		_ = os.RemoveAll(j.spoolDir)
+	}
+}
+
+// exportRequest is everything the background run needs, validated at kickoff.
+type exportRequest struct {
+	resourceTypes  []string
+	elementsByType map[string][]string
+	typeFilters    map[string]map[string]string
+	membersSQL     string
+	runID          string
+	queriesDir     string
+	groupFile      string
 }
 
 // handleGroupExport kicks off a bulk export of a Group's current members —
-// one call that does everything server-side: membership is resolved, each
-// requested resource type (_type, required) is fetched with its query
-// restricted in SQL to the group's members query (searchInGroup), optionally narrowed by its own _typeFilter (a FHIR search like
+// membership is resolved, each requested resource type (_type, required) is
+// fetched with its query restricted in SQL to the group's members query
+// (searchInGroup), optionally narrowed by its own _typeFilter (a FHIR search like
 // "Observation?status=final", independent of the group's own member-filter
 // criteria — see parseTypeFilters), then — when de-identification is
 // configured — de-identified under a single shared RunID across every
-// resource type, so a
-// hashed Observation.subject matches the same patient's hashed Patient.id
-// within this job's output (deidentify, by contrast, gives every plain
-// search its own RunID, so two separate /r4/{type} calls never cross-
-// reference correctly — see its comment in server.go). The caller never
-// sees a raw patient id: not in this response, and not in the
-// status/NDJSON endpoints it hands back.
+// resource type, so a hashed Observation.subject matches the same patient's
+// hashed Patient.id within this job's output (deidentify, by contrast, gives
+// every plain search its own RunID, so two separate /r4/{type} calls never
+// cross-reference correctly — see its comment in server.go). The caller never
+// sees a raw patient id: not in this response, and not in the status/NDJSON
+// endpoints it hands back.
+//
+// Everything that can be checked cheaply (group, parameters, that every type
+// is configured, the members query) is checked here and answered with a plain
+// 4xx/5xx. The data work happens in runExport, after the 202.
 func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, groupID string) {
 	if r.Method != http.MethodPost {
 		fhirError(w, "method not allowed; POST to kick off $export", http.StatusMethodNotAllowed)
@@ -64,6 +110,12 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		return
 	}
 	resourceTypes := splitNonEmpty(rawType, ",")
+	for _, rt := range resourceTypes {
+		if !validResourceTypeName(rt) {
+			fhirError(w, fmt.Sprintf("invalid resource type %q in _type", rt), http.StatusBadRequest)
+			return
+		}
+	}
 	elementsByType := parseElements(r.URL.Query().Get("_elements"))
 	typeFilters, err := parseTypeFilters(r.URL.Query()["_typeFilter"])
 	if err != nil {
@@ -71,10 +123,24 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		return
 	}
 
+	// Compiling is cheap (no query runs), so an unconfigured type or a bad
+	// filter is still answered with a 400 here instead of failing the job later.
+	for _, rt := range resourceTypes {
+		rendered, err := s.render(rt, typeFilters[rt], "")
+		if err != nil {
+			fhirError(w, fmt.Sprintf("resource type %q: %v", rt, err), http.StatusBadRequest)
+			return
+		}
+		if len(rendered) == 0 {
+			fhirError(w, fmt.Sprintf("resource type %q is not configured for source %q", rt, s.source), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// The group's membership as ONE SQL query (member-filters joined on
-	// patient number). It is embedded in every resource's query below, so
-	// each type is fetched already scoped to the group — no per-patient
-	// queries and no filtering afterwards.
+	// patient number). It is embedded in every resource's query, so each type
+	// is fetched already scoped to the group — no per-patient queries and no
+	// filtering afterwards.
 	membersSQL, err := groupMembersSQL(s, group)
 	if err != nil {
 		s.log.Error().Err(err).Str("groupId", groupID).Msg("Failed to build Group members query for export")
@@ -82,29 +148,37 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		return
 	}
 
-	// One RunID for the whole job — the fix for the cross-resource-type
-	// hashing gap described above.
-	runID := uuid.NewString()
 	job := &exportJob{
 		id:              uuid.NewString(),
 		groupID:         groupID,
 		transactionTime: time.Now().UTC(),
-		output:          make(map[string][]byte, len(resourceTypes)),
+		state:           exportRunning,
+		progress:        "starting",
+		files:           make(map[string]string, len(resourceTypes)),
 		counts:          make(map[string]int, len(resourceTypes)),
 	}
+	req := exportRequest{
+		resourceTypes:  resourceTypes,
+		elementsByType: elementsByType,
+		typeFilters:    typeFilters,
+		membersSQL:     membersSQL,
+		// One RunID for the whole job — the fix for the cross-resource-type
+		// hashing gap described above.
+		runID:     uuid.NewString(),
+		groupFile: groupQueryFileName(group),
+	}
 
-	// Everything this export ran is written to <outputDir>/exports/
+	// Everything this export runs is written to <outputDir>/exports/
 	// <timestamp>_<group_name>/, so the queries and their results can be inspected:
 	//   queries/  Group_<group_name>.sql and one <Type>_<queryName>.sql per compiled query
 	//   data/     the resulting <Type>.ndjson per resource type
-	groupFile := groupQueryFileName(group)
-	var queriesDir, dataDir string
+	var dataDir string
 	if s.outputDir != "" {
 		exportDir, err := createExportDir(filepath.Join(s.outputDir, "exports"), job.transactionTime, group)
 		if err == nil {
-			queriesDir = filepath.Join(exportDir, "queries")
+			req.queriesDir = filepath.Join(exportDir, "queries")
 			dataDir = filepath.Join(exportDir, "data")
-			for _, d := range []string{queriesDir, dataDir} {
+			for _, d := range []string{req.queriesDir, dataDir} {
 				if err = os.Mkdir(d, 0755); err != nil {
 					break
 				}
@@ -112,66 +186,113 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		}
 		if err != nil {
 			s.log.Warn().Err(err).Str("dir", exportDir).Msg("Export: failed to create export folders")
-			queriesDir, dataDir = "", ""
-		} else if err := os.WriteFile(filepath.Join(queriesDir, groupFile), []byte(membersSQL), 0644); err != nil {
+			req.queriesDir, dataDir = "", ""
+		} else if err := os.WriteFile(filepath.Join(req.queriesDir, req.groupFile), []byte(membersSQL), 0644); err != nil {
 			s.log.Warn().Err(err).Msg("Export: failed to write group query")
 		}
 	}
 
-	for _, resourceType := range resourceTypes {
-		scoped, found, err := s.searchInGroup(resourceType, typeFilters[resourceType], membersSQL, queriesDir, groupFile)
+	// The NDJSON files are spooled to disk as they are produced, never held
+	// whole in memory: in the export folder when there is one, else a temp
+	// folder owned by this job.
+	job.spoolDir = dataDir
+	if job.spoolDir == "" {
+		job.spoolDir, err = os.MkdirTemp("", "fenix-export-")
 		if err != nil {
-			s.log.Error().Err(err).Str("resourceType", resourceType).Str("groupId", groupID).Msg("Export: search failed")
-			fhirError(w, fmt.Sprintf("exporting %s: %v", resourceType, err), http.StatusInternalServerError)
+			fhirError(w, fmt.Sprintf("creating export spool directory: %v", err), http.StatusInternalServerError)
 			return
 		}
-		if !found {
-			fhirError(w, fmt.Sprintf("resource type %q is not configured for source %q", resourceType, s.source), http.StatusBadRequest)
-			return
-		}
-
-		if s.deidentRuleset != nil {
-			var elements map[string][]string
-			if decl, ok := elementsByType[resourceType]; ok {
-				elements = map[string][]string{resourceType: decl}
-			}
-			if err := s.deidentifyWithRunID(scoped, elements, runID); err != nil {
-				s.log.Error().Err(err).Str("resourceType", resourceType).Str("groupId", groupID).Msg("Export: de-identification failed")
-				fhirError(w, fmt.Sprintf("de-identifying %s: %v", resourceType, err), http.StatusUnprocessableEntity)
-				return
-			}
-		}
-
-		ndjson, err := converter.ExportToNDJSON(scoped)
-		if err != nil {
-			s.log.Error().Err(err).Str("resourceType", resourceType).Msg("Export: NDJSON serialization failed")
-			fhirError(w, fmt.Sprintf("serializing %s: %v", resourceType, err), http.StatusInternalServerError)
-			return
-		}
-
-		if dataDir != "" {
-			if err := os.WriteFile(filepath.Join(dataDir, resourceType+".ndjson"), ndjson, 0644); err != nil {
-				s.log.Warn().Err(err).Str("resourceType", resourceType).Msg("Export: failed to write result file")
-			}
-		}
-
-		job.output[resourceType] = ndjson
-		job.counts[resourceType] = len(scoped)
+		job.ownsSpool = true
 	}
+
+	// The run outlives this request, so it gets its own context; DELETE on the
+	// status URL cancels it.
+	ctx, cancel := context.WithCancel(context.Background())
+	job.cancel = cancel
 
 	s.exportsMu.Lock()
 	s.exports[job.id] = job
 	s.exportsMu.Unlock()
 
-	s.log.Info().
-		Str("groupId", groupID).
-		Str("jobId", job.id).
-		Strs("types", resourceTypes).
-		Bool("deidentified", s.deidentRuleset != nil).
-		Msg("Export job completed")
+	go s.runExport(ctx, job, req)
 
 	w.Header().Set("Content-Location", "/r4/$export-status/"+job.id)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// runExport does the export's data work in the background and records the
+// outcome on job. The batches of a resource type are fetched in parallel (see
+// exportType); the job only turns complete if every type succeeded, so a
+// failed de-identification never leaves anything servable.
+func (s *Server) runExport(ctx context.Context, job *exportJob, req exportRequest) {
+	defer job.cancel()
+	start := time.Now()
+	if s.exportGate != nil {
+		s.exportGate()
+	}
+
+	fail := func(status int, err error) {
+		job.removeSpool()
+		job.mu.Lock()
+		job.state, job.errMsg, job.errStatus = exportFailed, err.Error(), status
+		job.mu.Unlock()
+		s.log.Error().Err(err).Str("jobId", job.id).Str("groupId", job.groupID).Msg("Export failed")
+	}
+
+	// Resolve the group's patients once, then export them in batches: each
+	// batch is a bounded amount of rows to hold in memory, and batches run in
+	// parallel over the connection pool. The ids are sorted so every run
+	// splits, and writes, the same way.
+	job.setProgress("listing group members")
+	memberIDs, err := s.converter.QueryStringsContext(ctx, req.membersSQL)
+	if err != nil {
+		fail(http.StatusInternalServerError, fmt.Errorf("failed to resolve group members: %w", err))
+		return
+	}
+	sort.Strings(memberIDs)
+	batches := chunk(memberIDs, s.exportBatch())
+
+	for i, resourceType := range req.resourceTypes {
+		var elements map[string][]string
+		if decl, ok := req.elementsByType[resourceType]; ok {
+			elements = map[string][]string{resourceType: decl}
+		}
+		path := filepath.Join(job.spoolDir, resourceType+".ndjson")
+		n, status, err := s.exportType(ctx, exportTypeJob{
+			resourceType: resourceType,
+			filters:      req.typeFilters[resourceType],
+			batches:      batches,
+			elements:     elements,
+			runID:        req.runID,
+			queriesDir:   req.queriesDir,
+			groupFile:    req.groupFile,
+			path:         path,
+			progress: func(done int) {
+				job.setProgress(fmt.Sprintf("%s: %d/%d batches (type %d of %d)", resourceType, done, len(batches), i+1, len(req.resourceTypes)))
+			},
+		})
+		if err != nil {
+			fail(status, fmt.Errorf("exporting %s: %w", resourceType, err))
+			return
+		}
+		job.mu.Lock()
+		job.files[resourceType] = path
+		job.counts[resourceType] = n
+		job.mu.Unlock()
+	}
+
+	job.mu.Lock()
+	job.state, job.progress = exportComplete, "complete"
+	job.mu.Unlock()
+
+	s.log.Info().
+		Str("groupId", job.groupID).
+		Str("jobId", job.id).
+		Strs("types", req.resourceTypes).
+		Int("patients", len(memberIDs)).
+		Bool("deidentified", s.deidentRuleset != nil).
+		Dur("took", time.Since(start)).
+		Msg("Export job completed")
 }
 
 // groupQueryFileName names the file holding a Group's members query:
@@ -234,11 +355,14 @@ func createExportDir(parent string, t time.Time, group *fhir.Group) (string, err
 	}
 }
 
-// handleExportStatus serves the completed job's manifest. Real async
-// servers return 202+X-Progress while work is in flight; FENIX's job is
-// always already done by the time it exists (see handleGroupExport), so
-// this always returns 200 with the full manifest.
-func (s *Server) handleExportStatus(w http.ResponseWriter, jobID string) {
+// handleExportStatus is the polling endpoint of a kicked-off export (Bulk Data
+// Access IG):
+//   - running:   202 Accepted with X-Progress (and Retry-After)
+//   - complete:  200 with the manifest
+//   - failed:    the failure's own status with an OperationOutcome
+//   - DELETE:    cancels a running export / discards a finished one (202), after
+//     which the job is gone (404)
+func (s *Server) handleExportStatus(w http.ResponseWriter, r *http.Request, jobID string) {
 	s.exportsMu.RLock()
 	job, ok := s.exports[jobID]
 	s.exportsMu.RUnlock()
@@ -247,17 +371,62 @@ func (s *Server) handleExportStatus(w http.ResponseWriter, jobID string) {
 		return
 	}
 
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodDelete:
+		job.cancel()
+		s.exportsMu.Lock()
+		delete(s.exports, jobID)
+		s.exportsMu.Unlock()
+		// A run that is still going removes its own spool when it notices the
+		// cancellation; one that already finished is cleaned up here.
+		job.mu.Lock()
+		finished := job.state != exportRunning
+		job.mu.Unlock()
+		if finished {
+			job.removeSpool()
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	default:
+		fhirError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	job.mu.Lock()
+	state, progress, errMsg, errStatus := job.state, job.progress, job.errMsg, job.errStatus
+	files := make(map[string]string, len(job.files))
+	for k, v := range job.files {
+		files[k] = v
+	}
+	counts := make(map[string]int, len(job.counts))
+	for k, v := range job.counts {
+		counts[k] = v
+	}
+	job.mu.Unlock()
+
+	switch state {
+	case exportRunning:
+		w.Header().Set("X-Progress", progress)
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusAccepted)
+		return
+	case exportFailed:
+		fhirError(w, errMsg, errStatus)
+		return
+	}
+
 	type manifestOutput struct {
 		Type  string `json:"type"`
 		URL   string `json:"url"`
 		Count int    `json:"count"`
 	}
-	outputs := make([]manifestOutput, 0, len(job.output))
-	for resourceType := range job.output {
+	outputs := make([]manifestOutput, 0, len(files))
+	for resourceType := range files {
 		outputs = append(outputs, manifestOutput{
 			Type:  resourceType,
 			URL:   fmt.Sprintf("/r4/$export-files/%s/%s.ndjson", job.id, resourceType),
-			Count: job.counts[resourceType],
+			Count: counts[resourceType],
 		})
 	}
 	sort.Slice(outputs, func(i, j int) bool { return outputs[i].Type < outputs[j].Type })
@@ -292,14 +461,27 @@ func (s *Server) handleExportFile(w http.ResponseWriter, jobID, filename string)
 	}
 
 	resourceType := strings.TrimSuffix(filename, ".ndjson")
-	data, ok := job.output[resourceType]
+	job.mu.Lock()
+	path, ok := job.files[resourceType]
+	job.mu.Unlock()
 	if !ok {
 		fhirError(w, fmt.Sprintf("no output file %q for export job %q", filename, jobID), http.StatusNotFound)
 		return
 	}
 
+	f, err := os.Open(path)
+	if err != nil {
+		s.log.Error().Err(err).Str("file", path).Msg("Export: cannot open spooled output")
+		fhirError(w, "export output is no longer available", http.StatusGone)
+		return
+	}
+	defer f.Close()
+
 	w.Header().Set("Content-Type", "application/fhir+ndjson")
-	_, _ = w.Write(data)
+	if st, err := f.Stat(); err == nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+	}
+	_, _ = io.Copy(w, f) // streamed from disk: memory stays flat however large the file
 }
 
 // splitNonEmpty splits s on sep, trims whitespace, and drops empty entries.

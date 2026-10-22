@@ -22,6 +22,8 @@ type Config struct {
 	Staging StagingConfig `yaml:"staging"`
 	Output  OutputConfig  `yaml:"output"`
 	Deident DeidentConfig `yaml:"deident"`
+
+	Performance PerformanceConfig `yaml:"performance"` // optional: connection pool and concurrency of the FHIR API server
 }
 
 // BuiltinSource is the name every config can reference without declaring it:
@@ -104,6 +106,7 @@ type SourceConfig struct {
 	TokenEnv         string                 `yaml:"token_env"`         // git: env var holding an access token (private repos)
 	CacheDir         string                 `yaml:"cache_dir"`         // git: checkout directory, default .cache/sources/<name>
 	Load             *bool                  `yaml:"load"`              // load into staging; default true, except for git. Set false for a local dir that only holds files
+	Pool             PoolConfig             `yaml:"pool"`              // sqldb: connection pool used when the FHIR API server queries this source directly (-data-source)
 }
 
 // LoadsData reports whether the source is loaded into the staging database. Sources that only
@@ -133,6 +136,7 @@ type StagingConfig struct {
 	Path       string              `yaml:"path"`            // sqlite: file path; omit or "" for in-memory (default)
 	Connection string              `yaml:"connection"`      // postgres/sqlserver: full connection string
 	Files      *StagingFilesConfig `yaml:"files,omitempty"` // optional: also write staging data to files
+	Pool       PoolConfig          `yaml:"pool"`            // optional: connection pool used when the FHIR API server queries the staging database
 }
 
 // StagingFilesConfig enables writing staging data to flat CSV files and hierarchical JSON files
@@ -237,7 +241,8 @@ func NewStagingDB(cfg *Config) (*sqlx.DB, error) {
 				}
 			}
 		}
-		return sqlx.Connect(cfg.Staging.SQLiteDriver(), dbPath)
+		driver := cfg.Staging.SQLiteDriver()
+		return sqlx.Connect(driver, sqliteDSN(driver, dbPath))
 	case "postgres":
 		return sqlx.Connect("postgres", cfg.Staging.Connection)
 	case "sqlserver":
@@ -296,4 +301,25 @@ func stripYAMLComment(line string) string {
 		}
 	}
 	return line
+}
+
+// sqliteDSN adds write-friendly settings to the DSN of a SQLite *file*.
+//
+// The loaders insert one row per statement, and SQLite's defaults commit (and
+// fsync) every one of them: loading tens of thousands of rows took minutes.
+// WAL with synchronous=NORMAL drops the per-commit fsync, and also lets the
+// FHIR API read while a load writes. That is safe here: the staging database
+// holds nothing that cannot be rebuilt by loading the sources again. An
+// in-memory database needs none of this and is returned as is, and so is a
+// DSN that already carries its own settings.
+func sqliteDSN(driver, path string) string {
+	if path == ":memory:" || strings.Contains(path, "?") {
+		return path
+	}
+	switch driver {
+	case "sqlite3": // mattn
+		return path + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
+	default: // modernc
+		return path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
+	}
 }

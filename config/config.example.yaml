@@ -93,6 +93,19 @@ staging:
   # connection: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix_staging;encrypt=false;TrustServerCertificate=true" # sqlserver
   # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
   # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
+  # pool:                  # connection pool when the FHIR API serves from this database (all optional)
+  #   maxOpenConns: 8      # default: one per CPU for a SQLite file, 16 for SQL Server/Postgres; always 1 for in-memory SQLite
+  #   maxIdleConns: 8      # default: maxOpenConns
+  #   connMaxLifetime: 30m
+  #   connMaxIdleTime: 5m
+  # A sources.<name>.pool block does the same for a SQL Server used directly via -data-source.
+
+# FHIR API server tuning, all optional (see config/large-export.yaml for a worked example):
+# performance:
+#   statementWorkers: 8     # statements of one query run at once; default: the pool size
+#   buildWorkers: 12        # goroutines building+validating resources; default: number of CPUs
+#   exportBatchSize: 1000   # patients per Group $export batch (bounds memory); default 1000
+#   exportWorkers: 4        # export batches in flight at once; default 4
 
 output:
   format: pretty          # json | ndjson | pretty

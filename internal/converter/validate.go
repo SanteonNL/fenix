@@ -30,9 +30,15 @@ func validateThroughStruct(raw map[string]interface{}, logger zerolog.Logger) (i
 		return raw, nil
 	}
 
+	// Pretty-printing a resource is expensive; only do it when the debug
+	// lines below will actually be written.
+	debug := logger.GetLevel() <= zerolog.DebugLevel
+
 	// Log before coercion
-	rawBefore, _ := json.MarshalIndent(raw, "", "  ")
-	logger.Debug().RawJSON("raw_before_coerce", rawBefore).Str("type", resourceType).Msg("Before coercing SQLite types")
+	if debug {
+		rawBefore, _ := json.MarshalIndent(raw, "", "  ")
+		logger.Debug().RawJSON("raw_before_coerce", rawBefore).Str("type", resourceType).Msg("Before coercing SQLite types")
+	}
 
 	coerceSQLiteTypes(raw, resourceType)
 
@@ -40,8 +46,10 @@ func validateThroughStruct(raw map[string]interface{}, logger zerolog.Logger) (i
 	normalizeNestedArrays(raw, resourceType)
 
 	// Log after coercion and normalization
-	rawAfter, _ := json.MarshalIndent(raw, "", "  ")
-	logger.Debug().RawJSON("raw_after_coerce", rawAfter).Str("type", resourceType).Msg("After coercing SQLite types")
+	if debug {
+		rawAfter, _ := json.MarshalIndent(raw, "", "  ")
+		logger.Debug().RawJSON("raw_after_coerce", rawAfter).Str("type", resourceType).Msg("After coercing SQLite types")
+	}
 
 	data, err := json.Marshal(raw)
 	if err != nil {

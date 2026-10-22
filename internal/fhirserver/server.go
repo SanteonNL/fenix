@@ -1,11 +1,13 @@
 package fhirserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -41,6 +43,13 @@ type Server struct {
 
 	exportsMu sync.RWMutex
 	exports   map[string]*exportJob // $export jobs kicked off via POST /r4/Group/{id}/$export, keyed by job id
+
+	// exportGate, when set, is called as an export run starts; tests use it to
+	// hold a run while they look at its in-progress state.
+	exportGate func()
+
+	exportBatchSize int // patients per export batch; 0 = defaultExportBatchSize
+	exportWorkers   int // export batches in flight at once; 0 = defaultExportWorkers
 }
 
 // New creates a Server.
@@ -72,6 +81,12 @@ func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source
 		groups:         make(map[string]*fhir.Group),
 		exports:        make(map[string]*exportJob),
 	}
+}
+
+// SetExportTuning sets how Group $export splits its work: patients per batch
+// and batches in flight at once. 0 keeps the default. Call before serving.
+func (s *Server) SetExportTuning(batchSize, workers int) {
+	s.exportBatchSize, s.exportWorkers = batchSize, workers
 }
 
 // Handler returns an http.Handler for the FHIR API.
@@ -122,7 +137,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			fhirError(w, "not found", http.StatusNotFound)
 			return
 		}
-		s.handleExportStatus(w, segments[1])
+		s.handleExportStatus(w, r, segments[1])
 		return
 	case "$export-files":
 		if len(segments) != 3 {
@@ -146,13 +161,33 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// _count / _offset page the result; they are not search params, so they
+	// must not reach the query compiler or the in-Go param filter.
+	count, offset, err := parsePaging(fhirParams)
+	if err != nil {
+		fhirError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	delete(fhirParams, "_count")
+	delete(fhirParams, "_offset")
+
 	s.log.Info().
 		Str("resourceType", resourceType).
 		Str("source", s.source).
 		Any("params", fhirParams).
 		Msg("FHIR search request")
 
-	resources, found, err := s.search(resourceType, fhirParams)
+	var (
+		resources []interface{}
+		found     bool
+		total     int
+	)
+	if count > 0 {
+		resources, total, found, err = s.searchPage(r.Context(), resourceType, fhirParams, offset, count)
+	} else {
+		resources, found, err = s.searchContext(r.Context(), resourceType, fhirParams)
+		total = len(resources)
+	}
 	if err != nil {
 		s.log.Error().Err(err).Str("resourceType", resourceType).Msg("FHIR search failed")
 		fhirError(w, err.Error(), http.StatusInternalServerError)
@@ -179,8 +214,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	bundle := map[string]interface{}{
 		"resourceType": "Bundle",
 		"type":         "searchset",
-		"total":        len(resources),
+		"total":        total,
 		"entry":        entries,
+	}
+	if count > 0 {
+		bundle["link"] = pagingLinks(r.URL, offset, count, total)
 	}
 
 	w.Header().Set("Content-Type", "application/fhir+json")
@@ -200,33 +238,69 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // rest — it re-checks them against the converted resources in Go, so a
 // param still filters correctly even before it's wired as pushdown.
 func (s *Server) search(resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error) {
-	return s.searchInGroup(resourceType, fhirParams, "", "", "")
+	return s.searchContext(context.Background(), resourceType, fhirParams)
 }
 
-// searchInGroup is search restricted in SQL to the patients of membersSQL (see
-// querycompiler.Compiler.ResolveGroupMembersSQL); an empty membersSQL means no restriction.
-// Compiled queries are written to queryDir, or outputDir/compiled when empty;
-// groupFile names the file holding the group query, for the header of each.
-func (s *Server) searchInGroup(resourceType string, fhirParams map[string]string, membersSQL, queryDir, groupFile string) (resources []interface{}, found bool, err error) {
-	var rendered []querycompiler.RenderedQuery
-	if membersSQL == "" {
-		rendered, err = s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
-	} else {
-		rendered, err = s.compiler.ResolveInGroup(s.source, s.groupID, resourceType, fhirParams, membersSQL)
-	}
+// searchContext is search whose database work is cancelled with ctx.
+func (s *Server) searchContext(ctx context.Context, resourceType string, fhirParams map[string]string) (resources []interface{}, found bool, err error) {
+	return s.searchInGroup(ctx, resourceType, fhirParams, searchOpts{})
+}
+
+// searchOpts are the extras of searchInGroup beyond the resource type and params.
+type searchOpts struct {
+	// membersSQL restricts the search in SQL to the patients it selects (see
+	// querycompiler.Compiler.ResolveGroupMembersSQL); empty means no restriction.
+	membersSQL string
+	// queryDir is where compiled queries are written, or outputDir/compiled when empty.
+	queryDir string
+	// groupFile names the file holding the group query, for the header of each compiled query.
+	groupFile string
+	// skipWrite leaves the compiled queries unwritten — the same queries were
+	// already written for an earlier batch of the same export.
+	skipWrite bool
+}
+
+// searchInGroup is search, optionally restricted to a group's patients (see searchOpts).
+func (s *Server) searchInGroup(ctx context.Context, resourceType string, fhirParams map[string]string, o searchOpts) (resources []interface{}, found bool, err error) {
+	rendered, err := s.render(resourceType, fhirParams, o.membersSQL)
 	if err != nil {
-		return nil, false, fmt.Errorf("query resolution failed: %w", err)
+		return nil, false, err
 	}
 	if len(rendered) == 0 {
 		return nil, false, nil
 	}
 
 	// Write each rendered query to the output folder for inspection
-	if queryDir == "" && s.outputDir != "" {
-		queryDir = filepath.Join(s.outputDir, "compiled")
+	if !o.skipWrite {
+		queryDir := o.queryDir
+		if queryDir == "" && s.outputDir != "" {
+			queryDir = filepath.Join(s.outputDir, "compiled")
+		}
+		s.writeCompiledQueries(queryDir, resourceType, rendered, o.groupFile)
 	}
-	s.writeCompiledQueries(queryDir, resourceType, rendered, groupFile)
 
+	resources, err = s.convertRendered(ctx, resourceType, fhirParams, rendered)
+	return resources, true, err
+}
+
+// render compiles the queries for (resourceType, fhirParams), restricted to membersSQL when set.
+func (s *Server) render(resourceType string, fhirParams map[string]string, membersSQL string) ([]querycompiler.RenderedQuery, error) {
+	var rendered []querycompiler.RenderedQuery
+	var err error
+	if membersSQL == "" {
+		rendered, err = s.compiler.Resolve(s.source, s.groupID, resourceType, fhirParams)
+	} else {
+		rendered, err = s.compiler.ResolveInGroup(s.source, s.groupID, resourceType, fhirParams, membersSQL)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query resolution failed: %w", err)
+	}
+	return rendered, nil
+}
+
+// convertRendered runs rendered, converts the rows to FHIR resources, and
+// applies the in-Go filter for params SQL did not narrow (see search).
+func (s *Server) convertRendered(ctx context.Context, resourceType string, fhirParams map[string]string, rendered []querycompiler.RenderedQuery) ([]interface{}, error) {
 	// Join all rendered queries into one multi-statement SQL string.
 	// ConvertSQL handles ";" as statement separator, so results from all queries
 	// are merged into a single resource map keyed by resource_id.
@@ -236,17 +310,89 @@ func (s *Server) searchInGroup(resourceType string, fhirParams map[string]string
 	}
 	combinedSQL := strings.Join(sqlParts, ";\n")
 
-	resources, err = s.converter.ConvertSQL(combinedSQL)
+	resources, err := s.converter.ConvertSQLContext(ctx, combinedSQL)
 	if err != nil {
-		return nil, true, fmt.Errorf("conversion failed: %w", err)
+		return nil, fmt.Errorf("conversion failed: %w", err)
 	}
 
+	return filterUnwiredParams(resourceType, fhirParams, s.sqlPushedCodes(resourceType, fhirParams), resources, s.compiler.SearchParamField), nil
+}
+
+// sqlPushedCodes are the params the SQL for (resourceType, fhirParams) really narrows on.
+func (s *Server) sqlPushedCodes(resourceType string, fhirParams map[string]string) map[string]bool {
 	pushed := s.compiler.PushdownCodes(s.source, resourceType)
 	for code := range s.compiler.InexactParams(resourceType, fhirParams) {
 		delete(pushed, code) // not applied in SQL (see InexactParams), so filter it in Go
 	}
-	resources = filterUnwiredParams(resourceType, fhirParams, pushed, resources, s.compiler.SearchParamField)
-	return resources, true, nil
+	return pushed
+}
+
+// searchPage is search for one page of the result: count resources from
+// offset, in resource id order, with total the number of matches overall.
+//
+// When SQL narrows on every param, only the ids of the matches are read to
+// pick the page, and then just the page's rows are fetched and converted — the
+// cost follows the page size, not the table size. When a param can only be
+// filtered in Go (see filterUnwiredParams) the page boundaries are not known
+// until after conversion, so the whole result is converted and then sliced.
+func (s *Server) searchPage(ctx context.Context, resourceType string, fhirParams map[string]string, offset, count int) (page []interface{}, total int, found bool, err error) {
+	rendered, err := s.render(resourceType, fhirParams, "")
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if len(rendered) == 0 {
+		return nil, 0, false, nil
+	}
+	s.writeCompiledQueries(s.compiledDir(), resourceType, rendered, "")
+
+	if hasUnwiredParams(resourceType, fhirParams, s.sqlPushedCodes(resourceType, fhirParams), s.compiler.SearchParamField) {
+		all, err := s.convertRendered(ctx, resourceType, fhirParams, rendered)
+		if err != nil {
+			return nil, 0, true, err
+		}
+		return slicePage(all, offset, count), len(all), true, nil
+	}
+
+	seen := make(map[string]struct{})
+	for _, rq := range rendered {
+		idsSQL, ok := querycompiler.RootIDsSQL(rq)
+		if !ok {
+			continue
+		}
+		ids, err := s.converter.QueryStringsContext(ctx, idsSQL)
+		if err != nil {
+			return nil, 0, true, fmt.Errorf("listing %s ids: %w", resourceType, err)
+		}
+		for _, id := range ids {
+			seen[id] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	total = len(ids)
+
+	if offset >= total {
+		return []interface{}{}, total, true, nil
+	}
+	pageIDs := ids[offset:min(offset+count, total)]
+
+	restricted, err := querycompiler.RestrictToResources(rendered, pageIDs)
+	if err != nil {
+		return nil, 0, true, err
+	}
+	page, err = s.convertRendered(ctx, resourceType, fhirParams, restricted)
+	return page, total, true, err
+}
+
+// compiledDir is where plain searches write their compiled queries ("" = nowhere).
+func (s *Server) compiledDir() string {
+	if s.outputDir == "" {
+		return ""
+	}
+	return filepath.Join(s.outputDir, "compiled")
 }
 
 // deidentify de-identifies resources (all of resourceType, per this

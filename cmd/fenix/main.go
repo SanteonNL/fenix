@@ -418,11 +418,17 @@ func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (
 
 // startFHIRServer starts the FHIR API server. It blocks until the server exits.
 func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, log *zerolog.Logger) {
+	// The pool belongs to the database being queried: the source named by
+	// -data-source, else the staging database.
 	db := stagingDB
+	poolCfg, inMemory := cfg.Staging.Pool, cfg.Staging.IsInMemorySQLite()
 	if *dataSource != "" {
 		db = connectSourceDirectly(*dataSource, cfg, log)
 		defer db.Close()
+		poolCfg, inMemory = cfg.Sources[*dataSource].Pool, false
 	}
+	pool := poolCfg.Apply(db, inMemory)
+	log.Info().Int("maxOpenConns", pool.MaxOpenConns).Int("maxIdleConns", pool.MaxIdleConns).Dur("connMaxLifetime", pool.ConnMaxLifetime).Msg("Database connection pool configured")
 
 	// An explicit -query-config flag wins; otherwise inputs.queryConfig, else config/queries.
 	qcRef := cfg.Inputs.QueryConfig
@@ -447,6 +453,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	profileSvc, conceptMapSvc, conceptMapsDir := loadTerminology(cfg, repoRoot, log)
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
+	conv.SetConcurrency(cfg.Performance.EffectiveStatementWorkers(pool), cfg.Performance.BuildWorkers)
 	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
 
 	var deidentRuleset *deident.Ruleset
@@ -464,6 +471,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	}
 
 	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, conceptMapsDir, conceptMapSvc, *log)
+	srv.SetExportTuning(cfg.Performance.ExportBatch(), cfg.Performance.ExportParallelism())
 
 	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")

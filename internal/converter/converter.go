@@ -2,12 +2,17 @@ package converter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
@@ -18,6 +23,10 @@ import (
 // 10 child nodes each that's 10 000 redundant walks on the same types.
 // The cache makes each type's reflection work happen exactly once.
 var fhirTypeCache sync.Map // string → reflect.Type
+
+// warnLogMu serializes writes of output/warnings.log, since resources are
+// converted concurrently (several requests, export batches).
+var warnLogMu sync.Mutex
 
 // fhirOutput wraps a validated FHIR struct and ensures "resourceType" appears
 // as the first JSON field.
@@ -121,11 +130,40 @@ type FHIRConverter struct {
 	logger     zerolog.Logger
 	profile    *ProfileService
 	conceptMap *ConceptMapService
+
+	// statementWorkers bounds how many statements of one ConvertSQL call run
+	// at the same time (each holds one database connection while reading).
+	// 1 (the default) runs them one after another; raise it only when db is a
+	// real connection pool (see config.ApplyPool) — an in-memory SQLite
+	// database gives every extra connection its own, empty, database.
+	statementWorkers int
+	// buildWorkers bounds the goroutines that turn grouped rows into
+	// validated FHIR resources (CPU only, no database access). 0 means GOMAXPROCS.
+	buildWorkers int
 }
 
 // NewFHIRConverter creates a new converter.
 func NewFHIRConverter(db *sqlx.DB, logger zerolog.Logger, profile *ProfileService, conceptMap *ConceptMapService) *FHIRConverter {
-	return &FHIRConverter{db: db, logger: logger, profile: profile, conceptMap: conceptMap}
+	return &FHIRConverter{db: db, logger: logger, profile: profile, conceptMap: conceptMap, statementWorkers: 1}
+}
+
+// SetConcurrency tunes ConvertSQL's parallelism: statements is how many SQL
+// statements may run concurrently (needs a pooled db, see FHIRConverter), build
+// how many goroutines build and validate resources (0 = GOMAXPROCS).
+// Call it before the converter is shared between goroutines.
+func (fc *FHIRConverter) SetConcurrency(statements, build int) {
+	if statements < 1 {
+		statements = 1
+	}
+	fc.statementWorkers = statements
+	fc.buildWorkers = build
+}
+
+func (fc *FHIRConverter) buildWorkerCount() int {
+	if fc.buildWorkers > 0 {
+		return fc.buildWorkers
+	}
+	return runtime.GOMAXPROCS(0)
 }
 
 // ConvertSQL executes a SQL string that may contain multiple statements separated by ";".
@@ -133,14 +171,45 @@ func NewFHIRConverter(db *sqlx.DB, logger zerolog.Logger, profile *ProfileServic
 // Multiple rows at the same fhir_path + parent_id become array elements in the FHIR resource.
 // Resources that fail FHIR struct validation are logged and skipped.
 func (fc *FHIRConverter) ConvertSQL(query string) ([]interface{}, error) {
+	return fc.ConvertSQLContext(context.Background(), query)
+}
+
+// ConvertSQLContext is ConvertSQL with a context that cancels the running
+// statements (e.g. when the HTTP client goes away). The returned resources are
+// sorted by resource_id, so the output does not depend on goroutine timing.
+func (fc *FHIRConverter) ConvertSQLContext(ctx context.Context, query string) ([]interface{}, error) {
 	fc.logger.Info().Msg("Converting SQL to FHIR")
 
+	stmts := SplitStatements(query)
+	results := make([]*stmtResult, len(stmts))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, fc.statementWorkers)
+	for i, stmt := range stmts {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, stmt string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			res, err := fc.executeStatement(ctx, stmt, i+1)
+			if err != nil {
+				fc.logger.Error().Err(err).Int("statement", i+1).Msg("Statement failed, continuing")
+			}
+			results[i] = res
+		}(i, stmt)
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Merge in statement order so array elements and the root path of a
+	// resource come out the same as when the statements ran sequentially.
 	resources := make(map[string]ResourceResult)
 	rootPaths := make(map[string]string)
-
-	for i, stmt := range SplitStatements(query) {
-		if err := fc.executeStatement(stmt, i+1, resources, rootPaths); err != nil {
-			fc.logger.Error().Err(err).Int("statement", i+1).Msg("Statement failed, continuing")
+	for _, r := range results {
+		if r != nil {
+			r.mergeInto(resources, rootPaths)
 		}
 	}
 
@@ -165,7 +234,12 @@ func (fc *FHIRConverter) SourceCodes(resourceType, field, targetCode string) (co
 // QueryStrings runs query and returns the first column of every row as a
 // string — used for single-column id lists such as a Group's members query.
 func (fc *FHIRConverter) QueryStrings(query string) ([]string, error) {
-	rows, err := fc.db.Queryx(query)
+	return fc.QueryStringsContext(context.Background(), query)
+}
+
+// QueryStringsContext is QueryStrings with a cancellable context.
+func (fc *FHIRConverter) QueryStringsContext(ctx context.Context, query string) ([]string, error) {
+	rows, err := fc.db.QueryxContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -184,76 +258,143 @@ func (fc *FHIRConverter) QueryStrings(query string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// executeStatement runs one SQL statement and feeds its rows into resources.
-func (fc *FHIRConverter) executeStatement(stmt string, n int, resources map[string]ResourceResult, rootPaths map[string]string) error {
-	rows, err := fc.db.Queryx(stmt)
+// stmtResult is the rows of one statement, grouped by resource. Statements
+// are collected separately (so they can run in parallel) and merged afterwards.
+type stmtResult struct {
+	resources map[string]ResourceResult
+	rootPaths map[string]string
+}
+
+// mergeInto adds r's rows to resources/rootPaths. Merging statements in their
+// original order reproduces what a sequential run would have produced.
+func (r *stmtResult) mergeInto(resources map[string]ResourceResult, rootPaths map[string]string) {
+	for resourceID, byPath := range r.resources {
+		dst := resources[resourceID]
+		if dst == nil {
+			// Nothing merged for this resource yet: adopt the map as is.
+			resources[resourceID] = byPath
+			continue
+		}
+		for path, rows := range byPath {
+			dst[path] = append(dst[path], rows...)
+		}
+	}
+	for resourceID, path := range r.rootPaths {
+		if rootPaths[resourceID] == "" {
+			rootPaths[resourceID] = path
+		}
+	}
+}
+
+// Which of the four metadata columns (if any) a result column is.
+const (
+	colData = iota
+	colResourceID
+	colID
+	colParentID
+	colFHIRPath
+)
+
+func classifyColumn(name string) int {
+	switch strings.ToLower(name) {
+	case "resource_id":
+		return colResourceID
+	case "id":
+		return colID
+	case "parent_id":
+		return colParentID
+	case "fhir_path":
+		return colFHIRPath
+	}
+	return colData
+}
+
+// executeStatement runs one SQL statement and groups its rows by resource.
+// The partial result is returned even on error (rows read before a mid-stream
+// failure are kept, as they were when statements fed shared maps directly).
+func (fc *FHIRConverter) executeStatement(ctx context.Context, stmt string, n int) (*stmtResult, error) {
+	rows, err := fc.db.QueryxContext(ctx, stmt)
 	if err != nil {
-		return fmt.Errorf("statement %d: %w", n, err)
+		return nil, fmt.Errorf("statement %d: %w", n, err)
 	}
 	defer rows.Close()
 
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("statement %d: %w", n, err)
+	}
+	kinds := make([]int, len(cols))
+	for i, c := range cols {
+		kinds[i] = classifyColumn(c)
+	}
+	// The values are scanned into reusable slots; database/sql copies []byte
+	// for *interface{} destinations, so keeping them in the row maps is safe.
+	vals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+
+	res := &stmtResult{resources: make(map[string]ResourceResult), rootPaths: make(map[string]string)}
 	count := 0
 	for rows.Next() {
-		raw := make(map[string]interface{})
-		if err := rows.MapScan(raw); err != nil {
+		if err := rows.Scan(ptrs...); err != nil {
 			fc.logger.Error().Err(err).Msg("Row scan failed")
 			continue
 		}
-		processRow(raw, resources, rootPaths)
+		res.addRow(cols, kinds, vals)
 		count++
 	}
 	fc.logger.Debug().Int("statement", n).Int("rows", count).Msg("Statement executed")
-	return rows.Err()
+	return res, rows.Err()
 }
 
 // buildResources converts the grouped ResourceResult map into validated FHIR structs.
 // Each resource is first built as a map, then validated by unmarshaling into the
 // matching fhir.* struct. Invalid resources are logged and skipped.
+//
+// Resources are independent of each other, so they are built by a pool of
+// workers; the output is ordered by resource id.
 func (fc *FHIRConverter) buildResources(resources map[string]ResourceResult, rootPaths map[string]string) []interface{} {
-	result := []interface{}{}
+	ids := make([]string, 0, len(resources))
+	for id := range resources {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	type built struct {
+		out     interface{} // nil when the resource was skipped
+		warning string      // validation error message, if that is why it was skipped
+	}
+	outs := make([]built, len(ids))
+
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := fc.buildWorkerCount(); w > 0; w-- {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(ids) {
+					return
+				}
+				outs[i].out, outs[i].warning = fc.buildResource(ids[i], resources[ids[i]], rootPaths)
+			}
+		}()
+	}
+	wg.Wait()
+
+	result := make([]interface{}, 0, len(ids))
 	warningCounts := map[string]int{}
 	warningDetails := map[string][]string{} // resourceIDs per warning
-	for resourceID, resResult := range resources {
-		rootPath, ok := rootPaths[resourceID]
-		if !ok {
-			fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
-			continue
+	for i, b := range outs {
+		if b.out != nil {
+			result = append(result, b.out)
 		}
-
-		raw, err := buildFHIRResource(resResult, rootPath)
-		if err != nil {
-			fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
-			continue
-		}
-
-		// Debug logging: show the raw data structure before validation
-		rawJSON, _ := json.MarshalIndent(raw, "", "  ")
-		fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
-
-		// Apply concept mappings driven by FHIR profile bindings
-		applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
-
-		// Validate by round-tripping through the typed fhir.* struct.
-		validated, err := validateThroughStruct(raw, fc.logger)
-		if err != nil {
-			warnMsg := err.Error()
-			fc.logger.Warn().
-				Err(err).
-				Str("resourceID", resourceID).
-				Str("resourceType", rootPath).
-				RawJSON("raw", rawJSON).
-				Msg("FHIR validation failed — resource skipped")
-			warningCounts[warnMsg]++
-			warningDetails[warnMsg] = append(warningDetails[warnMsg], resourceID)
-			continue
-		}
-
-		// Typed structs lack a ResourceType field — wrap so it appears first in JSON.
-		// Raw maps (unknown resource types) already carry "resourceType".
-		if _, isMap := validated.(map[string]interface{}); isMap {
-			result = append(result, validated)
-		} else {
-			result = append(result, fhirOutput{resourceType: rootPath, inner: validated})
+		if b.warning != "" {
+			warningCounts[b.warning]++
+			warningDetails[b.warning] = append(warningDetails[b.warning], ids[i])
 		}
 	}
 	fc.logger.Info().Int("resources", len(result)).Msg("Conversion completed")
@@ -269,8 +410,10 @@ func (fc *FHIRConverter) buildResources(resources map[string]ResourceResult, roo
 			sb.WriteString(strings.Join(warningDetails[msg], ", "))
 			sb.WriteString("\n\n")
 		}
+		warnLogMu.Lock()
 		_ = os.MkdirAll("output", 0755)
 		_ = os.WriteFile(warnLogPath, []byte(sb.String()), 0644)
+		warnLogMu.Unlock()
 		fc.logger.Info().Str("file", warnLogPath).Msg("Wrote validation warnings summary")
 	}
 	return result
@@ -296,42 +439,96 @@ func SplitStatements(sql string) []string {
 	return statements
 }
 
-// processRow places one raw SQL row into the correct ResourceResult bucket.
-func processRow(raw map[string]interface{}, resources map[string]ResourceResult, rootPaths map[string]string) {
-	resourceID := toString(raw["resource_id"])
-	id := toString(raw["id"])
-	parentID := toString(raw["parent_id"])
-	fhirPath := toString(raw["fhir_path"])
+// addRow places one scanned SQL row into the correct ResourceResult bucket.
+// kinds[i] says whether column i is one of the four metadata columns.
+func (r *stmtResult) addRow(cols []string, kinds []int, vals []interface{}) {
+	var resourceID, id, parentID, fhirPath string
+	for i, k := range kinds {
+		switch k {
+		case colResourceID:
+			resourceID = toString(vals[i])
+		case colID:
+			id = toString(vals[i])
+		case colParentID:
+			parentID = toString(vals[i])
+		case colFHIRPath:
+			fhirPath = toString(vals[i])
+		}
+	}
 
 	if resourceID == "" || fhirPath == "" {
 		return
 	}
 
-	if resources[resourceID] == nil {
-		resources[resourceID] = make(ResourceResult)
+	byPath := r.resources[resourceID]
+	if byPath == nil {
+		byPath = make(ResourceResult)
+		r.resources[resourceID] = byPath
 	}
 
 	// The root path has no dot and no existing root registered
-	if !strings.Contains(fhirPath, ".") && rootPaths[resourceID] == "" {
-		rootPaths[resourceID] = fhirPath
+	if !strings.Contains(fhirPath, ".") && r.rootPaths[resourceID] == "" {
+		r.rootPaths[resourceID] = fhirPath
 	}
 
 	// Collect all data columns (skip the four metadata columns)
-	data := make(map[string]interface{})
-	for k, v := range raw {
-		lower := strings.ToLower(k)
-		if lower == "resource_id" || lower == "parent_id" || lower == "id" || lower == "fhir_path" {
-			continue
-		}
-		if v != nil {
-			data[k] = v
+	data := make(map[string]interface{}, len(cols))
+	for i, k := range kinds {
+		if k == colData && vals[i] != nil {
+			data[cols[i]] = vals[i]
 		}
 	}
 
-	resources[resourceID][fhirPath] = append(
-		resources[resourceID][fhirPath],
-		RowData{ID: id, ParentID: parentID, Data: data},
-	)
+	byPath[fhirPath] = append(byPath[fhirPath], RowData{ID: id, ParentID: parentID, Data: data})
+}
+
+// buildResource turns one resource's grouped rows into a validated FHIR
+// resource. out is nil when the resource is skipped; warning is then the
+// validation error when that was the reason (a build failure is only logged).
+func (fc *FHIRConverter) buildResource(resourceID string, resResult ResourceResult, rootPaths map[string]string) (out interface{}, warning string) {
+	rootPath, ok := rootPaths[resourceID]
+	if !ok {
+		fc.logger.Warn().Str("resourceID", resourceID).Msg("No root fhir_path, skipping")
+		return nil, ""
+	}
+
+	raw, err := buildFHIRResource(resResult, rootPath)
+	if err != nil {
+		fc.logger.Error().Err(err).Str("resourceID", resourceID).Msg("Build failed")
+		return nil, ""
+	}
+
+	// Pretty-printing every resource is expensive, so only do it when the
+	// debug line below will actually be written.
+	if fc.logger.GetLevel() <= zerolog.DebugLevel {
+		rawJSON, _ := json.MarshalIndent(raw, "", "  ")
+		fc.logger.Debug().RawJSON("raw", rawJSON).Str("resourceID", resourceID).Msg("Built FHIR resource")
+	}
+
+	// Apply concept mappings driven by FHIR profile bindings
+	applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
+
+	// Validate by round-tripping through the typed fhir.* struct.
+	validated, err := validateThroughStruct(raw, fc.logger)
+	if err != nil {
+		// raw is logged as it stands after concept mapping and coercion — the
+		// state that failed validation.
+		rawJSON, _ := json.Marshal(raw)
+		fc.logger.Warn().
+			Err(err).
+			Str("resourceID", resourceID).
+			Str("resourceType", rootPath).
+			RawJSON("raw", rawJSON).
+			Msg("FHIR validation failed — resource skipped")
+		return nil, err.Error()
+	}
+
+	// Typed structs lack a ResourceType field — wrap so it appears first in JSON.
+	// Raw maps (unknown resource types) already carry "resourceType".
+	if _, isMap := validated.(map[string]interface{}); isMap {
+		return validated, ""
+	}
+	return fhirOutput{resourceType: rootPath, inner: validated}, ""
 }
 
 // buildFHIRResource converts a ResourceResult into a nested FHIR map.
@@ -548,16 +745,27 @@ func toString(v interface{}) string {
 
 // ExportToNDJSON marshals resources to newline-delimited JSON.
 func ExportToNDJSON(resources []interface{}) ([]byte, error) {
-	var out []byte
+	var buf bytes.Buffer
+	if err := WriteNDJSON(&buf, resources); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// WriteNDJSON writes resources to w as newline-delimited JSON, one resource
+// per line, without building the whole output in memory first.
+func WriteNDJSON(w io.Writer, resources []interface{}) error {
 	for _, r := range resources {
 		b, err := json.Marshal(r)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		out = append(out, b...)
-		out = append(out, '\n')
+		b = append(b, '\n')
+		if _, err := w.Write(b); err != nil {
+			return err
+		}
 	}
-	return out, nil
+	return nil
 }
 
 // ExportToPretty marshals resources to pretty-printed JSON blocks separated by
@@ -607,9 +815,23 @@ func cachedFHIRType(typeName string) (reflect.Type, bool) {
 	return t, true
 }
 
+// arrayFieldsCache caches getArrayFieldsForType per type name. The returned
+// maps are shared between goroutines and must be treated as read-only.
+var arrayFieldsCache sync.Map // string → map[string]bool
+
 // getArrayFieldsForType inspects the FHIR struct and returns which fields are arrays
-// by looking at the struct definition and JSON tags
+// by looking at the struct definition and JSON tags. The result is cached and
+// shared: callers must not modify it.
 func getArrayFieldsForType(resourceType string) map[string]bool {
+	if v, ok := arrayFieldsCache.Load(resourceType); ok {
+		return v.(map[string]bool)
+	}
+	fields := computeArrayFields(resourceType)
+	arrayFieldsCache.Store(resourceType, fields)
+	return fields
+}
+
+func computeArrayFields(resourceType string) map[string]bool {
 	arrayFields := make(map[string]bool)
 
 	t, ok := cachedFHIRType(resourceType)
@@ -640,7 +862,21 @@ func getArrayFieldsForType(resourceType string) map[string]bool {
 
 // getTypeNameFromPath extracts the type name from a FHIR path by inspecting struct definitions
 // e.g., "Patient.name" -> "HumanName", "Patient.address" -> "Address"
+// typeNameCache memoizes getTypeNameFromPath / getTypeNameForField. Both walk the
+// struct with reflection (FieldByNameFunc is quadratic in the field count) yet
+// depend only on their string arguments, and they run for every nested row.
+var typeNameCache sync.Map // string → string
+
 func getTypeNameFromPath(path string) string {
+	if v, ok := typeNameCache.Load("p:" + path); ok {
+		return v.(string)
+	}
+	name := computeTypeNameFromPath(path)
+	typeNameCache.Store("p:"+path, name)
+	return name
+}
+
+func computeTypeNameFromPath(path string) string {
 	parts := strings.Split(path, ".")
 	if len(parts) < 2 {
 		return ""
@@ -751,6 +987,16 @@ func normalizeObjectArrayFields(obj map[string]interface{}, typeName string) {
 
 // getTypeNameForField returns the type of a field in a given struct
 func getTypeNameForField(structName, fieldName string) string {
+	key := "f:" + structName + "." + fieldName
+	if v, ok := typeNameCache.Load(key); ok {
+		return v.(string)
+	}
+	name := computeTypeNameForField(structName, fieldName)
+	typeNameCache.Store(key, name)
+	return name
+}
+
+func computeTypeNameForField(structName, fieldName string) string {
 	t, ok := cachedFHIRType(structName)
 	if !ok {
 		return ""

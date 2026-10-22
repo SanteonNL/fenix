@@ -1,0 +1,81 @@
+# Config for load-testing Group $export on a large dataset — see
+# test/requests/large-export.http for the requests. Not a template for production.
+#
+# Two ways to run it:
+#
+# A) Generated sim data in a SQLite staging DB (works anywhere, no SQL Server):
+#      go run scripts/gen_large_sim.go -patients 10000 -obs 10      # 10k patients, 100k Observations
+#      go run ./cmd/fenix -config config/large-export.yaml -cmd load
+#      go run ./cmd/fenix -config config/large-export.yaml -cmd serve -source sim
+#    Scale up with e.g. -patients 100000 -obs 20 (and re-run load).
+#
+# B) A real SQL Server (HIX): uncomment the `hix` source below, set HIX_CONNECTION,
+#    and serve straight from it, bypassing staging, so the connection pool applies:
+#      go run ./cmd/fenix -config config/large-export.yaml -cmd serve -source hix -data-source hix
+#
+# While an export runs, GET its status URL: 202 with an X-Progress header
+# ("Observation: 12/40 batches (type 2 of 2)"), then 200 with the manifest.
+# What each performance setting does is explained next to it below.
+
+environment: dev
+logLevel: info # keep at info or above: debug pretty-prints every resource and slows a big export down a lot
+
+inputs:
+  profiles:    {source: repo, path: terminology/profiles/sim-on-fhir}
+  conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
+
+staging:
+  database: sqlite
+  path: output/large-export/staging.db # a file, not in-memory: an in-memory SQLite DB can only have one connection
+  # Connection pool used when serving from the staging DB. For a SQLite file the
+  # default is one connection per CPU; reading is parallel, so more rarely helps.
+  pool:
+    maxOpenConns: 8
+    maxIdleConns: 8
+
+output:
+  format: ndjson
+  type: local
+  local:
+    # An export writes its queries and NDJSON files to <dir>/exports/<timestamp>_<group>/,
+    # so you can inspect them afterwards.
+    dir: output/large-export
+    useTimestamp: false
+    archiveCount: 0
+
+# Optional: de-identify the export (needs FENIX_DEIDENT_KEY in the environment).
+# deident:
+#   enabled: true
+#   rulesetFile: config/deident/sim-demo-ruleset.json
+
+# How the server spends CPU. All optional; shown with their defaults.
+performance:
+  # Statements of one query that run at the same time. Capped at the pool's
+  # maxOpenConns. Default: the pool size.
+  # statementWorkers: 8
+  # Goroutines turning rows into validated FHIR resources (pure CPU).
+  # Default: number of CPUs.
+  # buildWorkers: 12
+  # An export splits the group's patients into batches, so memory stays bounded
+  # and batches can run in parallel. Bigger batches = fewer queries but more
+  # memory per batch (roughly 25 KB per Observation held at once); too many
+  # workers just queue on the connection pool.
+  exportBatchSize: 1000
+  exportWorkers: 4
+
+sources:
+  sim:
+    type: local
+    dir: "output/large-export/data" # written by scripts/gen_large_sim.go
+    delimiter: ";"
+
+  # hix:
+  #   type: sqldb
+  #   connection_string: ${HIX_CONNECTION}   # e.g. server=127.0.0.1;port=1433;user id=...;password=...;database=hix;encrypt=false
+  #   staging_dir: queries/hix/staging
+  #   # Pool for the SQL Server connection (used with -data-source hix). Defaults to 16.
+  #   # Keep maxOpenConns at or below what the server and your licence allow.
+  #   pool:
+  #     maxOpenConns: 16
+  #     maxIdleConns: 16
+  #     connMaxLifetime: 30m

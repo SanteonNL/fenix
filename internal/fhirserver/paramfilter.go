@@ -28,14 +28,16 @@ type searchParamLookup func(resourceType, code string) (field, paramType string,
 // SearchParameter bundle has no entry for) are left alone, same as before
 // this filter existed: FENIX has never rejected an unknown search param,
 // and this isn't the place to start.
-func filterUnwiredParams(resourceType string, fhirParams map[string]string, pushed map[string]bool, resources []interface{}, lookup searchParamLookup) []interface{} {
-	type matcher struct {
-		field     string
-		paramType string
-		value     string
-	}
+type paramMatcher struct {
+	field     string
+	paramType string
+	value     string
+}
 
-	var matchers []matcher
+// unwiredMatchers are the params SQL did not narrow that filterUnwiredParams
+// must check in Go.
+func unwiredMatchers(resourceType string, fhirParams map[string]string, pushed map[string]bool, lookup searchParamLookup) []paramMatcher {
+	var matchers []paramMatcher
 	for code, value := range fhirParams {
 		if pushed[code] {
 			continue // SQL already scoped this one
@@ -44,8 +46,19 @@ func filterUnwiredParams(resourceType string, fhirParams map[string]string, push
 		if !ok {
 			continue // not a known search param for this resource — leave unfiltered
 		}
-		matchers = append(matchers, matcher{field, paramType, value})
+		matchers = append(matchers, paramMatcher{field, paramType, value})
 	}
+	return matchers
+}
+
+// hasUnwiredParams reports whether filterUnwiredParams would filter anything,
+// i.e. whether the result of the SQL is not yet the final result.
+func hasUnwiredParams(resourceType string, fhirParams map[string]string, pushed map[string]bool, lookup searchParamLookup) bool {
+	return len(unwiredMatchers(resourceType, fhirParams, pushed, lookup)) > 0
+}
+
+func filterUnwiredParams(resourceType string, fhirParams map[string]string, pushed map[string]bool, resources []interface{}, lookup searchParamLookup) []interface{} {
+	matchers := unwiredMatchers(resourceType, fhirParams, pushed, lookup)
 	if len(matchers) == 0 {
 		return resources
 	}
