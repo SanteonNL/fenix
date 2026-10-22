@@ -27,6 +27,14 @@
 GET {{base}}/Observation
 Accept: application/fhir+json
 
+### All Observations of one patient (patient is pushed down, see sim.yaml) — 123 has two
+GET {{base}}/Observation?patient=123
+Accept: application/fhir+json
+
+### Same, combined with another filter — patient 789 only has a preliminary one, so this returns none
+GET {{base}}/Observation?patient=789&status=final
+Accept: application/fhir+json
+
 ### Sanity check: status=final narrows to patients 123 and 456 only
 GET {{base}}/Patient
 Accept: application/fhir+json
@@ -242,3 +250,10 @@ Accept: application/fhir+json
 POST {{base}}/Group/{{createCombinedGroup.response.body.id}}/$export?_type=Patient,Observation&_typeFilter=Patient%3Fbirthdate%3Dge2021-11-01  
 Prefer: respond-async
 Accept: application/fhir+json
+
+### Patient numbers (DSG patient-id strategy): 1229 -> 1230 -> 123. Patient 123 lists 1229 and 1230 as "old" identifiers;
+### Observations 7 and 8 were recorded under the old numbers but show Patient/123. No Patient 1229/1230 in the result.
+GET {{base}}/Patient?_id=123
+
+###
+GET {{base}}/Observation?patient=123

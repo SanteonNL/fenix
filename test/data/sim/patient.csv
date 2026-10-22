@@ -1,4 +1,7 @@
-Identificatienummer,GeslachtCode,GeslachtOmschrijving,Land,Geboortedatum,DatumOverlijden,DatumCheckStatusOverlijden
-123,kjhkh,Male,NL,2021-10-30,,
-456,F,Female,NL,2021-12-31,,
-789,F,Female,NL,2022-02-14,,
+Identificatienummer;GeslachtCode;GeslachtOmschrijving;Land;Geboortedatum;DatumOverlijden;DatumCheckStatusOverlijden
+123;kjhkh;Male;NL;2021-10-30;;
+456;F;Female;NL;2021-12-31;;
+789;F;Female;NL;2022-02-14;;
+1229;M;Male;NL;2021-10-30;;
+1230;M;Male;NL;2021-10-30;;
+999;F;Female;NL;2000-01-01;;

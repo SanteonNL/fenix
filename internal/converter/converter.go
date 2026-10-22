@@ -258,6 +258,41 @@ func (fc *FHIRConverter) QueryStringsContext(ctx context.Context, query string) 
 	return out, rows.Err()
 }
 
+// QueryRowsContext runs query and returns every column of every row as
+// strings (NULL becomes "") — used for the patient-number query (number,
+// replaced_by, optionally test_patient).
+func (fc *FHIRConverter) QueryRowsContext(ctx context.Context, query string) ([][]string, error) {
+	rows, err := fc.db.QueryxContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var out [][]string
+	for rows.Next() {
+		vals := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		row := make([]string, len(cols))
+		for i, v := range vals {
+			if v != nil {
+				row[i] = toString(v)
+			}
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // stmtResult is the rows of one statement, grouped by resource. Statements
 // are collected separately (so they can run in parallel) and merged afterwards.
 type stmtResult struct {

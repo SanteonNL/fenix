@@ -249,6 +249,15 @@ func (s *Server) runExport(ctx context.Context, job *exportJob, req exportReques
 		fail(http.StatusInternalServerError, fmt.Errorf("failed to resolve group members: %w", err))
 		return
 	}
+	// DSG patient-id strategy: the cohort is extended with every old number of
+	// its patients, so their data is found; the output is brought back to the
+	// active number per batch (exportBatchOf).
+	pm, err := s.patientNumbers(ctx)
+	if err != nil {
+		fail(http.StatusInternalServerError, fmt.Errorf("failed to load patient ids: %w", err))
+		return
+	}
+	memberIDs = pm.WithOldNumbers(memberIDs)
 	sort.Strings(memberIDs)
 	batches := chunk(memberIDs, s.exportBatch())
 
@@ -259,14 +268,15 @@ func (s *Server) runExport(ctx context.Context, job *exportJob, req exportReques
 		}
 		path := filepath.Join(job.spoolDir, resourceType+".ndjson")
 		n, status, err := s.exportType(ctx, exportTypeJob{
-			resourceType: resourceType,
-			filters:      req.typeFilters[resourceType],
-			batches:      batches,
-			elements:     elements,
-			runID:        req.runID,
-			queriesDir:   req.queriesDir,
-			groupFile:    req.groupFile,
-			path:         path,
+			resourceType:   resourceType,
+			filters:        req.typeFilters[resourceType],
+			batches:        batches,
+			patientNumbers: pm,
+			elements:       elements,
+			runID:          req.runID,
+			queriesDir:     req.queriesDir,
+			groupFile:      req.groupFile,
+			path:           path,
 			progress: func(done int) {
 				job.setProgress(fmt.Sprintf("%s: %d/%d batches (type %d of %d)", resourceType, done, len(batches), i+1, len(req.resourceTypes)))
 			},

@@ -12,9 +12,10 @@ import (
 	"sync"
 
 	"github.com/SanteonNL/fenix/internal/converter"
-	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
+	"github.com/SanteonNL/fenix/internal/patientnumbers"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
@@ -182,11 +183,42 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		found     bool
 		total     int
 	)
-	if count > 0 {
-		resources, total, found, err = s.searchPage(r.Context(), resourceType, fhirParams, offset, count)
-	} else {
-		resources, found, err = s.searchContext(r.Context(), resourceType, fhirParams)
+	// DSG patient-number strategy: a search for one patient also looks under
+	// that patient's old numbers, and old numbers lead to the one active number.
+	pm, err := s.patientNumbers(r.Context())
+	if err != nil {
+		s.log.Error().Err(err).Msg("Failed to load patient numbers")
+		fhirError(w, fmt.Sprintf("failed to load patient numbers: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if searches := patientSearches(pm, resourceType, fhirParams); len(searches) > 1 {
+		for _, p := range searches {
+			var part []interface{}
+			var partFound bool
+			part, partFound, err = s.searchContext(r.Context(), resourceType, p)
+			if err != nil {
+				break
+			}
+			found = found || partFound
+			resources = append(resources, part...)
+		}
+		resources = pm.UseActiveNumber(resources)
 		total = len(resources)
+		if count > 0 {
+			resources = slicePage(resources, offset, count)
+		}
+	} else {
+		if count > 0 {
+			resources, total, found, err = s.searchPage(r.Context(), resourceType, fhirParams, offset, count)
+		} else {
+			resources, found, err = s.searchContext(r.Context(), resourceType, fhirParams)
+		}
+		if err == nil {
+			resources = pm.UseActiveNumber(resources)
+			if count == 0 {
+				total = len(resources) // dropped old-number Patients no longer count
+			}
+		}
 	}
 	if err != nil {
 		s.log.Error().Err(err).Str("resourceType", resourceType).Msg("FHIR search failed")
@@ -395,6 +427,43 @@ func (s *Server) compiledDir() string {
 	return filepath.Join(s.outputDir, "compiled")
 }
 
+// patientNumbers loads the source's patient-number registry (DSG patient-id strategy, package
+// patientnumbers) fresh from the source data. It returns nil when the source has no
+// patient_numbers query configured, which every patientnumbers.Registry method treats as "no
+// strategy". Like Group membership it is never cached.
+func (s *Server) patientNumbers(ctx context.Context) (*patientnumbers.Registry, error) {
+	if s.compiler == nil {
+		return nil, nil
+	}
+	sql, ok, err := s.compiler.PatientNumbersSQL(s.source)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	rows, err := s.converter.QueryRowsContext(ctx, sql)
+	if err != nil {
+		// The patient numbers are optional data: a source that didn't deliver
+		// the file/table simply has no old numbers.
+		if isMissingTable(err) {
+			s.log.Warn().Err(err).Str("source", s.source).Msg("No patient numbers available; continuing without old-number mapping")
+			return nil, nil
+		}
+		return nil, fmt.Errorf("running patient-number query: %w", err)
+	}
+	return patientnumbers.NewRegistry(rows), nil
+}
+
+// isMissingTable reports whether err says a table doesn't exist, in the
+// wording of the supported staging databases (SQLite, PostgreSQL, SQL Server).
+func isMissingTable(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "invalid object name") ||
+		(strings.Contains(msg, "relation") && strings.Contains(msg, "does not exist"))
+}
+
 // deidentify de-identifies resources (all of resourceType, per this
 // handler's single-type search) in place against s.deidentRuleset, using a
 // fresh per-request RunID so repeated requests aren't linkable to each
@@ -485,4 +554,34 @@ func compiledFileContent(rq querycompiler.RenderedQuery, groupFile string) strin
 	}
 	return "-- Run for a group export, restricted to the patients selected by " + groupFile + ".\n" +
 		"-- Shown below as the query is on its own, without that restriction.\n\n" + rq.PlainSQL
+}
+
+// patientSearches expands a search for one patient into one search per number
+// of that patient (active and old): Patient by _id, every other type by
+// patient. Without such a param, or without old numbers, it returns the
+// search itself.
+func patientSearches(pm *patientnumbers.Registry, resourceType string, params map[string]string) []map[string]string {
+	key := "patient"
+	if resourceType == "Patient" {
+		key = "_id"
+	}
+	value, ok := params[key]
+	if !ok || pm == nil {
+		return []map[string]string{params}
+	}
+	prefix := ""
+	if strings.HasPrefix(value, "Patient/") {
+		prefix, value = "Patient/", strings.TrimPrefix(value, "Patient/")
+	}
+	numbers := pm.WithOldNumbers([]string{value})
+	out := make([]map[string]string, len(numbers))
+	for i, n := range numbers {
+		p := make(map[string]string, len(params))
+		for k, v := range params {
+			p[k] = v
+		}
+		p[key] = prefix + n
+		out[i] = p
+	}
+	return out
 }

@@ -171,6 +171,31 @@ func (c *Compiler) resolve(source, groupID, resourceType string, fhirParams map[
 	return result, nil
 }
 
+// PatientNumbersSQL returns the source's patient-number query (columns: number,
+// replacedby), or ok=false when the source has none configured.
+func (c *Compiler) PatientNumbersSQL(source string) (sql string, ok bool, err error) {
+	sc, found := c.sources[source]
+	if !found || sc.PatientNumbers == nil || sc.PatientNumbers.SQL == "" {
+		return "", false, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(c.sqlBaseDir, sc.PatientNumbers.SQL))
+	if err != nil {
+		return "", false, fmt.Errorf("reading patient-number query: %w", err)
+	}
+	vars := make(map[string]interface{})
+	for k, v := range c.globalSubs {
+		vars[k] = v
+	}
+	for k, v := range sc.Substitutions {
+		vars[k] = v
+	}
+	sql, err = RenderSQL(string(raw), vars)
+	if err != nil {
+		return "", false, fmt.Errorf("rendering patient-number query: %w", err)
+	}
+	return sql, true, nil
+}
+
 // SearchParamField resolves (resourceType, code) to the FHIR field name and
 // SearchParameter type FENIX would use for SQL pushdown (see
 // buildTemplateVars), derived from the same

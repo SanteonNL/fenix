@@ -28,6 +28,12 @@ import (
 // sim query config. The file (not :memory:) lets the connection pool open
 // several connections, as it would against SQL Server.
 func simServer(tb testing.TB, patients, obsPerPatient int) *Server {
+	s, _ := simServerWithDB(tb, patients, obsPerPatient)
+	return s
+}
+
+// simServerWithDB is simServer that also returns the staging database, for tests that add data of their own.
+func simServerWithDB(tb testing.TB, patients, obsPerPatient int) (*Server, *sqlx.DB) {
 	tb.Helper()
 
 	db, err := sqlx.Open("sqlite", filepath.Join(tb.TempDir(), "staging.db"))
@@ -46,7 +52,7 @@ func simServer(tb testing.TB, patients, obsPerPatient int) *Server {
 	log := zerolog.Nop()
 	conv := converter.NewFHIRConverter(db, log, converter.NewProfileService(log), converter.NewConceptMapService(log))
 	conv.SetConcurrency(8, 0)
-	return New(compiler, conv, "sim", "", "", nil, nil, "", nil, log)
+	return New(compiler, conv, "sim", "", "", nil, nil, "", nil, log), db
 }
 
 func loadSimData(tb testing.TB, db *sql.DB, patients, obsPerPatient int) {
@@ -56,6 +62,7 @@ func loadSimData(tb testing.TB, db *sql.DB, patients, obsPerPatient int) {
 			tb.Fatalf("%s: %v", q, err)
 		}
 	}
+	mustExec(`CREATE TABLE sim_patientnumbers (Identificatienummer, ReplacedBy, TestPatient)`)
 	mustExec(`CREATE TABLE sim_patient (Identificatienummer, GeslachtCode, GeslachtOmschrijving, Land, Geboortedatum, DatumOverlijden, DatumCheckStatusOverlijden)`)
 	mustExec(`CREATE TABLE sim_algemenemeting (MetingID, Identificatienummer, MetingNaamCodeSysteem, MetingNaamCode, MetingNaamOmschrijving,
 		UitslagWaarde, UitslagWaardeEenheidSysteem, UitslagWaardeEenheid, UitslagCodeSysteem, UitslagCode, UitslagCodeOmschrijving, MetingDatumTijd, Status)`)

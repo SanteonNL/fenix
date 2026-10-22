@@ -10,6 +10,7 @@ import (
 	"regexp"
 
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/patientnumbers"
 	"github.com/SanteonNL/fenix/internal/querycompiler"
 )
 
@@ -55,15 +56,16 @@ func chunk(ids []string, size int) [][]string {
 
 // exportTypeJob is one resource type's share of an export.
 type exportTypeJob struct {
-	resourceType string
-	filters      map[string]string   // the type's _typeFilter params
-	batches      [][]string          // patient ids, per batch
-	elements     map[string][]string // _elements for de-identification
-	runID        string
-	queriesDir   string // where compiled queries go ("" = default location)
-	groupFile    string
-	path         string // NDJSON file to write
-	progress     func(batchesDone int) // optional; called after each batch is written
+	resourceType   string
+	filters        map[string]string        // the type's _typeFilter params
+	batches        [][]string               // patient ids, per batch
+	patientNumbers *patientnumbers.Registry // old -> active patient numbers; nil = none
+	elements       map[string][]string      // _elements for de-identification
+	runID          string
+	queriesDir     string // where compiled queries go ("" = default location)
+	groupFile      string
+	path           string                // NDJSON file to write
+	progress       func(batchesDone int) // optional; called after each batch is written
 }
 
 // batchOut is the NDJSON of one finished batch, or why it failed.
@@ -152,6 +154,8 @@ func (s *Server) exportBatchOf(ctx context.Context, job exportTypeJob, index int
 	if !found {
 		return batchOut{err: fmt.Errorf("resource type %q is not configured for source %q", job.resourceType, s.source), status: http.StatusBadRequest}
 	}
+
+	resources = job.patientNumbers.UseActiveNumber(resources)
 
 	if s.deidentRuleset != nil {
 		if err := s.deidentifyWithRunID(resources, job.elements, job.runID); err != nil {

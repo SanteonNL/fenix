@@ -54,6 +54,13 @@ func (q QueryConfig) patientExpr(resourceType string) string {
 	return `SUBSTR("subject.reference", 9)`
 }
 
+// PatientNumbersConfig points at the patient-number query of a source. The query
+// returns two columns: the patient number, and the number that replaced it
+// (NULL or empty when the number is active).
+type PatientNumbersConfig struct {
+	SQL string `yaml:"sql"`
+}
+
 // ResourceConfig defines the set of queries for one resource type.
 type ResourceConfig struct {
 	Queries []QueryConfig `yaml:"queries"`
@@ -95,7 +102,10 @@ type SourceConfig struct {
 	Source        string                    `yaml:"source"`
 	Substitutions map[string]string         `yaml:"substitutions"`
 	Resources     map[string]ResourceConfig `yaml:"resources"`
-	Groups        map[string]GroupConfig    // loaded from groups/ subdirectory
+	// PatientNumbers is the optional patient-number query (DSG patient-id strategy): one row per
+	// known patient number with columns (number, replaced_by). See package patientnumbers.
+	PatientNumbers *PatientNumbersConfig `yaml:"patient_numbers,omitempty"`
+	Groups       map[string]GroupConfig    // loaded from groups/ subdirectory
 }
 
 // loadGlobalSubs reads substitutions.yaml from configDir.

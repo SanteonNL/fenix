@@ -45,3 +45,10 @@ resources:
         member_filter:
           patient: SUBSTR("subject.reference", 9)
           pushdown: [status, code]
+
+# Patient-number strategy (DSG patient-id strategy): queries run for the active number AND all its old
+# numbers; output is brought back to the single active number. Columns:
+# (number, replacedby). Example chain in test/data/sim/PatientNumbers.csv:
+# 1229 -> 1230 -> 123; 999 is a test patient and is left out.
+patient_numbers:
+  sql: queries/sim/patientnumbers/patientnumbers.sql

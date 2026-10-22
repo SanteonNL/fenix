@@ -2,6 +2,7 @@ package fhirserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
+	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/google/uuid"
 )
 
@@ -203,6 +204,27 @@ func (s *Server) handleGroupRead(w http.ResponseWriter, id string) {
 		s.log.Error().Err(err).Str("groupId", id).Msg("Failed to resolve Group members")
 		fhirError(w, fmt.Sprintf("failed to resolve group members: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// DSG patient-id strategy: a patient with several numbers counts once, under its active number.
+	pm, err := s.patientNumbers(context.Background())
+	if err != nil {
+		s.log.Error().Err(err).Str("groupId", id).Msg("Failed to load patient ids")
+		fhirError(w, fmt.Sprintf("failed to load patient ids: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if pm != nil {
+		ids := make([]string, 0, len(members))
+		for _, m := range members {
+			if m.Entity.Reference != nil {
+				ids = append(ids, strings.TrimPrefix(*m.Entity.Reference, "Patient/"))
+			}
+		}
+		members = members[:0]
+		for _, pid := range pm.ActiveNumbers(ids) {
+			ref := "Patient/" + pid
+			members = append(members, fhir.GroupMember{Entity: fhir.Reference{Reference: &ref}})
+		}
 	}
 
 	// Build a response copy rather than mutating the stored definition —

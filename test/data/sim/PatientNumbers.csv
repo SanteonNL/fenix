@@ -1,0 +1,7 @@
+Identificatienummer;ReplacedBy;TestPatient
+1229;1230;false
+1230;123;false
+123;;false
+456;;false
+789;;false
+999;;true
