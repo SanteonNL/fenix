@@ -1,10 +1,12 @@
 package local
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,33 @@ func (s *Source) Load(_ context.Context, db *sqlx.DB) error {
 	return nil
 }
 
+// insertAll inserts rows in transactions of insertBatchSize and logs progress after each batch.
+func (s *Source) insertAll(db *sqlx.DB, table string, cols []string, rows []map[string]interface{}) *RowLoadError {
+	s.log.Info().Str("source", s.name).Str("table", table).Int("rows", len(rows)).Msg("local: inserting rows")
+	var rowErr *RowLoadError
+	for start := 0; start < len(rows); start += insertBatchSize {
+		end := start + insertBatchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		s.insertBatch(db, table, cols, rows[start:end], &rowErr)
+		s.log.Info().Str("source", s.name).Str("table", table).Int("done", end).Int("total", len(rows)).Msg("local: inserting")
+	}
+	return rowErr
+}
+
+// insertBatch inserts one batch in a transaction, recording per-row failures into *rowErr.
+func (s *Source) insertBatch(db *sqlx.DB, table string, cols []string, rows []map[string]interface{}, rowErr **RowLoadError) {
+	writeBatch(db, table, s.log, rows,
+		func(e execer, row map[string]interface{}) error { return insertRow(e, table, cols, row) },
+		func(_ map[string]interface{}, err error) {
+			if *rowErr == nil {
+				*rowErr = &RowLoadError{Table: table}
+			}
+			(*rowErr).addFailure("", nil, err)
+		})
+}
+
 // loadJSON reads a JSON file, unwraps the {"data":[...]} envelope if present,
 // flattens each record, and inserts into the staging database.
 // If a JSONFileConfig is configured for this file, fields in Children become
@@ -121,15 +150,7 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 	if err := recreate(db, table, cols); err != nil {
 		return err
 	}
-	var rowErr *RowLoadError
-	for _, row := range flat {
-		if err := insertRow(db, table, cols, row); err != nil {
-			if rowErr == nil {
-				rowErr = &RowLoadError{Table: table}
-			}
-			rowErr.addFailure("", nil, err)
-		}
-	}
+	rowErr := s.insertAll(db, table, cols, flat)
 	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(flat)).Msg("source: loaded")
 
 	if s.fileWriter != nil {
@@ -146,8 +167,9 @@ func (s *Source) loadJSON(db *sqlx.DB, path, table string) error {
 	return nil
 }
 
-
-// loadCSV reads a CSV file (first row = header) and inserts into the staging database.
+// loadCSV streams a CSV file (first row = header) into the staging database in batches of
+// insertBatchSize rows, so memory use stays bounded regardless of file size. When a file writer
+// is set, the first batch overwrites the table's CSV and later batches append to it.
 func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -155,51 +177,82 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 	}
 	defer f.Close()
 
-	r := csv.NewReader(f)
+	file := filepath.Base(path)
+	s.log.Info().Str("source", s.name).Str("table", table).Str("file", file).Msg("local: reading CSV")
+	r := csv.NewReader(bufio.NewReaderSize(f, 1<<20))
 	r.Comma = s.delimiter
 	r.LazyQuotes = true
-	records, err := r.ReadAll()
-	if err != nil {
-		return fmt.Errorf("read %s: %w", filepath.Base(path), err)
-	}
-	if len(records) < 1 {
-		s.log.Warn().Str("file", filepath.Base(path)).Msg("local: empty CSV")
+	r.ReuseRecord = true
+
+	headerRec, err := r.Read()
+	if err == io.EOF {
+		s.log.Warn().Str("file", file).Msg("local: empty CSV")
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", file, err)
+	}
+	headers := sanitise(append([]string(nil), headerRec...))
 
-	headers := sanitise(records[0])
-	rawRows := records[1:]
+	if err := recreate(db, table, headers); err != nil {
+		return err
+	}
 
-	allRows := make([]map[string]interface{}, 0, len(rawRows))
-	for _, rec := range rawRows {
+	var rowErr *RowLoadError
+	csvOK := s.fileWriter != nil
+	total := 0
+	batch := make([]map[string]interface{}, 0, insertBatchSize)
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		s.insertBatch(db, table, headers, batch, &rowErr)
+		if csvOK {
+			var werr error
+			if total == 0 {
+				werr = s.fileWriter.WriteTableFull(table, headers, batch)
+			} else {
+				werr = s.fileWriter.WriteTableAppend(table, headers, batch)
+			}
+			if werr != nil {
+				csvOK = false
+				s.log.Warn().Err(werr).Str("table", table).Msg("local: csv write failed")
+			}
+		}
+		total += len(batch)
+		s.log.Info().Str("source", s.name).Str("table", table).Int("done", total).Msg("local: inserting")
+		batch = batch[:0]
+	}
+
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read %s: %w", file, err)
+		}
 		row := make(map[string]interface{}, len(headers))
 		for i, h := range headers {
 			if i < len(rec) {
 				row[h] = rec[i]
 			}
 		}
-		allRows = append(allRows, row)
-	}
-
-	if err := recreate(db, table, headers); err != nil {
-		return err
-	}
-	var rowErr *RowLoadError
-	for _, row := range allRows {
-		if err := insertRow(db, table, headers, row); err != nil {
-			if rowErr == nil {
-				rowErr = &RowLoadError{Table: table}
-			}
-			rowErr.addFailure("", nil, err)
+		batch = append(batch, row)
+		if len(batch) == insertBatchSize {
+			flush()
 		}
 	}
-	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", len(allRows)).Msg("source: loaded")
+	flush()
 
-	if s.fileWriter != nil {
-		if err := s.fileWriter.WriteTableFull(table, headers, allRows); err != nil {
+	if total == 0 && csvOK {
+		// Header-only file: still emit the CSV with its header.
+		if err := s.fileWriter.WriteTableFull(table, headers, nil); err != nil {
 			s.log.Warn().Err(err).Str("table", table).Msg("local: csv write failed")
 		}
 	}
+	s.log.Info().Str("source", s.name).Str("type", "local").Str("table", table).Str("mode", "full").Int("rows", total).Msg("source: loaded")
 	if rowErr != nil {
 		return rowErr
 	}
@@ -336,7 +389,7 @@ func recreate(db *sqlx.DB, table string, cols []string) error {
 	return err
 }
 
-func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interface{}) error {
+func insertRow(db execer, table string, cols []string, row map[string]interface{}) error {
 	placeholders := make([]string, len(cols))
 	vals := make([]interface{}, len(cols))
 	for i, c := range cols {

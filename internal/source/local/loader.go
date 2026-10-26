@@ -125,27 +125,31 @@ func (l *Loader) load(
 		if err := loaderEnsure(db, table, cols, cfg.IDField); err != nil {
 			return fmt.Errorf("ensure table %s: %w", table, err)
 		}
-		for _, row := range flatRecords {
-			if err := loaderUpsert(db, table, cols, cfg.IDField, row); err != nil {
+		l.writeBatched(db, table, flatRecords,
+			func(e execer, row map[string]interface{}) error {
+				return loaderUpsert(e, table, cols, cfg.IDField, row)
+			},
+			func(row map[string]interface{}, err error) {
 				if rowErr == nil {
 					rowErr = &RowLoadError{Table: table}
 				}
 				rowErr.addFailure(cfg.IDField, row[cfg.IDField], err)
-			}
-		}
+			})
 	case parentFKCol != "":
 		// Child table in incremental-parent mode: stale rows already removed, just insert.
 		if err := loaderEnsure(db, table, cols, ""); err != nil {
 			return fmt.Errorf("ensure child table %s: %w", table, err)
 		}
-		for _, row := range flatRecords {
-			if err := loaderWrite(db, table, cols, row); err != nil {
+		l.writeBatched(db, table, flatRecords,
+			func(e execer, row map[string]interface{}) error {
+				return loaderWrite(e, table, cols, row)
+			},
+			func(row map[string]interface{}, err error) {
 				if rowErr == nil {
 					rowErr = &RowLoadError{Table: table}
 				}
 				rowErr.addFailure(parentFKCol, row[parentFKCol], err)
-			}
-		}
+			})
 	default:
 		if err := loaderRecreate(db, table, cols, cfg.IDField); err != nil {
 			return fmt.Errorf("recreate table %s: %w", table, err)
@@ -262,24 +266,46 @@ func isDuplicateKeyErr(err error) bool {
 		strings.Contains(s, "duplicate key")
 }
 
-// writeRows inserts rows into table, one INSERT per row. Duplicate-key failures
+// writeBatched writes rows in transactions of insertBatchSize via writeBatch, logging progress
+// after each batch when there is more than one. onRowErr receives rows that still fail after
+// the row-by-row retry of a failed batch.
+func (l *Loader) writeBatched(
+	db *sqlx.DB,
+	table string,
+	rows []map[string]interface{},
+	write func(execer, map[string]interface{}) error,
+	onRowErr func(map[string]interface{}, error),
+) {
+	for start := 0; start < len(rows); start += insertBatchSize {
+		end := start + insertBatchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		writeBatch(db, table, l.log, rows[start:end], write, onRowErr)
+		if len(rows) > insertBatchSize {
+			l.log.Info().Str("source", l.name).Str("table", table).Int("done", end).Int("total", len(rows)).Msg("loader: inserting")
+		}
+	}
+}
+
+// writeRows inserts rows into table in batched transactions. Duplicate-key failures
 // (the common case: the source file contains the same id_field value more than
 // once) are counted and reported as a single aggregated summary with sample IDs,
 // instead of one failure per row, via the returned *RowLoadError.
 func (l *Loader) writeRows(db *sqlx.DB, table string, cols []string, idField string, rows []map[string]interface{}) *RowLoadError {
 	var rowErr *RowLoadError
-	for _, row := range rows {
-		if err := loaderWrite(db, table, cols, row); err != nil {
+	l.writeBatched(db, table, rows,
+		func(e execer, row map[string]interface{}) error { return loaderWrite(e, table, cols, row) },
+		func(row map[string]interface{}, err error) {
 			if rowErr == nil {
 				rowErr = &RowLoadError{Table: table}
 			}
 			if idField != "" && isDuplicateKeyErr(err) {
 				rowErr.addDuplicate(fmt.Sprintf("%v", row[idField]))
-				continue
+				return
 			}
 			rowErr.addFailure(idField, row[idField], err)
-		}
-	}
+		})
 	return rowErr
 }
 
@@ -323,7 +349,7 @@ func loaderColDefs(db *sqlx.DB, cols []string, pk string) string {
 	return strings.Join(defs, ", ")
 }
 
-func loaderUpsert(db *sqlx.DB, table string, cols []string, pk string, rec map[string]interface{}) error {
+func loaderUpsert(db execer, table string, cols []string, pk string, rec map[string]interface{}) error {
 	if pk != "" {
 		if pkVal := rec[pk]; pkVal != nil {
 			del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), quoted(pk)))
@@ -335,7 +361,7 @@ func loaderUpsert(db *sqlx.DB, table string, cols []string, pk string, rec map[s
 	return loaderWrite(db, table, cols, rec)
 }
 
-func loaderWrite(db *sqlx.DB, table string, cols []string, rec map[string]interface{}) error {
+func loaderWrite(db execer, table string, cols []string, rec map[string]interface{}) error {
 	placeholders := make([]string, len(cols))
 	vals := make([]interface{}, len(cols))
 	quotedCols := make([]string, len(cols))

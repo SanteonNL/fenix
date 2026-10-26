@@ -79,6 +79,7 @@ func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 			incrementalTables[tableName] = true
 		}
 
+		s.log.Info().Str("source", s.name).Str("table", tableName).Msg("sqldb: loading table")
 		if err := s.loadQuery(ctx, extDB, stagingDB, string(rawQuery), tableName); err != nil {
 			s.log.Error().Err(err).Str("table", tableName).Msg("sqldb: load failed")
 		}
@@ -102,6 +103,9 @@ func (s *Source) Load(ctx context.Context, stagingDB *sqlx.DB) error {
 
 	return nil
 }
+
+// progressInterval is the number of rows between progress log lines during a table load.
+const progressInterval = 10000
 
 func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQuery, tableName string) error {
 	pk := parsePK(rawQuery)
@@ -164,6 +168,9 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 			}
 		}
 		count++
+		if count%progressInterval == 0 {
+			s.log.Info().Str("source", s.name).Str("table", tableName).Int("rows", count).Msg("sqldb: loading")
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("rows error: %w", err)

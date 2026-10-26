@@ -14,6 +14,7 @@ import (
 // "http://hl7.org/fhir/ValueSet/administrative-gender").
 type ProfileService struct {
 	pathToValueset map[string]string // "Patient.gender" → valueset URI (no version)
+	elements       map[string]*ElementRule
 	logger         zerolog.Logger
 }
 
@@ -21,6 +22,7 @@ type ProfileService struct {
 func NewProfileService(logger zerolog.Logger) *ProfileService {
 	return &ProfileService{
 		pathToValueset: make(map[string]string),
+		elements:       make(map[string]*ElementRule),
 		logger:         logger,
 	}
 }
@@ -43,6 +45,7 @@ func (p *ProfileService) LoadProfile(filePath string) error {
 
 	count := 0
 	for _, element := range sd.Snapshot.Element {
+		p.registerElement(element)
 		if element.Binding == nil || element.Binding.ValueSet == nil {
 			continue
 		}

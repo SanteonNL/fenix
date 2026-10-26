@@ -88,6 +88,14 @@ func main() {
 
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
 
+	// Static SQL validation needs neither the staging database nor any output.
+	if *command == "validate" {
+		if !runValidate(cfg, repoRoot, parseSourceNames(flag.Args()), &log) {
+			os.Exit(1)
+		}
+		return
+	}
+
 	db, err := initializeStagingDatabase(cfg, repoRoot, &log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize database")
@@ -206,13 +214,24 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 		}
 	}
 
+	total := 0
+	for _, sc := range sources {
+		if sc.LoadsData() {
+			total++
+		}
+	}
+
+	overallStart := time.Now()
+	loaded, failed, current := 0, 0, 0
 	for name, sc := range sources {
 		if !sc.LoadsData() {
 			continue
 		}
+		current++
 		src, err := config.BuildSource(name, sc, repoRoot, watermarkPath, *log)
 		if err != nil {
 			log.Error().Err(err).Str("source", name).Msg("Failed to build source")
+			failed++
 			continue
 		}
 		if fw != nil {
@@ -220,10 +239,17 @@ func loadSources(ctx context.Context, db *sqlx.DB, cfg *config.Config, repoRoot 
 				fa.SetFileWriter(fw)
 			}
 		}
+		log.Info().Str("source", name).Int("current", current).Int("total", total).Msg("Loading source into staging database")
+		start := time.Now()
 		if err := src.Load(ctx, db); err != nil {
-			log.Error().Err(err).Str("source", name).Msg("Failed to load source")
+			log.Error().Err(err).Str("source", name).Dur("duration", time.Since(start)).Msg("Failed to load source")
+			failed++
+			continue
 		}
+		loaded++
+		log.Info().Str("source", name).Dur("duration", time.Since(start)).Msg("Source loaded")
 	}
+	log.Info().Int("loaded", loaded).Int("failed", failed).Int("total", total).Dur("duration", time.Since(overallStart)).Msg("Staging load finished")
 }
 
 // runTransforms executes the cleaned/DWH-layer SQL files against the staging DB. The discovery
@@ -495,8 +521,14 @@ Options:
   -config string   Path to configuration file (default "config/config.yaml")
   -sql    string   SQL file with multi-statement conversion queries
   -file   string   Specific CSV file to load (optional)
-  -cmd    string   load | convert | all | serve | serve-all  (default "all")
+  -cmd    string   load | convert | all | serve | serve-all | validate  (default "all")
   -help            Show this help message
+
+Validate (static, reads the SQL text only, never runs it):
+  -cmd validate [source ...]   check conversion SQL against the FHIR model and profiles
+  -min-severity string         info | warning | error (default "info")
+  -validate-json string        also write the report as JSON to this file
+  Exits with status 1 when an error-level finding exists.
 
 Examples:
   fenix -cmd load                    # load all configured sources

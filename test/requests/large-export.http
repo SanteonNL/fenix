@@ -31,7 +31,7 @@ Accept: application/fhir+json
 
 ### 2. Kick off the export (returns 202 immediately; copy the Content-Location header)
 # @name kickoff
-POST {{base}}/Group/{{createGroup.response.body.$.id}}/$export?_type=Patient,Observation
+POST {{base}}/Group/{{createGroup.response.body.$.id}}/$export?_type=Observation
 Prefer: respond-async
 
 ### 3. Poll: 202 + X-Progress while running, 200 + manifest when done,
