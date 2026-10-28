@@ -84,6 +84,8 @@ inputs:
   # FHIR StructureDefinitions and ConceptMaps. Nothing is loaded when left out.
   profiles:    {source: repo, path: terminology/profiles/sim-on-fhir}
   conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
+  # observationDefinitions: {source: repo, path: terminology/observationdefinitions}   # optional: check an Observation's value type and coded answer against the ObservationDefinition of its code
+  # valueSets:  {source: repo, path: terminology/valuesets}   # optional: codes that are members of a concept map's target valueset need no mapping
 
 staging:
   database: sqlite        # sqlite (default) | postgres | sqlserver
@@ -114,6 +116,11 @@ output:
     dir: output
     useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
     archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
+  # Data-quality findings (FX-DATA-nnn: wrong types/codes, profile violations) as JSON lines,
+  # one findings-<runID>.jsonl per run, separate from the application log. Meant for dashboards.
+  # findings:
+  #   dir: output/findings   # default: <local.dir>/findings (not archived or pruned with the runs)
+  #   profile:                # what the source delivered per element (values and counts); off by default\n  #     enabled: true\n  #     maxDistinct: 30        # list values only for elements with at most this many distinct values\n  #     skip: []               # elements never listed value by value (FHIR path or last segment, * and ? wildcards)\n  #   includeResources: false # true: keep the full resource of each example (shown on hover). Real data, not de-identified: only if the findings folder is as protected as the data
 
 # De-identification (internal/deident) — disabled by default. See
 # docs/fenix_architecture.md, "❻ De-identification".

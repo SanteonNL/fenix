@@ -1,0 +1,7 @@
+{
+  "resourceType": "ObservationDefinition",
+  "id": "od-hba1c",
+  "code": { "coding": [ { "system": "http://loinc.org", "code": "4548-4", "display": "HbA1c" } ] },
+  "permittedDataType": [ "Quantity" ],
+  "preferredReportName": "HbA1c"
+}

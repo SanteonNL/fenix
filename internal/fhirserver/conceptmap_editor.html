@@ -96,6 +96,7 @@
   .pill { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: 999px; background: #e6f7fd; color: var(--brand-blue-dark); }
   .pill.active { background: #e8f8ef; color: #1a7a4d; }
   .pill.retired { background: #fdeaf1; color: var(--accent-dark); }
+  tr.flash td { background: #fdeaf1 !important; }
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--text); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px;
@@ -164,6 +165,7 @@
       <div class="field">
         <label>Target valueset (ConceptMap.targetCanonical &mdash; FHIR profile bindings are matched against this)</label>
         <input id="f_target" class="code" placeholder="http://hl7.org/fhir/ValueSet/administrative-gender|4.0.1">
+        <div class="muted" id="f_target_hint" style="margin-top:4px"></div>
       </div>
       <div class="field">
         <label>Description</label>
@@ -185,6 +187,8 @@
     </footer>
   </div>
 </main>
+<datalist id="dl_systems"></datalist>
+<datalist id="dl_codes_all"></datalist>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -311,6 +315,63 @@ function renderEdit() {
   document.getElementById('f_description').value = current.description || '';
   document.getElementById('deleteBtn').style.display = currentFile ? 'inline-block' : 'none';
   renderGroups();
+  loadValueSet();
+}
+
+// ---- the target valueset: choices for the target system and target code ----
+// The server lists the concepts of the valueset this map targets (when it has them), so the target
+// system and code fields suggest them. Typing a value that is not listed still works.
+
+let vsConcepts = [];   // concepts of the target valueset: {system, code, display}
+let vsLoadedFor = null; // the valueset url vsConcepts belongs to
+
+async function loadValueSet() {
+  const url = (document.getElementById('f_target').value || '').trim().split('|')[0];
+  if (url === vsLoadedFor) return;
+  vsLoadedFor = url;
+  vsConcepts = [];
+  let found = false;
+  if (url) {
+    try {
+      const r = await api('/api/valuesets?url=' + encodeURIComponent(url));
+      vsConcepts = r.concepts || [];
+      found = !!r.found;
+    } catch (e) { /* no list: the fields stay free text */ }
+  }
+  const hint = document.getElementById('f_target_hint');
+  hint.textContent = !url ? '' : found
+    ? vsConcepts.length + ' codes of this valueset are offered in the target system and target code fields.'
+    : 'This valueset is not loaded (inputs.valueSets), so target system and code are free text.';
+  fillSystemLists();
+  if (current) renderGroups();
+}
+
+function fillSystemLists() {
+  const systems = [...new Set(vsConcepts.map(c => c.system).filter(Boolean))];
+  document.getElementById('dl_systems').replaceChildren(...systems.map(sys => optionFor(sys, '')));
+  document.getElementById('dl_codes_all').replaceChildren(...vsConcepts.map(c => optionFor(c.code, c.display)));
+}
+
+function fillCodeList(list, g) {
+  const fit = vsConcepts.filter(c => !g.target || !c.system || c.system === g.target);
+  list.replaceChildren(...fit.map(c => optionFor(c.code, c.display)));
+}
+
+function optionFor(value, label) {
+  const o = document.createElement('option');
+  o.value = value;
+  if (label) { o.label = label; o.textContent = label; }
+  return o;
+}
+
+// applyConcept fills in what the valueset knows about a chosen target code; it reports whether it changed anything.
+function applyConcept(g, t, code) {
+  const c = vsConcepts.find(x => x.code === code && (!g.target || !x.system || x.system === g.target)) || vsConcepts.find(x => x.code === code);
+  if (!c) return false;
+  let changed = false;
+  if (!g.target && c.system) { g.target = c.system; changed = true; }
+  if (!t.display && c.display) { t.display = c.display; changed = true; }
+  return changed;
 }
 
 function readHeaderFields() {
@@ -345,13 +406,20 @@ function renderGroup(g, gi) {
   head.appendChild(removeBtn);
   box.appendChild(head);
 
+  // the codes of the target valueset that fit this group's target system, offered in the target code fields
+  const listId = 'dl_codes_' + gi;
+  const codeList = document.createElement('datalist');
+  codeList.id = listId;
+  fillCodeList(codeList, g);
+  box.appendChild(codeList);
+
   const row = document.createElement('div');
   row.className = 'row';
   row.appendChild(textField('Source system', g.source, v => g.source = v || undefined));
-  row.appendChild(textField('Target system', g.target, v => g.target = v || undefined));
+  row.appendChild(textField('Target system', g.target, v => { g.target = v || undefined; fillCodeList(codeList, g); }, false, 'dl_systems'));
   box.appendChild(row);
 
-  box.appendChild(renderMapTable(g));
+  box.appendChild(renderMapTable(g, listId));
 
   const addElBtn = document.createElement('button');
   addElBtn.className = 'small';
@@ -367,7 +435,7 @@ function renderGroup(g, gi) {
 // renderMapTable renders one group's element/target pairs as a single
 // spreadsheet-like table: one row per (element, target) pair, with the
 // source code/display cells row-spanned across all of an element's targets.
-function renderMapTable(g) {
+function renderMapTable(g, listId) {
   const table = document.createElement('table');
   table.className = 'map-table';
   table.innerHTML = '<thead><tr>' +
@@ -406,7 +474,12 @@ function renderMapTable(g) {
       }
 
       const tgtCode = document.createElement('td');
-      tgtCode.appendChild(cellInput(t.code, v => t.code = v));
+      const tgtInput = cellInput(t.code, v => t.code = v);
+      if (listId) tgtInput.setAttribute('list', listId);
+      // picking a code of the valueset fills in its display, and the group's target system when that is empty
+      tgtInput.addEventListener('change', () => { if (applyConcept(g, t, tgtInput.value)) renderGroups(); });
+      if (ti === 0) { tgtInput.dataset.role = 'tgt'; tgtInput.dataset.src = el.code; } // the deep link finds the row by its source code
+      tgtCode.appendChild(tgtInput);
       tr.appendChild(tgtCode);
 
       const tgtDisplay = document.createElement('td');
@@ -513,14 +586,14 @@ function renderUnmapped(g) {
   if (g.unmapped.mode === 'other-map') {
     row.appendChild(textField('Other map url', g.unmapped.url, v => g.unmapped.url = v || undefined));
   } else {
-    row.appendChild(textField('Fixed code', g.unmapped.code, v => g.unmapped.code = v || undefined));
+    row.appendChild(textField('Fixed code', g.unmapped.code, v => g.unmapped.code = v || undefined, false, 'dl_codes_all'));
     row.appendChild(textField('Fixed display', g.unmapped.display, v => g.unmapped.display = v || undefined));
   }
   box.appendChild(row);
   return box;
 }
 
-function textField(labelText, value, onChange, small) {
+function textField(labelText, value, onChange, small, listId) {
   const field = document.createElement('div');
   field.className = 'field';
   const label = document.createElement('label');
@@ -528,6 +601,7 @@ function textField(labelText, value, onChange, small) {
   const input = document.createElement('input');
   input.className = 'code';
   input.value = value || '';
+  if (listId) input.setAttribute('list', listId);
   input.addEventListener('input', () => onChange(input.value));
   field.appendChild(label);
   field.appendChild(input);
@@ -575,7 +649,7 @@ async function save() {
       currentFile = created.filename;
       toast('Created ' + currentFile);
     }
-    showList();
+    leave();
   } catch (e) {
     toast('Save failed: ' + e.message, true);
   }
@@ -594,13 +668,64 @@ async function remove() {
 }
 
 document.getElementById('newBtn').addEventListener('click', newConceptMap);
+document.getElementById('f_target').addEventListener('change', () => { readHeaderFields(); loadValueSet(); });
 document.getElementById('addGroupBtn').addEventListener('click', () => { current.group.push({ element: [] }); renderGroups(); });
 document.getElementById('saveBtn').addEventListener('click', save);
-document.getElementById('cancelBtn').addEventListener('click', showList);
+document.getElementById('cancelBtn').addEventListener('click', leave);
 document.getElementById('deleteBtn').addEventListener('click', remove);
-backBtn.addEventListener('click', showList);
+backBtn.addEventListener('click', leave);
+
+// ---- deep links from the findings dashboard ----
+//   /conceptmaps#edit=<file>&code=<source code>&back=/findings      open that map at the code: its row, or a new row for it
+//   /conceptmaps#new=<valueset>&code=<source code>&back=/findings   a new map for that valueset, with the code as its first row
+let returnTo = null; // where Save and Cancel go when the page was opened from a link
+
+function leave() {
+  if (returnTo) { location.href = returnTo; return; }
+  showList();
+}
+
+// focusCode scrolls to the row of a source code, adding a row for it (in the group that holds the
+// fallback, else the first) when the map has none, and puts the cursor in its target code field.
+function focusCode(code) {
+  let added = false;
+  if (!current.group.some(g => g.element.some(el => el.code === code))) {
+    let g = current.group.find(x => x.unmapped) || current.group[0];
+    if (!g) { g = { element: [] }; current.group.push(g); }
+    g.element.push({ code: code, target: [{ code: '', equivalence: 'equivalent' }] });
+    added = true;
+    renderGroups();
+  }
+  const input = [...document.querySelectorAll('input[data-role="tgt"]')].find(i => i.dataset.src === code);
+  if (input) {
+    input.scrollIntoView({ block: 'center' });
+    input.focus();
+    input.closest('tr').classList.add('flash');
+  }
+  toast(added ? 'Added "' + code + '": fill in the target code and Save' : 'Showing "' + code + '"');
+}
+
+async function handleDeepLink() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  returnTo = p.get('back');
+  if (returnTo && !returnTo.startsWith('/')) returnTo = null; // only links back into this server
+  const code = p.get('code');
+  if (p.get('edit')) {
+    await openFile(p.get('edit'));
+    if (current && code) focusCode(code);
+  } else if (p.get('new')) {
+    newConceptMap();
+    current.targetCanonical = p.get('new');
+    const vsName = p.get('new').split('/').pop().split('|')[0]; // a starting point for the id and title, change as you like
+    current.id = vsName + '-map';
+    current.title = 'Map to ' + vsName;
+    renderEdit();
+    if (code) focusCode(code);
+  }
+}
 
 showList();
+handleDeepLink();
 </script>
 </body>
 </html>

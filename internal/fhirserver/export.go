@@ -226,6 +226,7 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 // failed de-identification never leaves anything servable.
 func (s *Server) runExport(ctx context.Context, job *exportJob, req exportRequest) {
 	defer job.cancel()
+	defer s.flushFindings(job.id, req.findingsKey(job.groupID)) // also after a failed export: the findings still describe the data
 	start := time.Now()
 	if s.exportGate != nil {
 		s.exportGate()
@@ -543,4 +544,34 @@ func parseTypeFilters(raw []string) (map[string]map[string]string, error) {
 		out[resourceType] = params
 	}
 	return out, nil
+}
+
+// findingsKey identifies this request for comparing data findings between
+// runs: the group plus the export parameters, in a fixed order, so repeating
+// the same $export gives the same key and changing any parameter gives a new one.
+func (r exportRequest) findingsKey(groupID string) string {
+	types := append([]string(nil), r.resourceTypes...)
+	sort.Strings(types)
+	var b strings.Builder
+	b.WriteString("Group/" + groupID + " $export _type=" + strings.Join(types, ","))
+	for _, t := range types {
+		if f := r.typeFilters[t]; len(f) > 0 {
+			keys := make([]string, 0, len(f))
+			for k := range f {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, len(keys))
+			for i, k := range keys {
+				parts[i] = k + "=" + f[k]
+			}
+			b.WriteString(" _typeFilter=" + t + "?" + strings.Join(parts, "&"))
+		}
+		if e := r.elementsByType[t]; len(e) > 0 {
+			el := append([]string(nil), e...)
+			sort.Strings(el)
+			b.WriteString(" _elements=" + t + ":" + strings.Join(el, ","))
+		}
+	}
+	return b.String()
 }

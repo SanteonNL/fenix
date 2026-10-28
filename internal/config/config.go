@@ -40,6 +40,8 @@ type InputsConfig struct {
 	QueryConfig DirRef `yaml:"queryConfig"` // query compiler config (substitutions.yaml, sources/*); default: config/queries
 	Profiles    DirRef `yaml:"profiles"`    // FHIR StructureDefinition .json files
 	ConceptMaps DirRef `yaml:"conceptMaps"` // FHIR ConceptMap .json files
+	ObservationDefinitions DirRef `yaml:"observationDefinitions"` // optional: FHIR ObservationDefinition .json files; an Observation value is checked against the definition of its code
+	ValueSets   DirRef `yaml:"valueSets"`   // optional: FHIR ValueSet .json files; a code that is a member of the valueset a concept map targets needs no mapping
 	SQLFile     string `yaml:"sqlFile"`     // optional single multi-statement SQL file, relative to the repo root (same as the -sql flag)
 }
 
@@ -172,6 +174,39 @@ type OutputConfig struct {
 	Type     string            `yaml:"type"`   // "local" (default) or "datalake"
 	Local    LocalOutputConfig `yaml:"local"`
 	DataLake *DataLakeConfig   `yaml:"datalake,omitempty"`
+	Findings FindingsConfig    `yaml:"findings"`
+}
+
+// FindingsConfig says where data-quality findings (internal/findings) are
+// written: one findings-<runID>.jsonl file per run, apart from the application
+// log, for dashboards to read.
+type FindingsConfig struct {
+	Dir string `yaml:"dir"` // default: <output.local.dir>/findings, a folder the run archiver leaves alone
+
+	// IncludeResources stores the full resource of each example finding, so the dashboard can show
+	// it on hover. Off by default: the findings file then holds real (not de-identified) data.
+	IncludeResources bool `yaml:"includeResources"`
+
+	// Profile counts the values of every element while the conversion queries run, so the dashboard can
+	// show what the source delivered (before concept maps). Reads the rows the converter reads anyway:
+	// it adds no queries, only counting work per cell, so it is off by default.
+	Profile ProfileConfig `yaml:"profile"`
+}
+
+// ProfileConfig tunes the value profile (output.findings.profile).
+type ProfileConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	MaxDistinct int      `yaml:"maxDistinct"` // list values only for elements with at most this many distinct values (default 30)
+	Skip        []string `yaml:"skip"`        // elements never listed value by value: FHIR path or last segment, * and ? wildcards
+}
+
+// FindingsDir returns the directory for findings files, relative to the repo
+// root unless absolute.
+func (o OutputConfig) FindingsDir() string {
+	if o.Findings.Dir != "" {
+		return o.Findings.Dir
+	}
+	return filepath.Join(o.Local.Dir, "findings")
 }
 
 type LocalOutputConfig struct {

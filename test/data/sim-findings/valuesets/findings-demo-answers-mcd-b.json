@@ -1,0 +1,21 @@
+{
+  "resourceType": "ValueSet",
+  "id": "findings-demo-answers-mcd-b",
+  "url": "https://fenix.santeon.nl/demo/ValueSet/findings-demo-answers-mcd-b",
+  "name": "findings_demo_answers_mcd_b",
+  "title": "Answers for MCD_B",
+  "status": "draft",
+  "description": "Demo only: the valid answers for one observation code, referenced by an ObservationDefinition.",
+  "compose": {
+    "include": [
+      {
+        "system": "https://santeon.nl/sct",
+        "concept": [
+          { "code": "B1", "display": "Class 1" },
+          { "code": "B2", "display": "Class 2" },
+          { "code": "B3", "display": "Class 3" }
+        ]
+      }
+    ]
+  }
+}

@@ -33,6 +33,10 @@ type Server struct {
 	outputDir string // if non-empty, compiled queries are written here
 	log       zerolog.Logger
 
+	findingsDir string                            // if non-empty, data findings are written here when an export ends (SetFindingsDir)
+	profile     *converter.ProfileService         // set when there is no converter (NewToolsServer)
+	obsDefs     *converter.ObservationDefinitions // likewise
+
 	conceptMapsDir string                       // directory of FHIR ConceptMap .json files served/edited by the /conceptmaps UI
 	conceptMapSvc  *converter.ConceptMapService // reloaded in place whenever the editor saves/deletes a file
 
@@ -90,15 +94,64 @@ func (s *Server) SetExportTuning(batchSize, workers int) {
 	s.exportBatchSize, s.exportWorkers = batchSize, workers
 }
 
+// SetFindingsDir makes every $export write the data findings collected by the
+// converter (see converter.SetFindings) to dir when it ends, as
+// findings-<jobId>.jsonl. "" (the default) writes none. Findings of exports
+// that run at the same time share the converter's collector, so whichever job
+// ends first writes them all. Call before serving.
+func (s *Server) SetFindingsDir(dir string) { s.findingsDir = dir }
+
+// flushFindings writes the collected findings under the given run id.
+func (s *Server) flushFindings(runID, query string) {
+	if s.findingsDir == "" {
+		return
+	}
+	if _, err := s.converter.FlushFindings(s.findingsDir, runID, s.source, query); err != nil {
+		s.log.Warn().Err(err).Str("jobId", runID).Msg("Failed to write data findings")
+	}
+}
+
 // Handler returns an http.Handler for the FHIR API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/r4/", s.handleSearch)
+	s.mountTools(mux)
+	return mux
+}
+
+// mountTools registers the ConceptMap editor and, when a findings directory is
+// set, the findings dashboard and its API.
+func (s *Server) mountTools(mux *http.ServeMux) {
 	mux.HandleFunc("/conceptmaps", s.handleConceptMapsUI)
 	mux.HandleFunc("/conceptmaps/", s.handleConceptMapsUI)
 	mux.HandleFunc("/api/conceptmaps", s.handleConceptMapsAPI)
 	mux.HandleFunc("/api/conceptmaps/", s.handleConceptMapsAPI)
-	return mux
+	mux.HandleFunc("/api/valuesets", s.handleValueSet)
+	if s.findingsDir != "" {
+		(&findingsAPI{dir: s.findingsDir, maps: s.conceptMapSvc, profile: s.profileService, defs: s.observationDefinitions}).mount(mux)
+	}
+}
+
+// observationDefinitions is what the converter checks Observation values against, or the set given to NewToolsServer.
+func (s *Server) observationDefinitions() *converter.ObservationDefinitions {
+	if s.obsDefs != nil {
+		return s.obsDefs
+	}
+	if s.converter != nil {
+		return s.converter.ObservationDefinitions()
+	}
+	return nil
+}
+
+// profileService is the profile the converter validates against, or the one given to NewToolsServer.
+func (s *Server) profileService() *converter.ProfileService {
+	if s.profile != nil {
+		return s.profile
+	}
+	if s.converter != nil {
+		return s.converter.Profile()
+	}
+	return nil
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

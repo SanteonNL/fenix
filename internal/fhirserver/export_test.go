@@ -168,3 +168,28 @@ func TestHandleExportFile_UnknownJob(t *testing.T) {
 		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestExportRequestFindingsKey(t *testing.T) {
+	a := exportRequest{
+		resourceTypes: []string{"Patient", "Observation"},
+		typeFilters:   map[string]map[string]string{"Observation": {"status": "final", "code": "x"}},
+	}
+	b := exportRequest{
+		resourceTypes: []string{"Observation", "Patient"},
+		typeFilters:   map[string]map[string]string{"Observation": {"code": "x", "status": "final"}},
+	}
+	if a.findingsKey("g1") != b.findingsKey("g1") {
+		t.Errorf("same request, different keys: %q vs %q", a.findingsKey("g1"), b.findingsKey("g1"))
+	}
+	want := "Group/g1 $export _type=Observation,Patient _typeFilter=Observation?code=x&status=final"
+	if got := a.findingsKey("g1"); got != want {
+		t.Errorf("key = %q, want %q", got, want)
+	}
+	if a.findingsKey("g1") == a.findingsKey("g2") {
+		t.Error("different groups must differ")
+	}
+	a.typeFilters["Observation"]["status"] = "amended"
+	if a.findingsKey("g1") == b.findingsKey("g1") {
+		t.Error("a changed filter must change the key")
+	}
+}

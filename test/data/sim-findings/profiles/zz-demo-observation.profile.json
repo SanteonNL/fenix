@@ -1,0 +1,23 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "findings-demo-observation",
+  "url": "https://fenix.santeon.nl/demo/StructureDefinition/findings-demo-observation",
+  "name": "FindingsDemoObservation",
+  "status": "draft",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Observation",
+  "description": "Demo-only overlay: stricter than the SIM profile, so every profile rule code (FX-DATA-010..014) has data that triggers it. Loaded after the SIM profiles (file name sorts last) and replaces their rule for the same element path.",
+  "snapshot": {
+    "element": [
+      { "id": "Observation", "path": "Observation", "min": 0, "max": "*" },
+      { "id": "Observation.status", "path": "Observation.status", "min": 1, "max": "1", "type": [{ "code": "code" }], "fixedCode": "final" },
+      { "id": "Observation.code", "path": "Observation.code", "min": 1, "max": "1", "type": [{ "code": "CodeableConcept" }] },
+      { "id": "Observation.code.coding", "path": "Observation.code.coding", "min": 1, "max": "*", "type": [{ "code": "Coding" }] },
+      { "id": "Observation.code.coding.display", "path": "Observation.code.coding.display", "min": 0, "max": "0", "type": [{ "code": "string" }] },
+      { "id": "Observation.subject", "path": "Observation.subject", "min": 1, "max": "1", "type": [{ "code": "Reference" }] },
+      { "id": "Observation.effective[x]", "path": "Observation.effective[x]", "min": 1, "max": "1", "type": [{ "code": "dateTime" }] },
+      { "id": "Observation.value[x]", "path": "Observation.value[x]", "min": 0, "max": "1", "type": [{ "code": "Quantity" }] }
+    ]
+  }
+}

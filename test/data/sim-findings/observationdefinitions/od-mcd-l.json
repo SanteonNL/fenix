@@ -1,0 +1,8 @@
+{
+  "resourceType": "ObservationDefinition",
+  "id": "od-mcd-l",
+  "code": { "coding": [ { "system": "https://santeon.nl/sct", "code": "MCD_L", "display": "MCD L" } ] },
+  "permittedDataType": [ "CodeableConcept" ],
+  "preferredReportName": "MCD L",
+  "validCodedValueSet": { "reference": "https://fenix.santeon.nl/demo/ValueSet/findings-demo-answers-mcd-l" }
+}

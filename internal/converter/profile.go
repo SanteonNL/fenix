@@ -15,6 +15,7 @@ import (
 type ProfileService struct {
 	pathToValueset map[string]string // "Patient.gender" → valueset URI (no version)
 	elements       map[string]*ElementRule
+	children       map[string][]string // parent element path → paths one segment deeper
 	logger         zerolog.Logger
 }
 
@@ -23,6 +24,7 @@ func NewProfileService(logger zerolog.Logger) *ProfileService {
 	return &ProfileService{
 		pathToValueset: make(map[string]string),
 		elements:       make(map[string]*ElementRule),
+		children:       make(map[string][]string),
 		logger:         logger,
 	}
 }
@@ -45,7 +47,7 @@ func (p *ProfileService) LoadProfile(filePath string) error {
 
 	count := 0
 	for _, element := range sd.Snapshot.Element {
-		p.registerElement(element)
+		p.registerElement(sd.Url, element)
 		if element.Binding == nil || element.Binding.ValueSet == nil {
 			continue
 		}
@@ -109,7 +111,12 @@ func (p *ProfileService) ValuesetURI(fhirPath string) string {
 // notion of which coding system a given code belongs to (see
 // ConceptMapService.Translate), so entries from different source systems
 // that happen to share a literal code value cannot be disambiguated.
-func applyConceptMappings(raw map[string]any, currentPath string, profile *ProfileService, concepts *ConceptMapService) {
+//
+// unmapped, when not nil, is told about every source code that has no explicit
+// mapping although a concept map exists for its valueset: the code, how it was
+// treated (MapDefault: replaced by the fallback, MapNone: left as it is) and the
+// path of the element holding the code.
+func applyConceptMappings(raw map[string]any, currentPath string, profile *ProfileService, concepts *ConceptMapService, unmapped func(unmappedCode)) {
 	if profile == nil || concepts == nil {
 		return
 	}
@@ -121,28 +128,32 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 		switch v := val.(type) {
 		case string:
 			if vsURI != "" {
-				if mapped, _, _, changed := concepts.Translate(vsURI, v); changed {
+				mapped, _, _, status := concepts.TranslateStatus(vsURI, v)
+				if status == MapMapped || status == MapDefault {
 					raw[field] = mapped
 				}
+				noteUnmapped(unmapped, childPath, v, mapped, status)
 			}
 		case []byte:
 			if vsURI != "" {
-				if mapped, _, _, changed := concepts.Translate(vsURI, string(v)); changed {
+				mapped, _, _, status := concepts.TranslateStatus(vsURI, string(v))
+				if status == MapMapped || status == MapDefault {
 					raw[field] = mapped
 				}
+				noteUnmapped(unmapped, childPath, string(v), mapped, status)
 			}
 		case map[string]any:
 			if vsURI != "" {
-				translateCodingLike(v, vsURI, concepts)
+				translateCodingLike(v, vsURI, concepts, childPath, unmapped)
 			}
-			applyConceptMappings(v, childPath, profile, concepts)
+			applyConceptMappings(v, childPath, profile, concepts, unmapped)
 		case []any:
 			for _, elem := range v {
 				if m, ok := elem.(map[string]any); ok {
 					if vsURI != "" {
-						translateCodingLike(m, vsURI, concepts)
+						translateCodingLike(m, vsURI, concepts, childPath, unmapped)
 					}
-					applyConceptMappings(m, childPath, profile, concepts)
+					applyConceptMappings(m, childPath, profile, concepts, unmapped)
 				}
 			}
 		}
@@ -158,21 +169,21 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 // validateThroughStruct's normalizeNestedArrays, which is what wraps a
 // single row's coding into an array to match the FHIR struct's []Coding
 // field — so both shapes have to be handled here.
-func translateCodingLike(v map[string]any, vsURI string, concepts *ConceptMapService) {
+func translateCodingLike(v map[string]any, vsURI string, concepts *ConceptMapService, path string, unmapped func(unmappedCode)) {
 	if codingsRaw, ok := v["coding"]; ok {
 		switch codings := codingsRaw.(type) {
 		case []any:
 			for _, c := range codings {
 				if coding, ok := c.(map[string]any); ok {
-					translateCode(coding, vsURI, concepts)
+					translateCode(coding, vsURI, concepts, path+".coding.code", unmapped)
 				}
 			}
 		case map[string]any:
-			translateCode(codings, vsURI, concepts)
+			translateCode(codings, vsURI, concepts, path+".coding.code", unmapped)
 		}
 		return
 	}
-	translateCode(v, vsURI, concepts)
+	translateCode(v, vsURI, concepts, path+".code", unmapped)
 }
 
 // translateCode translates m["code"] in place, and syncs m["display"] and
@@ -182,13 +193,14 @@ func translateCodingLike(v map[string]any, vsURI string, concepts *ConceptMapSer
 // Leaving system stale would otherwise be actively wrong: a translated code
 // from a different code system (e.g. a LOINC code) left under the source's
 // original system URI misrepresents what the code actually is.
-func translateCode(m map[string]any, vsURI string, concepts *ConceptMapService) {
+func translateCode(m map[string]any, vsURI string, concepts *ConceptMapService, path string, unmapped func(unmappedCode)) {
 	code, ok := m["code"].(string)
 	if !ok {
 		return
 	}
-	mapped, display, system, changed := concepts.Translate(vsURI, code)
-	if !changed {
+	mapped, display, system, status := concepts.TranslateStatus(vsURI, code)
+	noteUnmapped(unmapped, path, code, mapped, status)
+	if status != MapMapped && status != MapDefault {
 		return
 	}
 	m["code"] = mapped
@@ -210,3 +222,18 @@ func rawToString(val any) string {
 	return ""
 }
 
+// unmappedCode is a source code the concept map of its valueset has no mapping for.
+type unmappedCode struct {
+	path   string // element holding the code, e.g. "Patient.gender" or "Observation.code.coding.code"
+	code   string // the source code
+	target string // what it became: the map's fallback (status MapDefault), or the code itself (MapNone)
+	status string // MapDefault or MapNone
+}
+
+// noteUnmapped tells unmapped about a code that was not explicitly mapped.
+func noteUnmapped(unmapped func(unmappedCode), path, code, target, status string) {
+	if unmapped == nil || (status != MapDefault && status != MapNone) {
+		return
+	}
+	unmapped(unmappedCode{path: path, code: code, target: target, status: status})
+}

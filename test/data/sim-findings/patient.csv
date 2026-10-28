@@ -1,0 +1,13 @@
+Identificatienummer;GeslachtCode;GeslachtOmschrijving;Land;Geboortedatum;DatumOverlijden;DatumCheckStatusOverlijden
+1001;M;Male;NL;1980-04-12;;
+1002;F;Female;NL;1975-09-30;;
+1003;man;Male;NL;1990-01-15;;
+1004;vrouw;Female;NL;1988-07-07;;
+1005;man;Male;NL;31-12-2001;;
+1006;Z;Unknown;NL;2001-02-03;;
+1007;F;Female;NL;not-a-date;;
+1008;M;Male;NL;1950-05-05;yesterday;
+1009;;Unknown;NL;1960-06-06;;
+1010;F;Female;NL;1999-13-45;2024-02-31;
+1011;vrouw;Female;NL;1970-10-10;2023-01-01;
+1012;M;Male;NL;1985-03-03;;

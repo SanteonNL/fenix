@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 )
 
@@ -266,4 +267,31 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func apiError(w http.ResponseWriter, msg string, code int) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// handleValueSet answers GET /api/valuesets?url=<canonical url> with the listed concepts of that valueset
+// (system, code, display) and its distinct systems, so the editor can offer them as choices for the target
+// system and target code of a concept map. A valueset that is not loaded, or lists no members, gives found=false.
+func (s *Server) handleValueSet(w http.ResponseWriter, r *http.Request) {
+	url := r.URL.Query().Get("url")
+	resp := struct {
+		URL      string                      `json:"url"`
+		Found    bool                        `json:"found"`
+		Systems  []string                    `json:"systems"`
+		Concepts []converter.ValueSetConcept `json:"concepts"`
+	}{URL: url, Systems: []string{}, Concepts: []converter.ValueSetConcept{}}
+	if s.conceptMapSvc != nil && url != "" {
+		if cs, ok := s.conceptMapSvc.ValueSetConcepts(url); ok {
+			resp.Found, resp.Concepts = true, cs
+			seen := map[string]bool{}
+			for _, c := range cs {
+				if c.System != "" && !seen[c.System] {
+					seen[c.System] = true
+					resp.Systems = append(resp.Systems, c.System)
+				}
+			}
+			sort.Strings(resp.Systems)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

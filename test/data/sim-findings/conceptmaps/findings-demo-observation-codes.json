@@ -1,0 +1,28 @@
+{
+  "id": "findings-demo-observation-codes",
+  "url": "https://fenix.santeon.nl/demo/ConceptMap/findings-demo-observation-codes",
+  "name": "FindingsDemoObservationCodes",
+  "title": "Demo: source observation codes to the demo valueset",
+  "status": "draft",
+  "description": "Demo only. Maps one santeon.nl code onto the demo valueset (illustrative, not a real equivalence). Codes that are in the valueset (the LOINC ones) need no mapping; the others are unmapped, and this map has no default, so they pass through unchanged.",
+  "targetCanonical": "https://fenix.santeon.nl/demo/ValueSet/findings-demo-observation-codes",
+  "group": [
+    {
+      "source": "https://santeon.nl/sct",
+      "target": "http://loinc.org",
+      "element": [
+        {
+          "code": "MCD_A",
+          "target": [
+            {
+              "code": "718-7",
+              "display": "Hemoglobin [Mass/volume] in Blood",
+              "equivalence": "inexact"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "resourceType": "ConceptMap"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "findings-demo-answers-mcd-b-map",
+  "title": "Map to findings-demo-answers-mcd-b",
+  "status": "draft",
+  "targetCanonical": "https://fenix.santeon.nl/demo/ValueSet/findings-demo-answers-mcd-b",
+  "group": [
+    {
+      "target": "https://santeon.nl/sct",
+      "element": [
+        {
+          "code": "B9",
+          "target": [
+            {
+              "code": "B3",
+              "display": "Class 3",
+              "equivalence": "equivalent"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "resourceType": "ConceptMap"
+}

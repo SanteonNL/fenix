@@ -1,0 +1,20 @@
+{
+  "resourceType": "ValueSet",
+  "id": "findings-demo-observation-codes",
+  "url": "https://fenix.santeon.nl/demo/ValueSet/findings-demo-observation-codes",
+  "name": "FindingsDemoObservationCodes",
+  "title": "Demo observation codes",
+  "status": "draft",
+  "description": "Demo only: a subset of the observation codes that occur in test/data/sim-findings/AlgemeneMeting.csv (the LOINC ones). The santeon.nl codes (MCD_*) are not in it, so they need a mapping.",
+  "compose": {
+    "include": [
+      {
+        "system": "http://loinc.org",
+        "concept": [
+          { "code": "718-7", "display": "Hemoglobin [Mass/volume] in Blood" },
+          { "code": "4548-4", "display": "Hemoglobin A1c/Hemoglobin.total in Blood" }
+        ]
+      }
+    ]
+  }
+}

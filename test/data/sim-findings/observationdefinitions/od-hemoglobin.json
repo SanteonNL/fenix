@@ -1,0 +1,7 @@
+{
+  "resourceType": "ObservationDefinition",
+  "id": "od-hemoglobin",
+  "code": { "coding": [ { "system": "http://loinc.org", "code": "718-7", "display": "Hemoglobin" } ] },
+  "permittedDataType": [ "Quantity" ],
+  "preferredReportName": "Hemoglobin"
+}

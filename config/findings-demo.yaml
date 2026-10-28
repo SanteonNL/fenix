@@ -1,0 +1,45 @@
+# Self-contained config that produces data-quality findings (FX-DATA-nnn) on purpose:
+# test/data/sim-findings/ holds Patient and Observation rows with invalid codes,
+# malformed dates and numbers, missing required elements, and so on, and
+# test/data/sim-findings/profiles/ holds copies of the SIM profiles plus a
+# stricter demo overlay (zz-demo-*.profile.json) that makes every profile rule
+# code reachable. Demo only; not a template.
+#
+#   go run ./cmd/fenix -config config/findings-demo.yaml -cmd all sim
+#
+# Findings land in output/findings-demo/findings/findings-<runID>.jsonl. Look at them with
+#   go run ./cmd/fenix -config config/findings-demo.yaml -cmd findings
+# and open http://127.0.0.1:8080/findings (the page reads the folder itself). Run the
+# conversion a few times, or change the CSVs in between, to see runs compared.
+
+environment: dev
+logLevel: info
+
+staging:
+  database: sqlite
+  path: output/findings-demo/staging.db
+
+inputs:
+  profiles:    {source: repo, path: test/data/sim-findings/profiles}
+  conceptMaps: {source: repo, path: test/data/sim-findings/conceptmaps}   # own copy: edits made in the editor stay in the demo
+  valueSets:   {source: repo, path: test/data/sim-findings/valuesets}
+  observationDefinitions: {source: repo, path: test/data/sim-findings/observationdefinitions}   # an Observation's value is checked against the definition of its code
+
+output:
+  findings:
+    includeResources: true   # keep the full resource of each example, shown on hover; fine here: the data is fake
+    profile:
+      enabled: true          # count the values of every element while the rows are read (no extra queries)
+      # skip: ["Patient.identifier.value"]   # elements never listed value by value
+  format: pretty
+  type: local
+  local:
+    dir: output/findings-demo
+    useTimestamp: false
+    archiveCount: 0
+
+sources:
+  sim:
+    type: local
+    dir: "test/data/sim-findings"
+    delimiter: ";"

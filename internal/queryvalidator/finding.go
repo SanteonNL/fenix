@@ -8,45 +8,24 @@
 package queryvalidator
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
+
+	"github.com/SanteonNL/fenix/internal/findings"
 )
 
-// Severity orders findings; the zero value is the least severe.
-type Severity int
+// Severity orders findings; the zero value is the least severe. It is shared
+// with the data findings of internal/findings so both report on one scale.
+type Severity = findings.Severity
 
 const (
-	Info Severity = iota
-	Warning
-	Error
+	Info    = findings.Info
+	Warning = findings.Warning
+	Error   = findings.Error
 )
 
-func (s Severity) String() string {
-	switch s {
-	case Error:
-		return "ERROR"
-	case Warning:
-		return "WARN"
-	}
-	return "INFO"
-}
-
-func (s Severity) MarshalJSON() ([]byte, error) { return json.Marshal(strings.ToLower(s.String())) }
-
 // ParseSeverity turns "error"/"warning"/"info" (any case) into a Severity.
-func ParseSeverity(s string) (Severity, bool) {
-	switch strings.ToLower(s) {
-	case "error":
-		return Error, true
-	case "warn", "warning":
-		return Warning, true
-	case "info":
-		return Info, true
-	}
-	return Info, false
-}
+func ParseSeverity(s string) (Severity, bool) { return findings.ParseSeverity(s) }
 
 // Rule codes. SQL = query shape, PATH = fhir_path tree, COL = column vs. the
 // FHIR model, LIT = literal values, PROF = profile coverage, SEM = semantic

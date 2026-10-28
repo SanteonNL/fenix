@@ -1,8 +1,10 @@
 package converter
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,6 +21,7 @@ type translationEntry struct {
 	targetCode    string
 	targetDisplay string
 	targetSystem  string
+	file          string // the ConceptMap file the entry came from, for the editor
 }
 
 // valuesetMap holds every translation entry that targets one valueset
@@ -28,6 +31,7 @@ type valuesetMap struct {
 	entries    []translationEntry
 	validCodes map[string]bool // every code_target value — already-valid codes skip mapping
 	unmapped   *translationEntry
+	files      []string // ConceptMap files that contribute to this valueset, in load order
 }
 
 // ConceptMapService loads real FHIR ConceptMap resources (JSON files
@@ -43,7 +47,10 @@ type valuesetMap struct {
 // old flat CSV format.
 type ConceptMapService struct {
 	mu         sync.RWMutex
-	byValueset map[string]*valuesetMap // target_valueset_uri (no version) -> map
+	byValueset map[string]*valuesetMap    // target_valueset_uri (no version) -> map
+	valueSets  map[string]map[string]bool // valueset url (no version) -> its member codes, see LoadValueSetsDir
+	vsURLs     map[string]string          // valueset url or "ValueSet/<id>" -> its canonical url (no version)
+	vsConcepts map[string][]ValueSetConcept // valueset url or "ValueSet/<id>" -> its listed concepts, for the editor's pick-lists
 	logger     zerolog.Logger
 }
 
@@ -86,6 +93,8 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 		vm = &valuesetMap{validCodes: map[string]bool{}}
 		s.byValueset[vsURI] = vm
 	}
+	file := filepath.Base(filePath)
+	vm.files = append(vm.files, file)
 
 	for _, group := range cm.Group {
 		targetSystem := stringOrEmpty(group.Target)
@@ -103,6 +112,7 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 					targetCode:    *target.Code,
 					targetDisplay: stringOrEmpty(target.Display),
 					targetSystem:  targetSystem,
+					file:          file,
 				}
 				vm.entries = append(vm.entries, entry)
 				vm.validCodes[entry.targetCode] = true
@@ -116,11 +126,145 @@ func (s *ConceptMapService) LoadJSON(filePath string) error {
 				targetCode:    *group.Unmapped.Code,
 				targetDisplay: stringOrEmpty(group.Unmapped.Display),
 				targetSystem:  targetSystem,
+				file:          file,
 			}
 		}
 	}
 
 	return nil
+}
+
+// LoadValueSetsDir reads FHIR ValueSet .json files (also the {"valueSet": {...}} wrapper
+// the terminology/valuesets files use) and remembers their member codes: the
+// concepts of compose.include and the entries of expansion.contains. A code that
+// is a member of the valueset a concept map targets is valid as it is, so it needs
+// no mapping; only codes outside the valueset can be unmapped. Valuesets that
+// include whole code systems or use filters have no listed members and are skipped.
+// It does not touch the loaded concept maps, so editor saves (LoadDir) keep it.
+func (s *ConceptMapService) LoadValueSetsDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	sets := map[string]map[string]bool{}
+	urls := map[string]string{}
+	concepts := map[string][]ValueSetConcept{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			s.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping valueset")
+			continue
+		}
+		url, id, list := valueSetMembers(data)
+		if url == "" || len(list) == 0 {
+			continue
+		}
+		for _, name := range []string{stripVersion(url), "ValueSet/" + id} {
+			if name == "ValueSet/" {
+				continue
+			}
+			urls[name] = stripVersion(url)
+			if sets[name] == nil {
+				sets[name] = map[string]bool{}
+			}
+			for _, c := range list {
+				sets[name][c.Code] = true
+			}
+			concepts[name] = append(concepts[name], list...)
+		}
+	}
+	s.mu.Lock()
+	s.valueSets = sets
+	s.vsURLs = urls
+	s.vsConcepts = concepts
+	s.mu.Unlock()
+	s.logger.Info().Str("dir", dir).Int("valuesets", len(sets)).Msg("Loaded valuesets")
+	return nil
+}
+
+// ValueSetConcept is one listed member of a valueset.
+type ValueSetConcept struct {
+	System  string `json:"system,omitempty"`
+	Code    string `json:"code"`
+	Display string `json:"display,omitempty"`
+}
+
+// valueSetMembers returns the url, id and listed members of a ValueSet resource.
+func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept) {
+	var vs struct {
+		ID       string `json:"id"`
+		URL      string `json:"url"`
+		ValueSet *struct {
+			URL string `json:"url"`
+		} `json:"valueSet"`
+		Compose struct {
+			Include []struct {
+				System  string `json:"system"`
+				Concept []struct {
+					Code    string `json:"code"`
+					Display string `json:"display"`
+				} `json:"concept"`
+			} `json:"include"`
+		} `json:"compose"`
+		Expansion struct {
+			Contains []struct {
+				System  string `json:"system"`
+				Code    string `json:"code"`
+				Display string `json:"display"`
+			} `json:"contains"`
+		} `json:"expansion"`
+	}
+	if json.Unmarshal(data, &vs) != nil {
+		return "", "", nil
+	}
+	if vs.URL == "" && vs.ValueSet != nil {
+		// the wrapper holds the resource one level down: read it again from there
+		var w struct {
+			ValueSet json.RawMessage `json:"valueSet"`
+		}
+		if json.Unmarshal(data, &w) == nil && w.ValueSet != nil {
+			return valueSetMembers(w.ValueSet)
+		}
+	}
+	for _, inc := range vs.Compose.Include {
+		for _, c := range inc.Concept {
+			concepts = append(concepts, ValueSetConcept{System: inc.System, Code: c.Code, Display: c.Display})
+		}
+	}
+	for _, c := range vs.Expansion.Contains {
+		concepts = append(concepts, ValueSetConcept{System: c.System, Code: c.Code, Display: c.Display})
+	}
+	return vs.URL, vs.ID, concepts
+}
+
+// ValueSetConcepts returns the listed concepts of a valueset given by canonical URL or
+// "ValueSet/<id>", with their systems and displays, and whether it is known.
+func (s *ConceptMapService) ValueSetConcepts(ref string) ([]ValueSetConcept, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.vsConcepts[stripVersion(ref)]
+	return append([]ValueSetConcept(nil), c...), ok
+}
+// ValueSetURL returns the canonical URL (no version) of a valueset given by URL or by
+// reference "ValueSet/<id>", or "" when it is not known. Concept maps are indexed by
+// that URL, so this is how a reference becomes the valueset a map can target.
+func (s *ConceptMapService) ValueSetURL(ref string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.vsURLs[stripVersion(ref)]
+}
+
+// ValueSetMembers returns the member codes of a valueset given by canonical URL
+// (a version suffix is ignored) or by reference "ValueSet/<id>", and whether
+// that valueset is known (see LoadValueSetsDir).
+func (s *ConceptMapService) ValueSetMembers(ref string) (map[string]bool, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, ok := s.valueSets[stripVersion(ref)]
+	return m, ok
 }
 
 // LoadDir (re)loads all .json FHIR ConceptMap files from a directory,
@@ -162,17 +306,26 @@ func (s *ConceptMapService) LoadDir(dir string) error {
 // field unset — callers should likewise leave the existing system alone then,
 // rather than blank it out.
 func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCode, targetDisplay, targetSystem string, changed bool) {
+	targetCode, targetDisplay, targetSystem, status := s.TranslateStatus(valuesetURI, sourceCode)
+	return targetCode, targetDisplay, targetSystem, status == MapMapped || status == MapDefault
+}
+
+// TranslateStatus is Translate plus how the code was treated: MapValid, MapMapped
+// (an explicit mapping), MapDefault (the fixed fallback replaced it), MapNone
+// (a map exists, but neither a mapping nor a fallback), or "" when no concept map
+// is loaded for the valueset at all.
+func (s *ConceptMapService) TranslateStatus(valuesetURI, sourceCode string) (targetCode, targetDisplay, targetSystem, status string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	vm, ok := s.byValueset[stripVersion(valuesetURI)]
 	if !ok {
-		return sourceCode, "", "", false
+		return sourceCode, "", "", ""
 	}
 
-	// Already a valid FHIR target code — no mapping needed
-	if vm.validCodes[sourceCode] {
-		return sourceCode, "", "", false
+	// Already a valid FHIR target code, or a member of the target valueset — no mapping needed
+	if vm.validCodes[sourceCode] || s.valueSets[stripVersion(valuesetURI)][sourceCode] {
+		return sourceCode, "", "", MapValid
 	}
 
 	for _, e := range vm.entries {
@@ -182,7 +335,7 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCod
 				Str("from", sourceCode).
 				Str("to", e.targetCode).
 				Msg("Concept mapped (exact)")
-			return e.targetCode, e.targetDisplay, e.targetSystem, true
+			return e.targetCode, e.targetDisplay, e.targetSystem, MapMapped
 		}
 	}
 
@@ -192,9 +345,9 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCod
 			Str("from", sourceCode).
 			Str("to", vm.unmapped.targetCode).
 			Msg("Concept mapped (unmapped fallback)")
-		return vm.unmapped.targetCode, vm.unmapped.targetDisplay, vm.unmapped.targetSystem, true
+		return vm.unmapped.targetCode, vm.unmapped.targetDisplay, vm.unmapped.targetSystem, MapDefault
 	}
-	return sourceCode, "", "", false
+	return sourceCode, "", "", MapNone
 }
 
 // ReverseTranslate is Translate backwards: given a code of the TARGET
@@ -266,4 +419,90 @@ func stringOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// How a source code is treated, as reported by TranslateStatus and Resolve.
+const (
+	MapValid   = "valid"   // already a valid target code: passed through unchanged
+	MapMapped  = "mapped"  // an explicit mapping applies
+	MapDefault = "default" // no mapping: the group's fixed "unmapped" code replaces it
+	MapNone    = "none"    // no mapping and no default: passed through unchanged
+)
+
+// CodeResolution says what Translate does with one source code.
+type CodeResolution struct {
+	Code    string `json:"code"`
+	Status  string `json:"status"`
+	Target  string `json:"target,omitempty"`  // the code it becomes (mapped, default)
+	Display string `json:"display,omitempty"` // its display, if the map has one
+	File    string `json:"file,omitempty"`    // the ConceptMap file to edit for this code
+}
+
+// DefaultMapping is a map's fixed fallback for unmapped source codes.
+type DefaultMapping struct {
+	Code    string `json:"code"`
+	Display string `json:"display,omitempty"`
+	File    string `json:"file"`
+}
+
+// MappingInfo is how the concept maps of one valueset treat a list of source codes.
+type MappingInfo struct {
+	Valueset string           `json:"valueset"`
+	HasMap   bool             `json:"has_map"` // false: no ConceptMap targets this valueset, nothing is translated
+	Files    []string         `json:"files,omitempty"`
+	Default  *DefaultMapping  `json:"default,omitempty"`
+	Codes    []CodeResolution `json:"codes"`
+}
+
+// Resolve reports, for each source code, what Translate would do with it and
+// which ConceptMap file the answer comes from. It uses TranslateStatus, so what
+// the dashboard shows is what the converter does.
+func (s *ConceptMapService) Resolve(valuesetURI string, codes []string) MappingInfo {
+	info := MappingInfo{Valueset: stripVersion(valuesetURI), Codes: make([]CodeResolution, 0, len(codes))}
+	s.mu.RLock()
+	vm, ok := s.byValueset[info.Valueset]
+	var files []string
+	var def *translationEntry
+	var firstFile = map[string]string{}
+	if ok {
+		files = append([]string(nil), vm.files...)
+		def = vm.unmapped
+		for _, e := range vm.entries {
+			if _, seen := firstFile[e.sourceCode]; !seen {
+				firstFile[e.sourceCode] = e.file
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	if !ok {
+		for _, c := range codes {
+			info.Codes = append(info.Codes, CodeResolution{Code: c, Status: MapNone})
+		}
+		return info
+	}
+	info.HasMap, info.Files = true, files
+	// where a new mapping for an unmapped code belongs: the map that holds the fallback, else the first
+	addTo := ""
+	if len(files) > 0 {
+		addTo = files[0]
+	}
+	if def != nil {
+		info.Default = &DefaultMapping{Code: def.targetCode, Display: def.targetDisplay, File: def.file}
+		if def.file != "" {
+			addTo = def.file
+		}
+	}
+	for _, c := range codes {
+		target, display, _, status := s.TranslateStatus(valuesetURI, c)
+		r := CodeResolution{Code: c, Status: status, File: addTo}
+		switch status {
+		case MapMapped:
+			r.Target, r.Display, r.File = target, display, firstFile[c]
+		case MapDefault:
+			r.Target, r.Display = target, display
+		}
+		info.Codes = append(info.Codes, r)
+	}
+	return info
 }

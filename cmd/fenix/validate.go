@@ -35,7 +35,7 @@ func runValidate(cfg *config.Config, repoRoot string, sourceNames []string, log 
 		return true
 	}
 
-	profileSvc, _, _ := loadTerminology(cfg, repoRoot, log)
+	profileSvc, _, _, _ := loadTerminology(cfg, repoRoot, log)
 	v := &queryvalidator.Validator{Profile: profileSvc}
 
 	var reports []*queryvalidator.FileReport

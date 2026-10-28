@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/SanteonNL/fenix/internal/findings"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 )
@@ -130,6 +131,8 @@ type FHIRConverter struct {
 	logger     zerolog.Logger
 	profile    *ProfileService
 	conceptMap *ConceptMapService
+	obsDefs    *ObservationDefinitions // nil = Observation values are not checked against ObservationDefinitions
+	findings   *findings.Collector // nil = no data findings are reported (see SetFindings)
 
 	// statementWorkers bounds how many statements of one ConvertSQL call run
 	// at the same time (each holds one database connection while reading).
@@ -371,6 +374,11 @@ func (fc *FHIRConverter) executeStatement(ctx context.Context, stmt string, n in
 	}
 
 	res := &stmtResult{resources: make(map[string]ResourceResult), rootPaths: make(map[string]string)}
+	var prof *profiler
+	if fc.findings != nil && fc.findings.Profile {
+		prof = newProfiler(cols, kinds, fc.profile)
+		defer fc.findings.MergeProfile(prof.tally)
+	}
 	count := 0
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
@@ -378,6 +386,7 @@ func (fc *FHIRConverter) executeStatement(ctx context.Context, stmt string, n in
 			continue
 		}
 		res.addRow(cols, kinds, vals)
+		prof.observe(vals)
 		count++
 	}
 	fc.logger.Debug().Int("statement", n).Int("rows", count).Msg("Statement executed")
@@ -541,10 +550,13 @@ func (fc *FHIRConverter) buildResource(resourceID string, resResult ResourceResu
 	}
 
 	// Apply concept mappings driven by FHIR profile bindings
-	applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap)
+	var unmapped []unmappedCode
+	applyConceptMappings(raw, rootPath, fc.profile, fc.conceptMap, func(u unmappedCode) { unmapped = append(unmapped, u) })
+	fc.mapObservationAnswers(rootPath, raw)
 
 	// Validate by round-tripping through the typed fhir.* struct.
 	validated, err := validateThroughStruct(raw, fc.logger)
+	fc.reportFindings(resourceID, rootPath, raw, err, unmapped...)
 	if err != nil {
 		// raw is logged as it stands after concept mapping and coercion — the
 		// state that failed validation.

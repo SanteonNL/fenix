@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FENIX Findings</title>
+<style>
+:root {
+  /* Same palette and shapes as the ConceptMap editor (internal/fhirserver/conceptmap_editor.html),
+     which takes them from santeon.nl: brand blue, magenta accent, pill buttons, rounded cards. */
+  --bg: #f4f6f7; --panel: #ffffff; --line: #dde3e6; --text: #1d2b32; --muted: #65767d;
+  --brand: #009ee2; --brand-dark: #0085bd; --brand-bg: #e6f7fd;
+  --accent: #e40050; --accent-dark: #b8003f; --accent-bg: #fdeaf1;
+  --warn: #b26a00; --warn-bg: #fff4e0;
+  --ok: #1a7a4d; --ok-bg: #e8f8ef;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --sans: "Trenda", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+header { padding: 14px 24px; background: var(--panel); border-bottom: 3px solid var(--brand); display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+header .sub { color: var(--muted); font-size: 12px; }
+button, .btn { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 5px 14px; transition: background .15s, color .15s, border-color .15s; }
+button:hover, .btn:hover { border-color: var(--brand); color: var(--brand-dark); }
+button.on { background: var(--brand-bg); border-color: var(--brand); color: var(--brand-dark); }
+button.small { padding: 2px 10px; font-size: 12px; }
+select, input[type=number] { font: inherit; background: #fff; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+select:focus, input:focus { outline: none; border-color: var(--brand); }
+input[type=number] { width: 56px; }
+input[type=file] { display: none; }
+.spacer { flex: 1; }
+main { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; padding: 16px 24px; align-items: start; }
+.left { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; min-width: 0; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+body.dragging main { outline: 2px dashed var(--brand); outline-offset: -6px; }
+
+.pickbar { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; align-items: center; }
+.pickbar .lbl { font-size: 11px; color: var(--muted); }
+.pill { display: inline-block; border-radius: 999px; padding: 0 10px; font-size: 11px; line-height: 20px; background: var(--brand-bg); color: var(--brand-dark); }
+.pill.cmp { background: var(--warn-bg); color: var(--warn); }
+
+.badge { display: inline-block; border-radius: 999px; padding: 0 8px; font-size: 11px; line-height: 18px; background: var(--brand-bg); color: var(--brand-dark); }
+.badge.error { background: var(--accent-bg); color: var(--accent-dark); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+.badge.chg { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+
+/* tree */
+ul.tree, ul.tree ul { list-style: none; margin: 0; padding-left: 16px; }
+ul.tree { padding-left: 0; }
+.row { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 4px; border-left: 4px solid var(--ok); border-radius: 6px; cursor: pointer; }
+.row:hover { background: var(--brand-bg); }
+.row.sel { background: var(--brand-bg); box-shadow: inset 0 0 0 1px var(--brand); }
+.row.error { border-left-color: var(--accent); }
+.row.warn { border-left-color: var(--warn); }
+.row.info { border-left-color: var(--brand); }
+.row .caret { width: 14px; text-align: center; color: var(--muted); user-select: none; }
+.row .name { font-weight: 500; }
+.row.model .name { font-weight: 700; }
+.row .grow { flex: 1; }
+.row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+
+/* detail */
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 13px; }
+th { background: #fafcfd; color: var(--muted); font-weight: 600; font-size: 12px; }
+tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.grp { text-align: center; border-bottom: 2px solid var(--line); }
+th.grp.run { border-color: var(--brand); } th.grp.cmp { border-color: var(--warn); }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+.nullv { font-style: italic; color: var(--warn); }
+.sev { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--brand); }
+.sev.error { background: var(--accent); } .sev.warn { background: var(--warn); }
+.fcard { border: 1px solid var(--line); border-radius: 14px; margin: 12px 0; overflow: hidden; background: #fbfdfe; }
+.fcard.gone { opacity: .8; border-style: dashed; }
+.fcard > .head { padding: 10px 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; background: var(--brand-bg); }
+.fcard > .body { padding: 6px 14px 12px; overflow-x: auto; background: var(--panel); }
+.bar { height: 7px; background: var(--line); border-radius: 4px; min-width: 40px; }
+.bar > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.bar.warn > i { background: var(--warn); }
+.bar.neutral > i { background: var(--brand); }
+.stats { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.stat { border: 1px solid var(--line); border-radius: 12px; padding: 6px 14px; }
+.stat b { display: block; font-size: 18px; }
+.delta.up { color: var(--accent-dark); } .delta.down { color: var(--ok); }
+.chg-list .item { padding: 5px 8px; border-radius: 8px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.chg-list .item:hover { background: var(--brand-bg); }
+tr.new td, tr.gone td { background: var(--warn-bg); }
+.runs { max-height: 330px; overflow-y: auto; margin-top: 4px; }
+.rundate { position: sticky; top: 0; background: var(--panel); padding: 5px 2px; font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; user-select: none; border-bottom: 1px solid var(--line); }
+.rundate .caret { display: inline-block; width: 14px; }
+.runrow { display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin: 3px 0; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.runrow:hover { border-color: var(--brand); }
+.runrow .seq { color: var(--muted); font-size: 12px; min-width: 26px; }
+.runrow .rt { font-variant-numeric: tabular-nums; font-weight: 600; }
+.runrow .grow { flex: 1; }
+.runrow.sel { background: var(--brand-bg); border-color: var(--brand); }
+.runrow.cmp { border: 1px dashed var(--warn); background: var(--warn-bg); }
+.cbtn { padding: 0 8px; line-height: 18px; }
+button:disabled { opacity: .4; cursor: default; }.ex { cursor: help; margin-right: 6px; border-bottom: 1px dotted var(--muted); }
+.ex.has { color: var(--brand-dark); border-bottom-color: var(--brand); }
+#pop { position: fixed; z-index: 20; display: none; width: 540px; max-width: calc(100vw - 16px); max-height: 60vh; overflow: auto; background: var(--panel); border: 1px solid var(--brand); border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 10px 14px; }
+#pop .pophead { margin-bottom: 6px; }
+#pop pre { margin: 0; font: 12px/1.45 var(--mono); }
+#pop .ln { display: block; white-space: pre-wrap; }
+#pop .hl { display: block; white-space: pre-wrap; background: var(--accent-bg); color: var(--accent-dark); border-radius: 4px; }
+.maplink { color: var(--brand-dark); text-decoration: none; border-bottom: 1px dotted var(--brand); font-size: 12px; }
+.maplink:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.mapcell { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mapcell input { margin: 0; }
+.bulkbar { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+tr.dim td { opacity: .55; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>FENIX Findings</h1>
+    <div class="sub">Data-quality findings of the FHIR resources FENIX produced, per run</div>
+  </div>
+  <span class="spacer"></span>
+  <button id="refresh" title="Reload the findings from the output folder">Refresh</button>
+  <label class="small muted" title="Source codes you decided not to map are hidden from the warnings"><input id="showIgnored" type="checkbox"> Show ignored (<span id="ignoredCount">0</span>)</label>
+  <span id="fallback" style="display:none">
+  <label class="btn" for="folder">Choose findings folder</label>
+  <input id="folder" type="file" webkitdirectory multiple>
+  <label class="btn" for="files">Choose files</label>
+  <input id="files" type="file" accept=".jsonl,.json" multiple>
+  </span>
+  <label class="muted small" title="Used by the overview shown when no field is selected">Flag a change of at least
+    <input id="thrPct" type="number" min="1" value="20"> % and <input id="thrAbs" type="number" min="1" value="2"> resources</label>
+</header>
+
+<main>
+  <div class="left">
+    <section class="panel" id="calendar"></section>
+    <section class="panel" id="tree"></section>
+  </div>
+  <section class="panel" id="detail"></section>
+  <div id="pop" onmouseenter="clearTimeout(popTimer)" onmouseleave="scheduleHide()"></div>
+</main>
+
+<script>
+"use strict";
+
+const SEV = { error: 2, warn: 1, warning: 1, info: 0 };
+const sevName = n => (n >= 2 ? "error" : n === 1 ? "warn" : "info");
+const state = {
+  exports: [], groups: new Map(),
+  sel: null,            // the export being looked at
+  cmp: null,            // the export picked to compare with
+  cmpMode: "auto",      // auto = previous run of the same request | picked | none
+  filter: "",           // the export shown: source|query
+  folded: new Set(),    // dates folded in the run list
+  selNode: null, collapsed: new Set(),
+  ignored: new Set(),   // "path<NUL>code" of source codes marked "do not map" (stored on the server, applies to every run)
+  showIgnored: false,
+  picked: new Set(),    // codes ticked in a value table
+  mapCache: new Map(),  // concept map status per element and codes, from /api/findings/mapping
+  defCache: new Map(),  // ObservationDefinition per observation code, from /api/findings/definitions
+  answerCache: new Map(), // mapping status of an answer per observation code, from /api/findings/answers
+};
+
+/* ---------- helpers ---------- */
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return e;
+}
+const fmt = n => Number(n).toLocaleString();
+const pct = (n, d) => (d ? (Math.round((1000 * n) / d) / 10).toLocaleString() + "%" : "–");
+const when = t => (t ? new Date(t).toLocaleString() : "?");
+const hhmm = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const thresholds = () => ({ pct: Math.max(1, +document.getElementById("thrPct").value || 20) / 100, abs: Math.max(1, +document.getElementById("thrAbs").value || 2) });
+const isNullish = v => v === "(empty)" || v === "(missing)" || v === "";
+
+/* ---------- loading ---------- */
+async function load(fileList) {
+  const records = [];
+  for (const f of fileList) {
+    if (!/\.jsonl?$/i.test(f.name)) continue;
+    for (const line of (await f.text()).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try { const r = JSON.parse(line); if (r && r.kind) records.push(r); } catch { /* skip a bad line */ }
+    }
+  }
+  ingest(records);
+}
+
+function ingest(records, keep) {
+  const prev = keep ? { sel: state.sel && state.sel.key, cmp: state.cmp && state.cmp.key } : null;
+  const byKey = new Map();
+  for (const r of records) {
+    // one run = everything written under its run id: a CLI run covers several queries (patient.sql,
+    // observation.sql, ...), an $export covers several resource types
+    const key = r.run_id;
+    let e = byKey.get(key);
+    if (!e) byKey.set(key, e = { key, run_id: r.run_id, source: r.source || "", queries: new Set(), time: r.time, findings: [], allFindings: [], seen: {}, profile: new Map() });
+    if (r.query) e.queries.add(r.query);
+    if (r.time && (!e.time || r.time < e.time)) e.time = r.time;
+    if (r.kind === "summary") {
+      const s = e.seen[r.resource_type] || (e.seen[r.resource_type] = { seen: 0, skipped: 0 });
+      s.seen += r.seen || 0; s.skipped += r.skipped || 0;
+    } else if (r.kind === "finding") e.allFindings.push(r);
+    else if (r.kind === "profile" && !e.profile.has(r.path)) e.profile.set(r.path, r);
+  }
+  state.exports = [...byKey.values()];
+  // runs of the same source and the same set of queries are the same export and can be compared
+  for (const e of state.exports) e.query = [...e.queries].sort().join(", ");
+  applyIgnore();
+  state.groups = new Map();
+  for (const e of state.exports) {
+    const g = e.source + "|" + e.query;
+    if (!state.groups.has(g)) state.groups.set(g, []);
+    state.groups.get(g).push(e);
+  }
+  for (const list of state.groups.values()) list.sort((a, b) => (a.time < b.time ? -1 : 1)); // oldest first
+  const newest = [...state.exports].sort((a, b) => (a.time < b.time ? 1 : -1))[0];
+  const same = key => state.exports.find(e => e.key === key) || null;
+  if (prev && prev.sel && same(prev.sel)) {
+    // a refresh keeps what you were looking at
+    state.sel = same(prev.sel); state.cmp = prev.cmp ? same(prev.cmp) : null; state.filter = groupOf(state.sel);
+    if (state.cmpMode === "picked" && !state.cmp) state.cmpMode = "auto";
+  } else {
+    const nav = takeNav(), navSel = nav && same(nav.sel); // coming back from the concept map editor
+    if (navSel) {
+      state.sel = navSel; state.cmp = nav.cmp ? same(nav.cmp) : null; state.cmpMode = nav.cmpMode || "auto";
+      if (state.cmpMode === "picked" && !state.cmp) state.cmpMode = "auto";
+      state.filter = groupOf(navSel); state.selNode = nav.node;
+      if (nav.showIgnored !== state.showIgnored) { state.showIgnored = !!nav.showIgnored; applyIgnore(); }
+      document.getElementById("showIgnored").checked = state.showIgnored;
+    } else {
+      state.sel = newest || null; state.cmp = null; state.cmpMode = "auto"; state.filter = newest ? groupOf(newest) : "";
+      const linked = new URLSearchParams(location.hash.slice(1)).get("node"); // /findings#node=Patient.gender
+      state.selNode = newest ? (linked && buildTree(newest).index.has(linked) ? linked : defaultNode(newest)) : null;
+    }
+  }
+  render();
+}
+
+/* ---------- codes without a mapping: status, editor links, the ignore list ---------- */
+const enc = encodeURIComponent;
+const ikey = (path, code) => path + "\u0000" + code;
+const isUnmappedRule = code => code === "FX-DATA-020" || code === "FX-DATA-021";
+const isAnswerRule = code => code === "FX-DATA-031"; // an answer that is not valid for its observation code
+const isIgnorableRule = code => isUnmappedRule(code) || isAnswerRule(code);
+
+/* Findings about unmapped codes lose the codes marked "do not map" (unless Show ignored is on),
+   and with them their count; the rest of the dashboard only ever sees e.findings. */
+function applyIgnore() {
+  for (const e of state.exports) {
+    e.tree = null; e.findings = [];
+    for (const f of e.allFindings) {
+      if (!isIgnorableRule(f.code) || !f.values) { e.findings.push(f); continue; }
+      const marked = f.values.map(v => ({ ...v, ignored: state.ignored.has(ikey(f.path, v.value)) }));
+      if (state.showIgnored) { e.findings.push({ ...f, values: marked }); continue; }
+      const kept = marked.filter(v => !v.ignored), removed = marked.filter(v => v.ignored).reduce((n, v) => n + v.count, 0);
+      if (f.count - removed > 0 || kept.length) e.findings.push({ ...f, values: kept, count: Math.max(f.count - removed, kept.length ? 1 : 0) });
+    }
+  }
+  const n = document.getElementById("ignoredCount");
+  if (n) n.textContent = state.ignored.size;
+}
+async function loadIgnored() {
+  try {
+    const res = await fetch("/api/findings/ignored", { cache: "no-store" });
+    if (res.ok) state.ignored = new Set(((await res.json()).entries || []).map(x => ikey(x.path, x.code)));
+  } catch { /* no server: nothing is ignored */ }
+}
+async function saveIgnored(action, items) {
+  const res = await fetch("/api/findings/ignored", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, items }) });
+  if (!res.ok) { alert("Could not save the ignore list: " + (await res.text())); return; }
+  state.ignored = new Set(((await res.json()).entries || []).map(x => ikey(x.path, x.code)));
+  state.picked.clear(); applyIgnore(); render();
+}
+
+/* what the page was showing, kept while the concept map editor is open in the same tab */
+function saveNav() {
+  try { sessionStorage.setItem("fxNav", JSON.stringify({ sel: state.sel && state.sel.key, cmp: state.cmp && state.cmp.key, cmpMode: state.cmpMode, node: state.selNode, showIgnored: state.showIgnored })); } catch { /* private mode */ }
+}
+function takeNav() {
+  try { const v = JSON.parse(sessionStorage.getItem("fxNav") || "null"); sessionStorage.removeItem("fxNav"); return v; } catch { return null; }
+}
+
+/* How the concept map treats these codes, asked of the server (which knows the profile bindings and the maps).
+   Returns the answer once it is in; until then null, and the card is drawn again when it arrives. */
+function mappingFor(path, codes) {
+  const key = path + "\u0000" + codes.join("\u0001");
+  if (state.mapCache.has(key)) return state.mapCache.get(key);
+  state.mapCache.set(key, null);
+  fetch("/api/findings/mapping", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, codes }) })
+    .then(r => (r.ok ? r.json() : { bound: false }))
+    .catch(() => ({ bound: false }))
+    .then(j => { state.mapCache.set(key, j); renderDetail(); });
+  return null;
+}
+
+const isDefinitionRule = code => code === "FX-DATA-030" || code === "FX-DATA-031";
+
+/* What the ObservationDefinition of each observation code allows: a Map code -> info, or null until it is in. */
+function definitionsFor(codes) {
+  const uniq = [...new Set(codes)].sort(), key = uniq.join("\u0001");
+  if (state.defCache.has(key)) { const c = state.defCache.get(key); return c && new Map(c.map(d => [d.code, d])); }
+  state.defCache.set(key, null);
+  fetch("/api/findings/definitions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ codes: uniq }) })
+    .then(r => (r.ok ? r.json() : { definitions: [] }))
+    .catch(() => ({ definitions: [] }))
+    .then(j => { state.defCache.set(key, j.definitions || []); renderDetail(); });
+  return null;
+}
+
+/* How the answers of "<observation code>: <answer>" values are mapped: a Map value -> status, or null until it is in. */
+function answersFor(values) {
+  const key = values.join("\u0001");
+  if (state.answerCache.has(key)) { const c = state.answerCache.get(key); return c && new Map(c.map(a => [a.obs_code + ": " + a.answer, a])); }
+  state.answerCache.set(key, null);
+  const items = values.map(v => { const i = v.indexOf(": "); return { obs_code: v.slice(0, i), answer: v.slice(i + 2) }; });
+  fetch("/api/findings/answers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) })
+    .then(r => (r.ok ? r.json() : { answers: [] }))
+    .catch(() => ({ answers: [] }))
+    .then(j => { state.answerCache.set(key, j.answers || []); renderDetail(); });
+  return null;
+}
+
+/* the extra column for answers that are not valid for their observation code: is there a mapping, which answers are valid,
+   and a link to map it (an answer is mapped by a concept map that targets the answer valueset of the observation definition) */
+function answerColumn(path, answers) {
+  if (!answers) return null;
+  return {
+    head: "Mapping to a valid answer", dim: n => state.ignored.has(ikey(path, n)),
+    cell: n => {
+      const a = answers.get(n);
+      if (!a || !a.found) return h("span", { class: "muted small" }, "no definition with answers");
+      const key = ikey(path, n), answer = n.slice(n.indexOf(": ") + 2);
+      const valid = h("div", { class: "small muted" }, "valid answers: " + (a.valid_answers || []).join(", "));
+      const link = label => h("a", { class: "maplink", href: a.file ? editorLink(a.file, answer) : "/conceptmaps#new=" + enc(a.valueset) + "&code=" + enc(answer) + "&back=" + enc("/findings"), onclick: saveNav }, label);
+      if (a.status === "valid") return h("span", { class: "muted small" }, "✓ valid answer");
+      if (a.status === "mapped") return h("span", {}, "→ ", h("code", {}, a.target), " ", link("edit"));
+      return h("div", {}, h("span", { class: "mapcell" },
+        h("input", { type: "checkbox", checked: state.picked.has(key), title: "select", onchange: ev => { ev.target.checked ? state.picked.add(key) : state.picked.delete(key); renderDetail(); } }),
+        h("span", { class: "badge warn" }, "not mapped"), state.ignored.has(key) ? h("span", { class: "badge" }, "ignored") : null, " ", link("map it")), valid);
+    },
+  };
+}
+
+/* the extra column for findings about a value against its ObservationDefinition; each value reads "<observation code>: <answer or type>" */
+function definitionColumn(rule, defs) {
+  if (!defs) return null;
+  const allowed = d => rule === "FX-DATA-031"
+    ? (d.answers && d.answers.length ? "valid answers: " : "") + (d.answers || []).join(", ")
+    : "permitted: " + (d.types || []).join(", ");
+  return {
+    head: "Observation definition", dim: () => false,
+    cell: n => {
+      const d = defs.get(n.split(": ")[0]);
+      if (!d || !d.found) return h("span", { class: "muted small" }, "no definition");
+      return h("span", { class: "small" }, h("code", {}, d.id || d.file), " ", h("span", { class: "muted" }, allowed(d)));
+    },
+  };
+}
+
+const editorLink = (file, code) => "/conceptmaps#edit=" + enc(file) + "&code=" + enc(code) + "&back=" + enc("/findings");
+
+/* the "Concept map" cell of one source code */
+function mapCell(path, code, r, m) {
+  if (!r) return h("span", { class: "muted small" }, "…");
+  const key = ikey(path, code), ign = state.ignored.has(key);
+  const link = label => h("a", { class: "maplink", href: r.file ? editorLink(r.file, code) : "/conceptmaps#new=" + enc(m.valueset) + "&code=" + enc(code) + "&back=" + enc("/findings"), onclick: saveNav }, label);
+  if (r.status === "valid") return h("span", { class: "muted small" }, "✓ valid target code");
+  if (r.status === "mapped") return h("span", {}, "→ ", h("code", {}, r.target), " ", link("edit"));
+  return h("span", { class: "mapcell" },
+    h("input", { type: "checkbox", checked: state.picked.has(key), title: "select", onchange: ev => { ev.target.checked ? state.picked.add(key) : state.picked.delete(key); renderDetail(); } }),
+    h("span", { class: "badge warn" }, r.status === "default" ? "default → " + r.target : "not mapped"),
+    ign ? h("span", { class: "badge" }, "ignored") : null, " ", link("map it"));
+}
+
+/* select many unmapped codes and mark them "do not map" (or take the mark off again) */
+function bulkBar(path, m) {
+  const all = m.codes.filter(c => c.status === "default" || c.status === "none").map(c => ikey(path, c.code));
+  const sel = all.filter(k => state.picked.has(k));
+  const toIgnore = sel.filter(k => !state.ignored.has(k)), toRestore = sel.filter(k => state.ignored.has(k));
+  const items = ks => ks.map(k => { const [p, c] = k.split("\u0000"); return { path: p, code: c }; });
+  if (!all.length) return null;
+  return h("div", { class: "bulkbar" },
+    h("button", { class: "small", onclick: () => { all.forEach(k => state.picked.add(k)); renderDetail(); } }, "Select all unmapped (" + all.length + ")"),
+    h("button", { class: "small", disabled: !sel.length, onclick: () => { state.picked.clear(); renderDetail(); } }, "Clear"),
+    h("span", { class: "spacer" }),
+    h("button", { class: "small", disabled: !toIgnore.length, title: "Do not map these: no warning for them any more. They stay visible with Show ignored.", onclick: () => saveIgnored("ignore", items(toIgnore)) }, "Do not map selected (" + toIgnore.length + ")"),
+    h("button", { class: "small", disabled: !toRestore.length, onclick: () => saveIgnored("restore", items(toRestore)) }, "Restore selected (" + toRestore.length + ")"));
+}
+
+/* the extra column of a value table, or null when the element has no concept map */
+function mapColumn(path, m) {
+  if (!m || !m.bound || !m.has_map) return null;
+  const byCode = new Map(m.codes.map(c => [c.code, c]));
+  return { head: "Concept map", cell: n => (n.startsWith("(") ? null : mapCell(path, n, byCode.get(n), m)), dim: n => state.ignored.has(ikey(path, n)) };
+}
+
+/* The page is served by FENIX (/findings), which reads the findings folder: no files to pick. */
+async function fetchFindings(first) {
+  try {
+    const res = await fetch("/api/findings", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const records = [];
+    for (const line of (await res.text()).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try { const r = JSON.parse(line); if (r && r.kind) records.push(r); } catch { /* skip a bad line */ }
+    }
+    if (first) await loadIgnored();
+    const sig = records.length + ":" + (records.length ? records[records.length - 1].run_id : "");
+    if (first || sig !== state.sig) { state.sig = sig; ingest(records, !first); }
+  } catch {
+    // opened as a plain file, or the server is gone: fall back to picking files
+    document.getElementById("fallback").style.display = "";
+  }
+}
+
+const groupOf = e => e.source + "|" + e.query;
+const prevOf = exp => {
+  const list = state.groups.get(groupOf(exp)) || [];
+  const i = list.indexOf(exp);
+  return i > 0 ? list[i - 1] : null;
+};
+const cmpExp = () => state.cmpMode === "none" ? null : state.cmpMode === "picked" ? state.cmp : (state.sel ? prevOf(state.sel) : null);
+
+/* ---------- model: tree per export ---------- */
+function buildTree(exp) {
+  if (exp.tree) return exp.tree;
+  const models = new Map();
+  const model = name => {
+    if (!models.has(name)) models.set(name, { name, path: name, kids: new Map(), own: [], model: true });
+    return models.get(name);
+  };
+  const nodeFor = (resourceType, path) => {
+    const segs = (path || resourceType).split(".");
+    let n = model(resourceType);
+    for (let i = 1; i < segs.length; i++) {
+      const p = segs.slice(0, i + 1).join(".");
+      if (!n.kids.has(segs[i])) n.kids.set(segs[i], { name: segs[i], path: p, kids: new Map(), own: [] });
+      n = n.kids.get(segs[i]);
+    }
+    return n;
+  };
+  for (const t of Object.keys(exp.seen)) model(t);
+  for (const f of exp.findings) nodeFor(f.resource_type, f.path).own.push(f);
+  for (const p of exp.profile.values()) nodeFor(p.resource_type, p.path).prof = p;
+  const index = new Map();
+  const agg = n => {
+    index.set(n.path, n);
+    n.sub = [...n.own];
+    for (const k of n.kids.values()) n.sub.push(...agg(k));
+    n.sev = n.sub.reduce((m, f) => Math.max(m, SEV[f.severity] ?? 0), -1);
+    n.errors = n.sub.filter(f => (SEV[f.severity] ?? 0) >= 2).length;
+    n.warns = n.sub.filter(f => SEV[f.severity] === 1).length;
+    return n.sub;
+  };
+  for (const m of models.values()) agg(m);
+  exp.tree = { models: [...models.values()].sort((a, b) => a.name.localeCompare(b.name)), index };
+  return exp.tree;
+}
+
+const fkey = f => [f.code, f.path || f.resource_type, f.message].join("|");
+const totalOf = (exp, f) => (exp && exp.seen[f.resource_type] ? exp.seen[f.resource_type].seen : 0);
+const modelTotal = (exp, model) => (exp && exp.seen[model] ? exp.seen[model].seen : 0);
+
+/* a finding's values as a map; a finding without values counts as "(missing)" */
+function valueMap(f) {
+  const m = new Map();
+  if (!f) return m;
+  if (f.values && f.values.length) for (const v of f.values) m.set(v.value === "" ? "(empty)" : v.value, v.count);
+  else m.set("(missing)", f.count);
+  if (f.other_values) m.set("(other values, not listed)", f.other_values);
+  return m;
+}
+/* empty/missing hits for a set of findings: missing-element findings plus "(empty)" values */
+function nullCount(findings) {
+  let n = 0;
+  for (const f of findings) {
+    if (!f.values || !f.values.length) { if (f.code === "FX-DATA-010") n += f.count; continue; }
+    for (const v of f.values) if (isNullish(v.value)) n += v.count;
+  }
+  return n;
+}
+
+/* ---------- landing overview: differences between two exports ---------- */
+function significant(now, prev) {
+  const t = thresholds(), d = Math.abs(now - prev);
+  if (d < t.abs) return false;
+  if (prev === 0) return true;
+  return d / prev >= t.pct;
+}
+function overview(exp, prev) {
+  const out = [];
+  for (const m of new Set([...Object.keys(exp.seen), ...Object.keys(prev.seen)])) {
+    const n = exp.seen[m] || { seen: 0, skipped: 0 }, p = prev.seen[m] || { seen: 0, skipped: 0 };
+    if (significant(n.seen, p.seen)) out.push({ label: m + " resources", now: n.seen, prev: p.seen, path: m, sev: 0 });
+    if (significant(n.skipped, p.skipped)) out.push({ label: m + " skipped (failed validation)", now: n.skipped, prev: p.skipped, path: m, sev: 2 });
+  }
+  const now = new Map(exp.findings.map(f => [fkey(f), f])), old = new Map(prev.findings.map(f => [fkey(f), f]));
+  for (const k of new Set([...now.keys(), ...old.keys()])) {
+    const a = now.get(k), b = old.get(k), n = a ? a.count : 0, p = b ? b.count : 0;
+    if (!significant(n, p)) continue;
+    const f = a || b;
+    out.push({ label: f.code + " " + (f.path || f.resource_type), now: n, prev: p, path: f.path || f.resource_type, sev: SEV[f.severity] ?? 0, state: !b ? "new" : !a ? "gone" : "" });
+  }
+  return out.sort((a, b) => b.sev - a.sev || Math.abs(b.now - b.prev) - Math.abs(a.now - a.prev));
+}
+const deltaEl = (now, prev) => {
+  const d = now - prev;
+  if (d === 0) return h("span", { class: "muted small" }, "no change");
+  return h("span", { class: "delta " + (d > 0 ? "up" : "down") }, (d > 0 ? "+" : "") + fmt(d) + (prev ? " (" + (d > 0 ? "+" : "") + Math.round((100 * d) / prev) + "%)" : ""));
+};
+
+/* ---------- render ---------- */
+function render() { renderCalendar(); renderTree(); renderDetail(); }
+
+/* Pick an export (a request: source + query), then one of its runs. Runs are numbered in the order they
+   happened and listed newest first under their date; the compare button sets the run to compare with. */
+const dayLabel = t => new Date(t).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const dayKeyOf = t => { const d = new Date(t); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); };
+const ruleCounts = e => ({ errs: e.findings.filter(f => (SEV[f.severity] ?? 0) >= 2).length, warns: e.findings.filter(f => SEV[f.severity] === 1).length });
+
+function renderCalendar() {
+  const box = document.getElementById("calendar");
+  box.replaceChildren(h("h2", {}, "Exports"));
+  if (!state.exports.length) { box.append(h("div", { class: "empty" }, "No findings yet.", h("br"), "They appear here after a conversion or an $export has run.")); return; }
+
+  const groups = [...state.groups.keys()];
+  box.append(h("select", { style: "width:100%;margin-bottom:8px", onchange: e => {
+      const list = state.groups.get(e.target.value) || [];
+      state.filter = e.target.value; state.cmpMode = "auto";
+      if (list.length) { state.sel = list[list.length - 1]; state.selNode = defaultNode(state.sel); }
+      render();
+    } },
+    groups.map(g => { const [src, q] = g.split("|"); return h("option", { value: g, selected: g === state.filter }, (q || "(unnamed)") + (src ? "  ·  " + src : "") + "  (" + state.groups.get(g).length + " runs)"); })));
+
+  const list = state.groups.get(state.filter) || [], cmp = cmpExp();
+  const seq = new Map(list.map((e, i) => [e, i + 1]));
+  const at = state.sel ? list.indexOf(state.sel) : -1;
+  box.append(h("div", { class: "pickbar" },
+    h("button", { class: "small", disabled: at <= 0, onclick: () => stepRun(-1) }, "‹ older"),
+    h("button", { class: "small", disabled: at < 0 || at >= list.length - 1, onclick: () => stepRun(1) }, "newer ›"),
+    h("span", { class: "spacer" }),
+    h("button", { class: "small" + (state.cmpMode === "auto" ? " on" : ""), title: "compare with the run before the selected one", onclick: () => { state.cmpMode = "auto"; render(); } }, "vs previous"),
+    h("button", { class: "small" + (state.cmpMode === "none" ? " on" : ""), onclick: () => { state.cmpMode = "none"; render(); } }, "no comparison")));
+
+  const days = new Map();
+  for (const e of [...list].reverse()) { const k = dayKeyOf(e.time); if (!days.has(k)) days.set(k, []); days.get(k).push(e); }
+  const wrap = h("div", { class: "runs" });
+  for (const [k, runs] of days) {
+    const folded = state.folded.has(k);
+    wrap.append(h("div", { class: "rundate", onclick: () => { folded ? state.folded.delete(k) : state.folded.add(k); renderCalendar(); } },
+      h("span", { class: "caret" }, folded ? "▸" : "▾"), dayLabel(runs[0].time), h("span", { class: "muted" }, " · " + runs.length + (runs.length === 1 ? " run" : " runs"))));
+    if (folded) continue;
+    for (const e of runs) {
+      const t = ruleCounts(e);
+      wrap.append(h("div", { class: "runrow" + (e === state.sel ? " sel" : "") + (e === cmp ? " cmp" : ""), onclick: () => pickExport(e), title: when(e.time) },
+        h("span", { class: "seq" }, "#" + seq.get(e)),
+        h("span", { class: "rt" }, hhmm(e.time)),
+        h("span", { class: "grow" }),
+        t.errs ? h("span", { class: "badge error" }, t.errs) : null, t.warns ? h("span", { class: "badge warn" }, t.warns) : null, !t.errs && !t.warns ? h("span", { class: "badge ok" }, "clean") : null,
+        e === state.sel ? h("span", { class: "pill" }, "run") : null,
+        e === cmp ? h("span", { class: "pill cmp" }, "compare") : null,
+        e !== state.sel ? h("button", { class: "small cbtn" + (e === cmp ? " on" : ""), title: "compare the selected run with this one", onclick: ev => { ev.stopPropagation(); setCompare(e); } }, "⇄") : null));
+    }
+  }
+  box.append(wrap);
+  if (cmp && state.sel && groupOf(cmp) !== groupOf(state.sel)) box.append(h("div", { class: "small", style: "color:var(--warn)" }, "The compared run is a different export."));
+}
+
+function stepRun(d) {
+  const list = state.groups.get(state.filter) || [], i = list.indexOf(state.sel) + d;
+  if (i >= 0 && i < list.length) pickExport(list[i]);
+}
+function setCompare(e) {
+  if (e === state.sel) return;
+  state.cmp = e; state.cmpMode = "picked"; render();
+}
+
+/* open on the model with the most severe findings, so the field card is there from the start */
+function defaultNode(exp) {
+  const models = buildTree(exp).models.filter(m => m.sub.length);
+  models.sort((a, b) => b.sev - a.sev || b.sub.length - a.sub.length);
+  return models.length ? models[0].path : null;
+}
+
+function pickExport(e) {
+  const keepNode = state.selNode && buildTree(e).index.has(state.selNode);
+  state.sel = e; state.filter = groupOf(e);
+  if (!keepNode) state.selNode = defaultNode(e);
+  if (state.cmpMode === "picked" && state.cmp === e) state.cmpMode = "auto";
+  render();
+}
+function renderTree() {
+  const box = document.getElementById("tree");
+  box.replaceChildren(h("h2", {}, "Models and fields"));
+  if (!state.sel) { box.append(h("div", { class: "empty" }, "Select a run.")); return; }
+  box.append(h("div", { class: "muted small" }, state.sel.query + " · " + when(state.sel.time)));
+  const { models } = buildTree(state.sel);
+  const ul = h("ul", { class: "tree" });
+  const nodeEl = n => {
+    const open = !state.collapsed.has(n.path), hasKids = n.kids.size > 0;
+    const sv = n.sev < 0 ? "ok" : sevName(n.sev);
+    const stat = n.model ? state.sel.seen[n.name] : null;
+    const row = h("div", { class: "row " + (n.sev < 0 ? "" : sv) + (n.model ? " model" : "") + (state.selNode === n.path ? " sel" : ""), onclick: () => { state.selNode = n.path; renderTree(); renderDetail(); } },
+      h("span", { class: "caret", onclick: ev => { ev.stopPropagation(); open ? state.collapsed.add(n.path) : state.collapsed.delete(n.path); renderTree(); } }, hasKids ? (open ? "▾" : "▸") : ""),
+      h("span", { class: "name" }, n.name),
+      stat ? h("span", { class: "muted small" }, fmt(stat.seen) + " resources" + (stat.skipped ? ", " + fmt(stat.skipped) + " skipped" : "")) : null,
+      h("span", { class: "grow" }),
+      n.errors ? h("span", { class: "badge error" }, n.errors) : null,
+      n.warns ? h("span", { class: "badge warn" }, n.warns) : null,
+      n.sev < 0 ? h("span", { class: "dot", title: "no findings" }) : null);
+    const li = h("li", {}, row);
+    if (hasKids && open) li.append(h("ul", {}, [...n.kids.values()].sort((a, b) => b.sev - a.sev || a.name.localeCompare(b.name)).map(nodeEl)));
+    return li;
+  };
+  models.forEach(m => ul.append(nodeEl(m)));
+  box.append(ul);
+}
+
+function renderDetail() {
+  const box = document.getElementById("detail");
+  box.replaceChildren();
+  const exp = state.sel;
+  if (!exp) return;
+  const cmp = cmpExp(), tree = buildTree(exp), node = state.selNode && tree.index.get(state.selNode);
+
+  if (!node) {
+    box.append(h("h2", {}, "Overview"), h("div", { class: "muted" }, "Pick a model or field in the tree to see its invalid values."));
+    if (cmp) box.append(h("h2", { style: "margin-top:16px" }, "Biggest differences with the compared run"), overviewEl(exp, cmp));
+    return;
+  }
+
+  const cmpNode = cmp && buildTree(cmp).index.get(node.path);
+  const model = node.path.split(".")[0], total = modelTotal(exp, model), cTotal = modelTotal(cmp, model);
+  box.append(h("h2", {}, node.model ? "Model" : "Field"), h("div", { style: "font-size:16px;font-weight:600;word-break:break-all" }, node.path));
+
+  const nulls = nullCount(node.sub), cNulls = cmpNode ? nullCount(cmpNode.sub) : 0;
+  box.append(h("div", { class: "stats" },
+    node.model && total ? stat("Resources", fmt(total), cmp && cTotal ? deltaEl(total, cTotal) : null) : null,
+    node.model && total ? stat("Skipped", fmt(exp.seen[model].skipped) + " (" + pct(exp.seen[model].skipped, total) + ")", cmp && cTotal ? deltaEl(exp.seen[model].skipped, cmp.seen[model].skipped) : null) : null,
+    node.prof ? null : stat("Empty / missing", fmt(nulls) + " (" + pct(nulls, total) + ")", cmp ? deltaEl(nulls, cNulls) : null)));
+  if (node.prof) box.append(contentsCard(node.prof, cmpNode && cmpNode.prof));
+
+  const key = f => fkey(f), have = new Set(node.sub.map(key));
+  const gone = cmpNode ? cmpNode.sub.filter(f => !have.has(key(f))) : [];
+  if (!node.sub.length && !gone.length) { box.append(h("div", { class: "muted" }, "No findings on this " + (node.model ? "model" : "field or below") + (cmp ? ", in either run." : "."))); return; }
+
+  const cmpBy = cmpNode ? new Map(cmpNode.sub.map(f => [key(f), f])) : new Map();
+  const order = list => [...list].sort((a, b) => (SEV[b.severity] ?? 0) - (SEV[a.severity] ?? 0) || b.count - a.count);
+  const section = (title, list) => list.length ? [h("h2", { style: "margin-top:14px" }, title), ...order(list).map(f => findingCard(f, exp, cmp, cmpBy.get(key(f)), !!cmp))] : [];
+  const own = node.own, below = node.sub.filter(f => !own.includes(f));
+  box.append(...section(node.model ? "Findings on the model" : "Findings on this field", own), ...section("Findings below", below));
+  if (gone.length) box.append(h("h2", { style: "margin-top:14px" }, "Only in the compared run"), ...order(gone).map(f => findingCard(null, exp, cmp, f, true)));
+}
+
+const stat = (label, value, extra) => h("div", { class: "stat" }, h("span", { class: "muted small" }, label), h("b", {}, value), extra);
+
+/* Example resources: hover an id to see the whole resource (when the converter kept it). */
+function exampleList(f) {
+  const samples = new Map((f.samples || []).map(x => [x.id, x.resource]));
+  return h("div", { class: "small muted", style: "margin-top:6px" }, "Example resources (hover): ",
+    f.examples.map(id => h("code", { class: "ex" + (samples.has(id) ? " has" : ""), onmouseenter: ev => showSample(ev.currentTarget, f, id, samples.get(id)), onmouseleave: scheduleHide }, id)));
+}
+let popTimer = null;
+function scheduleHide() { clearTimeout(popTimer); popTimer = setTimeout(() => { document.getElementById("pop").style.display = "none"; }, 250); }
+function showSample(el, f, id, resource) {
+  clearTimeout(popTimer);
+  const pop = document.getElementById("pop");
+  const last = (f.path || "").split(".").pop(), choice = last.endsWith("[x]"), want = last.replace("[x]", "");
+  const body = resource === undefined
+    ? h("div", { class: "muted" }, "The contents of this resource were not recorded. Set ", h("code", {}, "output.findings.includeResources: true"), " and run the conversion again.")
+    : h("pre", {}, JSON.stringify(resource, null, 2).split("\n").map(line => {
+        const m = /^\s*"([^"]+)":/.exec(line), hit = m && (choice ? m[1].startsWith(want) : m[1] === want);
+        return h("span", { class: hit ? "hl" : "ln" }, line + "\n");
+      }));
+  pop.replaceChildren(h("div", { class: "pophead" }, h("b", {}, f.resource_type + " " + id), h("span", { class: "muted small" }, "  as built, with the problem in place")), body);
+  pop.style.display = "block";
+  const r = el.getBoundingClientRect(), w = pop.offsetWidth, hgt = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
+  pop.style.top = (r.bottom + 6 + hgt > innerHeight ? Math.max(8, r.top - hgt - 6) : r.bottom + 6) + "px";
+}
+/* Values with their counts and share of all, this run next to the compared run. */
+function valuesTable(now, before, total, cTotal, comparing, barClass, unit, extra) {
+  const names = [...new Set([...now.keys(), ...before.keys()])].sort((a, b) => (now.get(b) || 0) - (now.get(a) || 0) || (before.get(b) || 0) - (before.get(a) || 0));
+  const max = Math.max(1, ...now.values(), ...before.values());
+  const head = h("tr", {},
+    h("th", { rowspan: comparing ? 2 : 1 }, "Value"),
+    h("th", { class: "grp run", colspan: 3 }, "This run"),
+    comparing ? h("th", { class: "grp cmp", colspan: 2 }, "Compared run") : null,
+    comparing ? h("th", { class: "num", rowspan: 2 }, "Change") : null,
+    extra ? h("th", { rowspan: comparing ? 2 : 1 }, extra.head) : null);
+  const sub = comparing ? h("tr", {}, h("th", { class: "num" }, unit), h("th", { class: "num" }, "% of all"), h("th", {}), h("th", { class: "num" }, unit), h("th", { class: "num" }, "% of all")) : null;
+  const rows = names.map(n => {
+    const a = now.get(n) || 0, b = before.get(n) || 0;
+    const st = comparing ? (a && !b ? "new" : !a && b ? "gone" : "") : "";
+    return h("tr", { class: st + (extra && extra.dim(n) ? " dim" : "") },
+      h("td", {}, isNullish(n) || n.startsWith("(") ? h("span", { class: "nullv" }, n) : h("code", {}, n), st ? h("span", { class: "badge chg", style: "margin-left:6px" }, st) : null),
+      h("td", { class: "num" }, a ? fmt(a) : "–"),
+      h("td", { class: "num" }, a ? pct(a, total) : "–"),
+      h("td", { style: "width:90px" }, a ? h("div", { class: "bar " + barClass }, h("i", { style: "width:" + Math.max(3, (100 * a) / max) + "%" })) : null),
+      comparing ? h("td", { class: "num" }, b ? fmt(b) : "–") : null,
+      comparing ? h("td", { class: "num" }, b ? pct(b, cTotal) : "–") : null,
+      comparing ? h("td", { class: "num" }, deltaEl(a, b)) : null,
+      extra ? h("td", {}, extra.cell(n)) : null);
+  });
+  return h("table", {}, head, sub, rows);
+}
+
+/* What the source delivered for this element (counted while the converter read its rows), and how the
+   concept map of its binding treats each code. */
+function contentsCard(p, q) {
+  const comparing = !!q;
+  const vals = r => { const m = new Map((r && r.values || []).map(v => [v.value, v.count])); if (r && r.empty) m.set("(empty)", r.empty); return m; };
+  const rows = p.rows || 0, empty = p.empty || 0;
+  const listed = p.values && p.values.length;
+  const m = listed ? mappingFor(p.path, p.values.map(v => v.value)) : null;
+  const extra = mapColumn(p.path, m);
+  const notMapped = extra ? m.codes.filter(c => (c.status === "default" || c.status === "none") && !state.ignored.has(ikey(p.path, c.code))).reduce((n, c) => n + ((p.values.find(v => v.value === c.code) || {}).count || 0), 0) : 0;
+  const tiles = h("div", { class: "stats" },
+    stat("Rows", fmt(rows), comparing ? deltaEl(rows, q.rows || 0) : null),
+    stat("Empty / null", fmt(empty) + " (" + pct(empty, rows) + ")", comparing ? deltaEl(empty, q.empty || 0) : null),
+    stat("Distinct values", fmt(p.distinct || 0) + (p.note && p.note.startsWith("more than") ? "+" : ""), comparing ? deltaEl(p.distinct || 0, q.distinct || 0) : null),
+    extra ? stat("Not mapped", fmt(notMapped) + " (" + pct(notMapped, rows) + ")", h("span", { class: "muted small" }, m.default ? "falls to default " + m.default.code : "passes through")) : null);
+  const bound = m && m.bound ? h("div", { class: "small muted", style: "margin:4px 0 8px" }, "Bound to ", h("code", {}, m.valueset.split("/").pop()),
+    m.has_map ? [" · concept map ", m.files.map(f => h("code", { style: "margin-right:6px" }, f))] : [" · no concept map targets it ", h("a", { class: "maplink", href: "/conceptmaps#new=" + enc(m.valueset) + "&back=" + enc("/findings"), onclick: saveNav }, "create one")]) : null;
+  return h("div", { class: "fcard" },
+    h("div", { class: "head" }, h("span", { class: "sev" }), h("b", {}, "Contents"), h("span", { class: "muted small" }, "as delivered by the source, before concept maps")),
+    h("div", { class: "body" }, tiles, bound,
+      p.note ? h("div", { class: "small muted", style: "margin:4px 0 8px" }, p.note.charAt(0).toUpperCase() + p.note.slice(1), p.min !== undefined && p.min !== "" ? h("span", {}, " · range ", h("code", {}, p.min + " – " + p.max)) : null) : null,
+      extra ? bulkBar(p.path, m) : null,
+      listed || empty ? valuesTable(vals(p), vals(q), rows, q ? q.rows || 0 : 0, comparing, "neutral", "Rows", extra) : null));
+}
+
+/* One finding: its values in this run next to the same finding in the compared run. */
+function findingCard(f, exp, cmp, old, comparing) {
+  const shown = f || old, sv = sevName(SEV[shown.severity] ?? 0);
+  const total = totalOf(exp, shown), cTotal = totalOf(cmp, shown);
+  const m = f && isUnmappedRule(shown.code) && f.values && f.values.length ? mappingFor(shown.path, f.values.map(v => v.value)) : null;
+  const has = f && f.values && f.values.length;
+  const defs = has && shown.code === "FX-DATA-030" ? definitionsFor(f.values.map(v => v.value.split(": ")[0])) : null;
+  const answers = has && isAnswerRule(shown.code) ? answersFor(f.values.map(v => v.value)) : null;
+  const extra = shown.code === "FX-DATA-030" ? definitionColumn(shown.code, defs) : isAnswerRule(shown.code) ? answerColumn(shown.path, answers) : mapColumn(shown.path, m);
+  // what the select-and-ignore bar works on: the answers, or the codes of the concept map
+  const bulk = isAnswerRule(shown.code) ? (answers && extra ? { codes: [...answers].map(([c, a]) => ({ code: c, status: a.status })) } : null) : (m && extra ? m : null);
+  const table = valuesTable(valueMap(f), valueMap(old), total, cTotal, comparing, sv, "Resources", extra);
+  const nowN = f ? f.count : 0, oldN = old ? old.count : 0;
+  return h("div", { class: "fcard" + (f ? "" : " gone") },
+    h("div", { class: "head" },
+      h("span", { class: "sev " + sv }), h("code", {}, shown.code), h("b", {}, shown.message),
+      h("span", { style: "flex:1" }),
+      h("span", {}, f ? fmt(nowN) + (total ? " of " + fmt(total) + " (" + pct(nowN, total) + ")" : "") + " resources" : "not in this run"),
+      comparing ? (old ? h("span", { class: "small" }, "was " + fmt(oldN) + " ", deltaEl(nowN, oldN)) : h("span", { class: "badge chg" }, "new in this run")) : null),
+    h("div", { class: "small muted", style: "padding:4px 10px 0" }, shown.path || shown.resource_type, shown.profile ? "  ·  profile " + shown.profile.split("/").pop() : ""),
+    h("div", { class: "body" },
+      bulk ? bulkBar(shown.path, bulk) : null,
+      table,
+      f && f.examples && f.examples.length ? exampleList(f) : null));
+}
+
+function overviewEl(exp, cmp) {
+  const t = thresholds(), items = overview(exp, cmp);
+  const head = h("div", { class: "small muted", style: "margin-bottom:6px" }, "Compared with " + when(cmp.time) + " (flagging ≥ " + Math.round(t.pct * 100) + "% and ≥ " + t.abs + " resources).");
+  if (!items.length) return h("div", {}, head, h("span", { class: "badge ok" }, "No differences above the threshold"));
+  return h("div", { class: "chg-list" }, head, items.map(i => h("div", { class: "item", onclick: () => { state.selNode = i.path; renderTree(); renderDetail(); } },
+    h("span", { class: "sev " + sevName(i.sev) }),
+    h("span", {}, i.label, i.state ? h("span", { class: "badge chg", style: "margin-left:6px" }, i.state) : null),
+    h("span", { class: "muted small", style: "margin-left:auto" }, fmt(i.prev) + " → " + fmt(i.now) + " "), deltaEl(i.now, i.prev))));
+}
+
+/* ---------- wiring ---------- */
+document.getElementById("folder").addEventListener("change", e => load(e.target.files));
+document.getElementById("files").addEventListener("change", e => load(e.target.files));
+for (const id of ["thrPct", "thrAbs"]) document.getElementById(id).addEventListener("input", renderDetail);
+const body = document.body;
+body.addEventListener("dragover", e => { e.preventDefault(); body.classList.add("dragging"); });
+body.addEventListener("dragleave", () => body.classList.remove("dragging"));
+body.addEventListener("drop", e => { e.preventDefault(); body.classList.remove("dragging"); load(e.dataTransfer.files); });
+document.getElementById("refresh").addEventListener("click", () => fetchFindings(false));
+document.getElementById("showIgnored").addEventListener("change", e => { state.showIgnored = e.target.checked; applyIgnore(); render(); });
+// back from the concept map editor (another tab, or the browser's back button): ask the server again
+window.addEventListener("focus", async () => { state.mapCache.clear(); state.defCache.clear(); state.answerCache.clear(); await loadIgnored(); applyIgnore(); render(); });
+render();
+if (location.protocol.startsWith("http")) { fetchFindings(true); setInterval(() => fetchFindings(false), 15000); }
+else document.getElementById("fallback").style.display = "";
+</script>
+</body>
+</html>

@@ -15,6 +15,7 @@ import (
 	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/fhirserver"
+	"github.com/SanteonNL/fenix/internal/findings"
 	"github.com/SanteonNL/fenix/internal/output"
 	"github.com/SanteonNL/fenix/internal/querycompiler"
 	"github.com/SanteonNL/fenix/internal/source"
@@ -34,7 +35,7 @@ var (
 	configPath     = flag.String("config", "config/config.yaml", "Path to configuration file")
 	sqlFile        = flag.String("sql", "", "SQL file with conversion queries (overrides config)")
 	csvFile        = flag.String("file", "", "Specific CSV file to load (optional, loads all if omitted)")
-	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all")
+	command        = flag.String("cmd", "all", "Command: load, convert, all, serve, serve-all, validate, findings")
 	help           = flag.Bool("help", false, "Show help message")
 	servePort      = flag.String("port", "127.0.0.1:8080", "Address for the FHIR API server (used with -cmd serve)")
 	queryConfigDir = flag.String("query-config", "config/queries", "Query compiler config directory (used with -cmd serve)")
@@ -87,6 +88,18 @@ func main() {
 	log.Info().Str("environment", cfg.Environment).Str("logLevel", level.String()).Msg("Logger initialized")
 
 	log.Info().Str("config", resolvedConfigPath).Msg("Configuration loaded")
+
+	// The findings dashboard reads the findings files and the concept maps; it needs neither the
+	// staging database nor any output.
+	if *command == "findings" {
+		dir := resolvePath(repoRoot, cfg.Output.FindingsDir())
+		profileSvc, conceptMapSvc, conceptMapsDir, obsDefs := loadTerminology(cfg, repoRoot, &log)
+		log.Info().Str("addr", "http://"+*servePort+"/findings").Str("dir", dir).Msg("Serving the findings dashboard (and the ConceptMap editor at /conceptmaps)")
+		if err := http.ListenAndServe(*servePort, fhirserver.NewToolsServer(dir, conceptMapsDir, profileSvc, conceptMapSvc, obsDefs, log)); err != nil {
+			log.Fatal().Err(err).Msg("Findings dashboard stopped")
+		}
+		return
+	}
 
 	// Static SQL validation needs neither the staging database nor any output.
 	if *command == "validate" {
@@ -309,6 +322,15 @@ func deidentifyBatch(cfg *config.Config, resources []interface{}, runID string) 
 	return err
 }
 
+// newFindingsCollector builds the collector for data findings, per the output.findings config.
+func newFindingsCollector(cfg *config.Config) *findings.Collector {
+	c := findings.NewCollector()
+	c.IncludeResources = cfg.Output.Findings.IncludeResources
+	p := cfg.Output.Findings.Profile
+	c.Profile, c.ProfileMaxDistinct, c.ProfileSkip = p.Enabled, p.MaxDistinct, p.Skip
+	return c
+}
+
 // runFHIRConversion executes one SQL file against the database and writes FHIR output.
 func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot string, outputMgr *output.Manager, runID string, log *zerolog.Logger) {
 	log.Info().Str("sql", sqlPath).Msg("Starting FHIR conversion")
@@ -329,9 +351,22 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		return
 	}
 
-	profileSvc, conceptMapSvc, _ := loadTerminology(cfg, repoRoot, log)
+	profileSvc, conceptMapSvc, _, obsDefs := loadTerminology(cfg, repoRoot, log)
 
-	resources, err := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc).ConvertSQL(renderedQuery)
+	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
+	conv.SetObservationDefinitions(obsDefs)
+	conv.SetObservationDefinitions(obsDefs)
+	conv.SetFindings(newFindingsCollector(cfg))
+	resources, err := conv.ConvertSQL(renderedQuery)
+	// Flush before the error check: a failed run still has findings worth keeping.
+	// queries/<source>/fhir/x.sql names its source; any other path has none.
+	source := ""
+	if d := filepath.Dir(sqlPath); filepath.Base(d) == "fhir" {
+		source = filepath.Base(filepath.Dir(d))
+	}
+	if _, ferr := conv.FlushFindings(resolvePath(repoRoot, cfg.Output.FindingsDir()), runID, source, filepath.Base(sqlPath)); ferr != nil {
+		log.Warn().Err(ferr).Msg("Failed to write data findings")
+	}
 	if err != nil {
 		log.Error().Err(err).Msg("Conversion failed")
 		return
@@ -419,7 +454,7 @@ func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger)
 // loadTerminology loads FHIR profiles and ConceptMaps from wherever the config
 // points: the repositories referenced by inputs.profiles / inputs.conceptMaps. It also returns the resolved ConceptMaps
 // directory, which the ConceptMap editor writes back to.
-func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*converter.ProfileService, *converter.ConceptMapService, string) {
+func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*converter.ProfileService, *converter.ConceptMapService, string, *converter.ObservationDefinitions) {
 	ctx := context.Background()
 
 	profileSvc := converter.NewProfileService(*log)
@@ -439,7 +474,27 @@ func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to load concept maps")
 	}
-	return profileSvc, conceptMapSvc, conceptMapsDir
+	if cfg.Inputs.ValueSets.Source != "" {
+		valueSetsDir, err := config.ResolveDir(ctx, cfg, cfg.Inputs.ValueSets, repoRoot, *log)
+		if err == nil && valueSetsDir != "" {
+			err = conceptMapSvc.LoadValueSetsDir(valueSetsDir)
+		}
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to load valuesets")
+		}
+	}
+	var obsDefs *converter.ObservationDefinitions // nil: Observation values are not checked against definitions
+	if cfg.Inputs.ObservationDefinitions.Source != "" {
+		defsDir, err := config.ResolveDir(ctx, cfg, cfg.Inputs.ObservationDefinitions, repoRoot, *log)
+		if err == nil && defsDir != "" {
+			obsDefs = converter.NewObservationDefinitions(conceptMapSvc, *log)
+			err = obsDefs.LoadDir(defsDir)
+		}
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to load observation definitions")
+		}
+	}
+	return profileSvc, conceptMapSvc, conceptMapsDir, obsDefs
 }
 
 // startFHIRServer starts the FHIR API server. It blocks until the server exits.
@@ -476,10 +531,12 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	}
 	compiler.SetSQLBaseDir(cfg.QueriesRoot(context.Background(), repoRoot, *log))
 
-	profileSvc, conceptMapSvc, conceptMapsDir := loadTerminology(cfg, repoRoot, log)
+	profileSvc, conceptMapSvc, conceptMapsDir, obsDefs := loadTerminology(cfg, repoRoot, log)
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 	conv.SetConcurrency(cfg.Performance.EffectiveStatementWorkers(pool), cfg.Performance.BuildWorkers)
+	conv.SetObservationDefinitions(obsDefs)
+	conv.SetFindings(newFindingsCollector(cfg))
 	outputDir := resolvePath(repoRoot, cfg.Output.Local.Dir)
 
 	var deidentRuleset *deident.Ruleset
@@ -498,6 +555,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 
 	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, conceptMapsDir, conceptMapSvc, *log)
 	srv.SetExportTuning(cfg.Performance.ExportBatch(), cfg.Performance.ExportParallelism())
+	srv.SetFindingsDir(resolvePath(repoRoot, cfg.Output.FindingsDir()))
 
 	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")
@@ -521,8 +579,12 @@ Options:
   -config string   Path to configuration file (default "config/config.yaml")
   -sql    string   SQL file with multi-statement conversion queries
   -file   string   Specific CSV file to load (optional)
-  -cmd    string   load | convert | all | serve | serve-all | validate  (default "all")
+  -cmd    string   load | convert | all | serve | serve-all | validate | findings  (default "all")
   -help            Show this help message
+
+Findings dashboard (reads output/findings, no database):
+  -cmd findings [-port 127.0.0.1:8080]   then open http://127.0.0.1:8080/findings
+  The API server (-cmd serve) serves the same page at /findings.
 
 Validate (static, reads the SQL text only, never runs it):
   -cmd validate [source ...]   check conversion SQL against the FHIR model and profiles
