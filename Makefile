@@ -1,4 +1,4 @@
-.PHONY: serve build load test tidy docker-up docker-down kill-port
+.PHONY: serve build load test tidy schema docker-up docker-down kill-port
 
 serve: docker-up kill-port
 	air
@@ -14,6 +14,10 @@ test:
 
 tidy:
 	go mod tidy
+
+# Regenerate fenix-config.schema.json from the config structs (run after changing them).
+schema:
+	go generate ./config/...
 
 docker-up:
 	powershell -ExecutionPolicy Bypass -File scripts/start-docker.ps1
