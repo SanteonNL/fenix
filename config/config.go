@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -278,10 +281,22 @@ func LoadConfig(filePath string) (*Config, error) {
 		},
 	}
 
-	if err := yaml.Unmarshal(resolvedData, cfg); err != nil {
+	if err := decodeStrict(resolvedData, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 	return cfg, nil
+}
+
+// decodeStrict decodes YAML into cfg and rejects unknown fields, so a typo or a
+// misplaced field stops Fenix at startup instead of being silently ignored.
+func decodeStrict(data []byte, cfg *Config) error {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	err := decoder.Decode(cfg)
+	if errors.Is(err, io.EOF) {
+		return nil // empty config file: keep the defaults
+	}
+	return err
 }
 
 // NewStagingDB opens a staging database connection from the given config.
