@@ -3,6 +3,7 @@ package sqldb
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 
 	"github.com/SanteonNL/fenix/source"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/microsoft/go-mssqldb"
+	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/rs/zerolog"
 )
 
@@ -124,6 +125,10 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 	if err != nil {
 		return fmt.Errorf("get columns: %w", err)
 	}
+	columnTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return fmt.Errorf("get column types: %w", err)
+	}
 
 	if incremental {
 		s.log.Info().Str("table", tableName).Str("since", since).Msg("sqldb: incremental load")
@@ -150,8 +155,8 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 		}
 		row := make(map[string]interface{}, len(cols))
 		for i, col := range cols {
-			if vals[i] != nil {
-				row[col] = fmt.Sprintf("%v", vals[i])
+			if text, isPresent := source.StagingText(binaryColumnValue(vals[i], columnTypes[i].DatabaseTypeName())); isPresent {
+				row[col] = text
 			}
 		}
 		if incremental {
@@ -175,6 +180,32 @@ func (s *Source) loadQuery(ctx context.Context, extDB, stagingDB *sqlx.DB, rawQu
 	}
 	s.log.Info().Str("source", s.name).Str("type", "sqldb").Str("table", tableName).Str("mode", mode).Int("rows", count).Msg("source: loaded")
 	return nil
+}
+
+// binaryColumnValue converts the raw bytes of binary SQL Server columns to readable text.
+// The driver returns these columns as []byte, just like text-like types such as DECIMAL,
+// so only the column type tells them apart. Other values are returned unchanged.
+//
+//   - UNIQUEIDENTIFIER: the GUID as SQL Server shows it, e.g. "6F9619FF-8B86-D011-B42D-00C04FC964FF".
+//     The raw bytes are in a different order, so printing them directly gives a different GUID.
+//   - BINARY, VARBINARY, IMAGE: hexadecimal with "0x" prefix, as SQL Server shows it.
+func binaryColumnValue(value any, databaseTypeName string) any {
+	rawBytes, isBytes := value.([]byte)
+	if !isBytes {
+		return value
+	}
+	switch databaseTypeName {
+	case "UNIQUEIDENTIFIER":
+		var identifier mssql.UniqueIdentifier
+		if err := identifier.Scan(rawBytes); err != nil {
+			return value
+		}
+		return identifier.String()
+	case "BINARY", "VARBINARY", "IMAGE":
+		return "0x" + strings.ToUpper(hex.EncodeToString(rawBytes))
+	default:
+		return value
+	}
 }
 
 // parsePK extracts the primary-key column name from a "-- :pk <col>" annotation.
@@ -260,11 +291,7 @@ func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interfac
 	vals := make([]interface{}, len(cols))
 	for i, c := range cols {
 		placeholders[i] = "?"
-		if v := row[c]; v == nil {
-			vals[i] = nil
-		} else {
-			vals[i] = fmt.Sprintf("%v", v)
-		}
+		vals[i] = source.StagingValue(row[c])
 	}
 	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		quoted(table),
@@ -278,9 +305,9 @@ func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interfac
 // database-independent (avoids SQLite-specific INSERT OR REPLACE).
 func upsertRow(db *sqlx.DB, table string, cols []string, pk string, row map[string]interface{}) error {
 	if pk != "" {
-		if pkVal := row[pk]; pkVal != nil {
+		if pkVal, isPresent := source.StagingText(row[pk]); isPresent {
 			del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), pk))
-			if _, err := db.Exec(del, fmt.Sprintf("%v", pkVal)); err != nil {
+			if _, err := db.Exec(del, pkVal); err != nil {
 				return fmt.Errorf("delete before upsert: %w", err)
 			}
 		}
