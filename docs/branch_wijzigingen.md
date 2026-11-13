@@ -52,7 +52,7 @@ De feedbackpunten verwijzen naar [fenix_feedback.md](fenix_feedback.md).
 
 ## Open punten en bevindingen
 
-- **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies (akkoord van Pepijn): zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
+- **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies: zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
 - **Optioneel uit punt 7, niet gedaan:** kleinkind-rijen ook de sleutel van het hoogste record geven, zodat je niet via elke tussenlaag hoeft te joinen.
 - **Opmaak:** `source/local/source.go` was op `main` al niet `gofmt`-schoon (dubbele lege regel); niet aangepast.
 - **Bug luscii:** sleutels in `json_options` worden naar kleine letters omgezet, `endpoint.table` niet. Bij een tabelnaam met hoofdletters worden de instellingen stil genegeerd.
