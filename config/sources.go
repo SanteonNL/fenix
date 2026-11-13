@@ -30,7 +30,6 @@ func BuildSource(name string, sc SourceConfig, repoRoot string, watermarkPath st
 			"table":       ep.Table,
 			"since_param": ep.SinceParam,
 			"end_param":   ep.EndParam,
-			"id_field":    ep.IDField,
 		}
 	}
 

@@ -19,8 +19,11 @@ import (
 // parent; each child entry can itself carry a JSONFileConfig for deeper nesting.
 // All other arrays are JSON-encoded as text (the default behaviour).
 type JSONFileConfig struct {
-	IDField  string
-	Children map[string]*JSONFileConfig // field name → sub-config (nil = promote, no deeper nesting)
+	// PrimaryKeyField is the record field whose value is unique per record. It becomes the
+	// table's PRIMARY KEY and is the value child rows store to link to their parent.
+	// Required when Children is not empty.
+	PrimaryKeyField string
+	Children        map[string]*JSONFileConfig // field name → sub-config (nil = promote, no deeper nesting)
 }
 
 // Source reads all files from a local directory into the staging database.
@@ -346,39 +349,81 @@ func quoted(name string) string {
 }
 
 // ParseJSONOptions parses the json_options config block into a map keyed by file base name.
-func ParseJSONOptions(config map[string]interface{}) map[string]JSONFileConfig {
-	rawOpts, ok := config["json_options"].(map[string]interface{})
-	if !ok {
-		return nil
+// It returns an error for unknown keys, for the old name `id_field`, and for children
+// without a primary_key_field, so a misconfiguration stops the source at startup.
+func ParseJSONOptions(config map[string]any) (map[string]JSONFileConfig, error) {
+	rawOptions, isMap := config["json_options"].(map[string]any)
+	if !isMap {
+		return nil, nil
 	}
-	result := make(map[string]JSONFileConfig, len(rawOpts))
-	for fileName, v := range rawOpts {
-		m, _ := v.(map[string]interface{})
-		result[strings.ToLower(fileName)] = parseJSONFileConfig(m)
+	optionsByFile := make(map[string]JSONFileConfig, len(rawOptions))
+	for fileName, rawValue := range rawOptions {
+		fileConfig, err := parseJSONFileConfig(rawValue)
+		if err != nil {
+			return nil, fmt.Errorf("json_options.%s: %w", fileName, err)
+		}
+		optionsByFile[strings.ToLower(fileName)] = fileConfig
 	}
-	return result
+	return optionsByFile, nil
 }
 
-func parseJSONFileConfig(m map[string]interface{}) JSONFileConfig {
-	if m == nil {
-		return JSONFileConfig{}
+// parseJSONFileConfig parses the options of one JSON file or child list. An empty value
+// (nil or {}) means: one table, no further splitting.
+func parseJSONFileConfig(rawValue any) (JSONFileConfig, error) {
+	if rawValue == nil {
+		return JSONFileConfig{}, nil
 	}
-	idField, _ := m["id_field"].(string)
-	var children map[string]*JSONFileConfig
-	if rawChildren, ok := m["children"].(map[string]interface{}); ok {
-		children = make(map[string]*JSONFileConfig, len(rawChildren))
-		for name, v := range rawChildren {
-			if v == nil {
-				children[name] = nil
-			} else if cm, ok := v.(map[string]interface{}); ok {
-				sub := parseJSONFileConfig(cm)
-				children[name] = &sub
-			} else {
-				children[name] = nil
-			}
+	options, isMap := rawValue.(map[string]any)
+	if !isMap {
+		return JSONFileConfig{}, fmt.Errorf("expected primary_key_field and/or children, got %v", rawValue)
+	}
+	if err := checkJSONFileConfigKeys(options); err != nil {
+		return JSONFileConfig{}, err
+	}
+
+	primaryKeyField, _ := options["primary_key_field"].(string)
+	children, err := parseChildren(options["children"])
+	if err != nil {
+		return JSONFileConfig{}, err
+	}
+	if len(children) > 0 && primaryKeyField == "" {
+		return JSONFileConfig{}, fmt.Errorf("children are set but primary_key_field is missing; child rows need it to link to their parent")
+	}
+	return JSONFileConfig{PrimaryKeyField: primaryKeyField, Children: children}, nil
+}
+
+// checkJSONFileConfigKeys rejects unknown keys, with a hint for the renamed id_field.
+func checkJSONFileConfigKeys(options map[string]any) error {
+	for key := range options {
+		switch key {
+		case "primary_key_field", "children":
+		case "id_field":
+			return fmt.Errorf("id_field has been renamed to primary_key_field")
+		default:
+			return fmt.Errorf("unknown option %q (allowed: primary_key_field, children)", key)
 		}
 	}
-	return JSONFileConfig{IDField: idField, Children: children}
+	return nil
+}
+
+// parseChildren parses the children block: child field name → options of that child table.
+func parseChildren(rawChildren any) (map[string]*JSONFileConfig, error) {
+	if rawChildren == nil {
+		return nil, nil
+	}
+	childOptions, isMap := rawChildren.(map[string]any)
+	if !isMap {
+		return nil, fmt.Errorf("children: expected a list of field names, got %v", rawChildren)
+	}
+	children := make(map[string]*JSONFileConfig, len(childOptions))
+	for fieldName, rawValue := range childOptions {
+		childConfig, err := parseJSONFileConfig(rawValue)
+		if err != nil {
+			return nil, fmt.Errorf("children.%s: %w", fieldName, err)
+		}
+		children[fieldName] = &childConfig
+	}
+	return children, nil
 }
 
 // Constructor for registry-based source instantiation.
@@ -393,7 +438,10 @@ func constructor(name string, config map[string]interface{}, log zerolog.Logger)
 		delimiter = rune(delim[0])
 	}
 
-	jsonOptions := ParseJSONOptions(config)
+	jsonOptions, err := ParseJSONOptions(config)
+	if err != nil {
+		return nil, fmt.Errorf("local source %q: %w", name, err)
+	}
 	return New(name, dir, delimiter, jsonOptions, log), nil
 }
 

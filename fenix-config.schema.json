@@ -38,18 +38,13 @@
         },
         "since_param": {
           "type": "string",
-          "description": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`.",
-          "markdownDescription": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`."
+          "description": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Werkt alleen als\n`json_options.\u003ctable\u003e.primary_key_field` is ingevuld, zodat gewijzigde rijen vervangen kunnen worden.\nVoorbeeld: `startDate`.",
+          "markdownDescription": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Werkt alleen als\n`json_options.\u003ctable\u003e.primary_key_field` is ingevuld, zodat gewijzigde rijen vervangen kunnen worden.\nVoorbeeld: `startDate`."
         },
         "end_param": {
           "type": "string",
           "description": "Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.\nVoorbeeld: `endDate`.",
           "markdownDescription": "Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.\nVoorbeeld: `endDate`."
-        },
-        "id_field": {
-          "type": "string",
-          "description": "Optioneel, verouderd: gebruik `id_field` onder `json_options.\u003ctable\u003e`.\nVeld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden.",
-          "markdownDescription": "Optioneel, verouderd: gebruik `id_field` onder `json_options.\u003ctable\u003e`.\nVeld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden."
         }
       },
       "additionalProperties": false,
@@ -90,14 +85,33 @@
       "markdownDescription": "FHIRConfig is hoe de stagingdata naar FHIR-resources wordt omgezet."
     },
     "JSONFileOptions": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "children": {
+                "minProperties": 1
+              }
+            },
+            "required": [
+              "children"
+            ]
+          },
+          "then": {
+            "required": [
+              "primary_key_field"
+            ]
+          }
+        }
+      ],
       "properties": {
-        "id_field": {
+        "primary_key_field": {
           "type": "string",
-          "description": "Optioneel, maar nodig als er `children` zijn. Veld waarvan de waarde uniek is per record. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `id_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey.",
+          "description": "Verplicht als er `children` zijn, anders optioneel. Veld waarvan de waarde in elk record ingevuld en uniek is. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `primary_key_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey.\n\nHeeft een record geen waarde, of komt een waarde dubbel voor, dan wordt de tabel niet geladen.",
           "examples": [
             "id"
           ],
-          "markdownDescription": "Optioneel, maar nodig als er `children` zijn. Veld waarvan de waarde uniek is per record. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `id_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey."
+          "markdownDescription": "Verplicht als er `children` zijn, anders optioneel. Veld waarvan de waarde in elk record ingevuld en uniek is. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `primary_key_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey.\n\nHeeft een record geen waarde, of komt een waarde dubbel voor, dan wordt de tabel niet geladen."
         },
         "children": {
           "additionalProperties": {
@@ -111,8 +125,8 @@
             ]
           },
           "type": "object",
-          "description": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `id_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    id_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan.",
-          "markdownDescription": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `id_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    id_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan."
+          "description": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `primary_key_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    primary_key_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan.",
+          "markdownDescription": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `primary_key_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    primary_key_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan."
         }
       },
       "additionalProperties": false,
@@ -379,8 +393,8 @@
             "$ref": "#/$defs/JSONFileOptions"
           },
           "type": "object",
-          "description": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    id_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`.",
-          "markdownDescription": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    id_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`."
+          "description": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    primary_key_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`.",
+          "markdownDescription": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    primary_key_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`."
         }
       },
       "additionalProperties": false,

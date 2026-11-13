@@ -189,7 +189,10 @@ func constructor(name string, config map[string]interface{}, log zerolog.Logger)
 		delimiter = rune(delim[0])
 	}
 
-	jsonOptions := local.ParseJSONOptions(config)
+	jsonOptions, err := local.ParseJSONOptions(config)
+	if err != nil {
+		return nil, fmt.Errorf("sftp source %q: %w", name, err)
+	}
 	return New(name, host, port, username, keyFile, remoteDir, delimiter, jsonOptions, log), nil
 }
 

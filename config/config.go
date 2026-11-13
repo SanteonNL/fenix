@@ -64,16 +64,14 @@ type EndpointConfig struct {
 	Table string `yaml:"table" jsonschema:"required"`
 
 	// Optioneel. Queryparameter voor "gewijzigd sinds". Als deze is ingevuld, haalt een volgende run
-	// alleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`.
+	// alleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Werkt alleen als
+	// `json_options.<table>.primary_key_field` is ingevuld, zodat gewijzigde rijen vervangen kunnen worden.
+	// Voorbeeld: `startDate`.
 	SinceParam string `yaml:"since_param"`
 
 	// Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.
 	// Voorbeeld: `endDate`.
 	EndParam string `yaml:"end_param"`
-
-	// Optioneel, verouderd: gebruik `id_field` onder `json_options.<table>`.
-	// Veld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden.
-	IDField string `yaml:"id_field"`
 }
 
 // SourceConfig is één bron. Welke velden gelden, hangt af van `type`; het schema

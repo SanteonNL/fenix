@@ -13,14 +13,12 @@ import (
 )
 
 // EndpointConfig configures one Luscii API endpoint.
-// IDField is retained for backward compatibility with callers that use New() directly
-// (e.g. HipsETL). For new YAML-based configs, put id_field under json_options instead.
+// The primary key of the endpoint's table is set via json_options.<table>.primary_key_field.
 type EndpointConfig struct {
 	Path       string // URL path, e.g. /v1/patients
 	Table      string // target staging table name
 	SinceParam string // query param for incremental start date
 	EndParam   string // query param for end date
-	IDField    string // deprecated: use json_options.<table>.id_field instead
 }
 
 type endpointConfig struct {
@@ -28,7 +26,6 @@ type endpointConfig struct {
 	table      string
 	sinceParam string
 	endParam   string
-	idField    string // fallback when jsonOptions has no entry for this table
 }
 
 // Source loads Luscii API data into the staging database via the shared Loader.
@@ -52,20 +49,16 @@ func (s *Source) SetFileWriter(w source.FileWriter) {
 }
 
 // New creates a Luscii source for direct (non-YAML) instantiation.
-// IDField in endpoints is accepted for backward compatibility and auto-migrated
-// into jsonOptions so the shared Loader can use it for incremental upsert.
-func New(name, baseURL, apiKey, watermarkPath string, endpoints []EndpointConfig, log zerolog.Logger) source.Source {
+// jsonOptions (keyed by table name) may be nil; without a primary key per table,
+// every run is a full load.
+func New(name, baseURL, apiKey, watermarkPath string, endpoints []EndpointConfig, jsonOptions map[string]local.JSONFileConfig, log zerolog.Logger) source.Source {
 	eps := make([]endpointConfig, len(endpoints))
-	jsonOpts := make(map[string]local.JSONFileConfig, len(endpoints))
 	for i, e := range endpoints {
-		eps[i] = endpointConfig{path: e.Path, table: e.Table, sinceParam: e.SinceParam, endParam: e.EndParam, idField: e.IDField}
-		if e.IDField != "" {
-			existing := jsonOpts[e.Table]
-			if existing.IDField == "" {
-				existing.IDField = e.IDField
-				jsonOpts[e.Table] = existing
-			}
-		}
+		eps[i] = endpointConfig{path: e.Path, table: e.Table, sinceParam: e.SinceParam, endParam: e.EndParam}
+	}
+	jsonOpts := jsonOptions
+	if jsonOpts == nil {
+		jsonOpts = map[string]local.JSONFileConfig{}
 	}
 	return &Source{
 		name:          name,
@@ -85,10 +78,6 @@ func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
 
 	for _, ep := range s.endpoints {
 		cfg := s.jsonOptions[ep.table]
-		// Backward compat: if no IDField in jsonOptions, fall back to endpoint idField.
-		if cfg.IDField == "" && ep.idField != "" {
-			cfg.IDField = ep.idField
-		}
 
 		since := ""
 		if ep.sinceParam != "" {
@@ -101,9 +90,9 @@ func (s *Source) Load(ctx context.Context, db *sqlx.DB) error {
 			Since:      since,
 		}
 
-		incremental := since != "" && cfg.IDField != ""
+		incremental := since != "" && cfg.PrimaryKeyField != ""
 		s.log.Info().Str("source", s.name).Str("type", "luscii").Str("table", ep.table).
-			Str("since", since).Str("id_field", cfg.IDField).Bool("incremental", incremental).
+			Str("since", since).Str("primary_key_field", cfg.PrimaryKeyField).Bool("incremental", incremental).
 			Msg("source: loading")
 
 		records, err := cli.FetchAll(ep.path, params)
@@ -156,7 +145,6 @@ func parseEndpoints(cfg map[string]interface{}) []endpointConfig {
 			table:      strVal(m, "table"),
 			sinceParam: strVal(m, "since_param"),
 			endParam:   strVal(m, "end_param"),
-			idField:    strVal(m, "id_field"), // accepted but deprecated; prefer json_options
 		})
 	}
 	return result
@@ -181,12 +169,15 @@ func constructor(name string, cfg map[string]interface{}, log zerolog.Logger) (s
 		return nil, fmt.Errorf("luscii source %q: no endpoints configured", name)
 	}
 	watermarkPath, _ := cfg["watermark_path"].(string)
-	jsonOptions := local.ParseJSONOptions(cfg)
+	jsonOptions, err := local.ParseJSONOptions(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("luscii source %q: %w", name, err)
+	}
 	for table, jcfg := range jsonOptions {
-		log.Info().Str("source", name).Str("table", table).Str("id_field", jcfg.IDField).Int("children", len(jcfg.Children)).Msg("luscii: json_options parsed")
+		log.Info().Str("source", name).Str("table", table).Str("primary_key_field", jcfg.PrimaryKeyField).Int("children", len(jcfg.Children)).Msg("luscii: json_options parsed")
 	}
 	if len(jsonOptions) == 0 {
-		log.Warn().Str("source", name).Msg("luscii: no json_options found — incremental loading requires id_field in json_options")
+		log.Warn().Str("source", name).Msg("luscii: no json_options found — incremental loading requires primary_key_field in json_options")
 	}
 	return &Source{
 		name:          name,

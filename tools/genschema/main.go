@@ -116,7 +116,7 @@ func jsonOptionsSchema() *jsonschema.Schema {
 		Description: "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. " +
 			"De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). " +
 			"Bij `luscii` is de sleutel de `table` van het endpoint.\n\n" +
-			"Voorbeeld:\n```yaml\njson_options:\n  journeys:\n    id_field: id\n    children:\n      steps: {}\n```\n\n" +
+			"Voorbeeld:\n```yaml\njson_options:\n  journeys:\n    primary_key_field: id\n    children:\n      steps: {}\n```\n\n" +
 			"Bij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`.",
 		AdditionalProperties: &jsonschema.Schema{Ref: "#/$defs/JSONFileOptions"},
 	}
@@ -126,20 +126,22 @@ func jsonOptionsSchema() *jsonschema.Schema {
 // It mirrors local.JSONFileConfig and refers to itself for nested children.
 func jsonFileOptionsSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("id_field", &jsonschema.Schema{
+	properties.Set("primary_key_field", &jsonschema.Schema{
 		Type: "string",
-		Description: "Optioneel, maar nodig als er `children` zijn. Veld waarvan de waarde uniek is per record. " +
-			"Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\n" +
-			"Voorbeeld: `id_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom " +
-			"`pja_journeys_id` met de `id` van de bijbehorende journey.",
+		Description: "Verplicht als er `children` zijn, anders optioneel. Veld waarvan de waarde in elk record " +
+			"ingevuld en uniek is. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde " +
+			"om naar hun parent te verwijzen.\n\n" +
+			"Voorbeeld: `primary_key_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom " +
+			"`pja_journeys_id` met de `id` van de bijbehorende journey.\n\n" +
+			"Heeft een record geen waarde, of komt een waarde dubbel voor, dan wordt de tabel niet geladen.",
 		Examples: []any{"id"},
 	})
 	properties.Set("children", &jsonschema.Schema{
 		Type: "object",
 		Description: "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\n" +
 			"De child-tabel heet `<parent-tabel>_<veld>`. Gebruik `{}` voor \"eigen tabel, verder geen " +
-			"instructies\", of geef opnieuw `id_field` en `children` om nog een niveau dieper te splitsen.\n\n" +
-			"Voorbeeld:\n```yaml\nchildren:\n  steps:\n    id_field: id\n    children:\n      completions: {}\n```\n\n" +
+			"instructies\", of geef opnieuw `primary_key_field` en `children` om nog een niveau dieper te splitsen.\n\n" +
+			"Voorbeeld:\n```yaml\nchildren:\n  steps:\n    primary_key_field: id\n    children:\n      completions: {}\n```\n\n" +
 			"Een lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan.",
 		AdditionalProperties: &jsonschema.Schema{
 			AnyOf: []*jsonschema.Schema{
@@ -148,9 +150,19 @@ func jsonFileOptionsSchema() *jsonschema.Schema {
 			},
 		},
 	})
+	// Child rows link to their parent through the primary key, so children require one.
+	atLeastOneChild := uint64(1)
+	hasChildren := jsonschema.NewProperties()
+	hasChildren.Set("children", &jsonschema.Schema{MinProperties: &atLeastOneChild})
+	childrenNeedPrimaryKey := &jsonschema.Schema{
+		If:   &jsonschema.Schema{Properties: hasChildren, Required: []string{"children"}},
+		Then: &jsonschema.Schema{Required: []string{"primary_key_field"}},
+	}
+
 	return &jsonschema.Schema{
 		Type:                 "object",
 		Properties:           properties,
+		AllOf:                []*jsonschema.Schema{childrenNeedPrimaryKey},
 		AdditionalProperties: jsonschema.FalseSchema,
 		Description: "Hoe één JSON-bestand (of child-lijst) over stagingtabellen wordt verdeeld.\n\n" +
 			"`{}` betekent: één tabel, geneste lijsten blijven JSON-tekst.",

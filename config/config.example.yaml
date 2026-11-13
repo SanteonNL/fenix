@@ -40,7 +40,9 @@ sources:
         table: luscii_patients
         since_param: startDate
         end_param: endDate
-        id_field: id
+    json_options:
+      luscii_patients:
+        primary_key_field: id
 
   sim:
     type: local
@@ -48,11 +50,11 @@ sources:
     delimiter: ";"
     json_options:
       journeys:
-        id_field: id                      # upsert key for the journeys table
+        primary_key_field: id             # primary key of sim_journeys
         children:
           responsible_user_groups: {}     # -> sim_journeys_responsible_user_groups, no deeper nesting
           steps:                          # -> sim_journeys_steps, recurse one level further
-            id_field: id
+            primary_key_field: id
             children:
               completions: {}             # -> sim_journeys_steps_completions
 

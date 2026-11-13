@@ -11,7 +11,7 @@ import (
 )
 
 // Loader flattens JSON records and writes them to the staging database.
-// Supports full (table recreated each run) and incremental (upsert by IDField) modes.
+// Supports full (table recreated each run) and incremental (upsert by PrimaryKeyField) modes.
 // Fields in JSONFileConfig.Children become separate child tables, processed recursively.
 type Loader struct {
 	name       string
@@ -25,7 +25,7 @@ func NewLoader(name string, fileWriter source.FileWriter, log zerolog.Logger) *L
 }
 
 // Load writes records into db using cfg to control flattening.
-// incremental=true requires cfg.IDField; rows are upserted and the table is kept
+// incremental=true requires cfg.PrimaryKeyField; rows are upserted and the table is kept
 // across runs. incremental=false drops and recreates the table on every run.
 // Fields in cfg.Children become child tables named <table>_<field>, processed recursively.
 func (l *Loader) Load(db *sqlx.DB, table string, records []map[string]interface{}, cfg JSONFileConfig, incremental bool) error {
@@ -69,8 +69,8 @@ func (l *Loader) load(
 
 	for _, rec := range records {
 		flat := make(map[string]interface{})
-		parentID := fmt.Sprintf("%v", rec[cfg.IDField])
-		if cfg.IDField != "" {
+		parentID := fmt.Sprintf("%v", rec[cfg.PrimaryKeyField])
+		if cfg.PrimaryKeyField != "" {
 			updatedIDs[parentID] = true
 		}
 
@@ -120,11 +120,11 @@ func (l *Loader) load(
 	switch {
 	case incremental:
 		mode = "incremental"
-		if err := loaderEnsure(db, table, cols, cfg.IDField); err != nil {
+		if err := loaderEnsure(db, table, cols, cfg.PrimaryKeyField); err != nil {
 			return fmt.Errorf("ensure table %s: %w", table, err)
 		}
 		for _, row := range flatRecords {
-			if err := loaderUpsert(db, table, cols, cfg.IDField, row); err != nil {
+			if err := loaderUpsert(db, table, cols, cfg.PrimaryKeyField, row); err != nil {
 				l.log.Error().Err(err).Str("table", table).Msg("loader: upsert failed")
 			}
 		}
@@ -139,7 +139,7 @@ func (l *Loader) load(
 			}
 		}
 	default:
-		if err := loaderRecreate(db, table, cols, cfg.IDField); err != nil {
+		if err := loaderRecreate(db, table, cols, cfg.PrimaryKeyField); err != nil {
 			return fmt.Errorf("recreate table %s: %w", table, err)
 		}
 		for _, row := range flatRecords {
@@ -165,7 +165,7 @@ func (l *Loader) load(
 			}
 			var jsonErr error
 			if incremental {
-				jsonErr = l.fileWriter.UpsertJSON(table, cfg.IDField, rawRecords)
+				jsonErr = l.fileWriter.UpsertJSON(table, cfg.PrimaryKeyField, rawRecords)
 			} else {
 				jsonErr = l.fileWriter.WriteJSONFull(table, rawRecords)
 			}
@@ -218,9 +218,9 @@ func (l *Loader) validateConfig(table string, records []map[string]interface{}, 
 		}
 	}
 
-	if cfg.IDField != "" && !present[cfg.IDField] {
-		l.log.Warn().Str("table", table).Str("id_field", cfg.IDField).
-			Msg("loader: id_field not found in records — check config spelling")
+	if cfg.PrimaryKeyField != "" && !present[cfg.PrimaryKeyField] {
+		l.log.Warn().Str("table", table).Str("primary_key_field", cfg.PrimaryKeyField).
+			Msg("loader: primary_key_field not found in records — check config spelling")
 	}
 
 	for field := range cfg.Children {
