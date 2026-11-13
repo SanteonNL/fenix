@@ -1,11 +1,14 @@
 package stagingfiles
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/SanteonNL/fenix/source"
 )
 
 // Writer writes staging data to local files.
@@ -99,12 +102,7 @@ func writeRows(cw *csv.Writer, cols []string, rows []map[string]interface{}) {
 	row := make([]string, len(cols))
 	for _, rec := range rows {
 		for i, col := range cols {
-			v := rec[col]
-			if v == nil {
-				row[i] = ""
-			} else {
-				row[i] = fmt.Sprintf("%v", v)
-			}
+			row[i], _ = source.StagingText(rec[col]) // NULL becomes an empty CSV field
 		}
 		_ = cw.Write(row)
 	}
@@ -124,10 +122,18 @@ func readJSONFile(path string) ([]map[string]interface{}, error) {
 		return nil, err
 	}
 	var records []map[string]interface{}
-	if err := json.Unmarshal(data, &records); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber() // keep numbers exact when the file is rewritten after a merge
+	if err := decoder.Decode(&records); err != nil {
 		return nil, fmt.Errorf("parse json: %w", err)
 	}
 	return records, nil
+}
+
+// mergeKey returns the text used to match records, the same text staging stores for the key.
+func mergeKey(value any) string {
+	text, _ := source.StagingText(value)
+	return text
 }
 
 // mergeByID replaces existing records whose idField matches an incoming record,
@@ -139,11 +145,11 @@ func mergeByID(existing, incoming []map[string]interface{}, idField string) []ma
 	index := make(map[string]int, len(existing))
 	for i, r := range existing {
 		if id, ok := r[idField]; ok {
-			index[fmt.Sprintf("%v", id)] = i
+			index[mergeKey(id)] = i
 		}
 	}
 	for _, r := range incoming {
-		key := fmt.Sprintf("%v", r[idField])
+		key := mergeKey(r[idField])
 		if i, ok := index[key]; ok {
 			result[i] = r
 		} else {

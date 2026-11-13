@@ -37,6 +37,11 @@ type Config struct {
 
 	// Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).
 	// Standaard: een SQLite-database in het geheugen.
+	//
+	// Elke waarde wordt als tekst opgeslagen, precies zoals in de bron: `111` blijft `111`
+	// (niet `111.0`), `1234567` blijft `1234567` en lange id's houden al hun cijfers.
+	// Datums worden ISO 8601 (`2025-03-01T00:00:00Z`). Het omzetten naar het juiste type
+	// gebeurt in de stap na staging.
 	Staging StagingConfig `yaml:"staging"`
 
 	// Optioneel. Hoe de stagingdata naar FHIR wordt omgezet.

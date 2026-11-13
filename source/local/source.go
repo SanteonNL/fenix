@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -195,19 +196,27 @@ func (s *Source) loadCSV(db *sqlx.DB, path, table string) error {
 	return nil
 }
 
-// parseJSONRecords unwraps {"data":[...]} or a bare [...].
-func parseJSONRecords(data []byte) ([]map[string]interface{}, error) {
+// parseJSONRecords unwraps {"data":[...]} or a bare [...]. Numbers are kept as
+// json.Number, so they keep their original digits (no float rounding or ".0").
+func parseJSONRecords(data []byte) ([]map[string]any, error) {
 	var wrapper struct {
-		Data []map[string]interface{} `json:"data"`
+		Data []map[string]any `json:"data"`
 	}
-	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Data != nil {
+	if err := decodeJSONKeepingNumbers(data, &wrapper); err == nil && wrapper.Data != nil {
 		return wrapper.Data, nil
 	}
-	var arr []map[string]interface{}
-	if err := json.Unmarshal(data, &arr); err != nil {
+	var records []map[string]any
+	if err := decodeJSONKeepingNumbers(data, &records); err != nil {
 		return nil, err
 	}
-	return arr, nil
+	return records, nil
+}
+
+// decodeJSONKeepingNumbers decodes JSON like json.Unmarshal, but reads numbers as json.Number.
+func decodeJSONKeepingNumbers(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 // flattenMap inlines nested maps with "_" separators; arrays become JSON text.
@@ -245,36 +254,6 @@ func asObjectArray(v interface{}) ([]map[string]interface{}, bool) {
 		result = append(result, m)
 	}
 	return result, true
-}
-
-// flattenObjectFields flattens one level of nested objects using "_" as separator.
-// Any remaining nested structures (arrays, maps) are JSON-encoded as strings.
-func flattenObjectFields(m map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range m {
-		if nested, ok := v.(map[string]interface{}); ok {
-			for subk, subv := range nested {
-				result[k+"_"+subk] = marshalValue(subv)
-			}
-		} else {
-			result[k] = marshalValue(v)
-		}
-	}
-	return result
-}
-
-// marshalValue returns scalars as-is and encodes maps/slices as JSON strings.
-func marshalValue(v interface{}) interface{} {
-	switch v.(type) {
-	case nil, string, bool, float64, int, int64:
-		return v
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("%v", v)
-		}
-		return string(b)
-	}
 }
 
 func sanitise(headers []string) []string {
@@ -330,11 +309,7 @@ func insertRow(db *sqlx.DB, table string, cols []string, row map[string]interfac
 	vals := make([]interface{}, len(cols))
 	for i, c := range cols {
 		placeholders[i] = "?"
-		if v := row[c]; v == nil {
-			vals[i] = nil
-		} else {
-			vals[i] = fmt.Sprintf("%v", v)
-		}
+		vals[i] = source.StagingValue(row[c])
 	}
 	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		quoted(table),

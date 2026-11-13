@@ -255,14 +255,12 @@ func primaryKeyError(table, primaryKeyField string, missingCount int, duplicateV
 		table, primaryKeyField, strings.Join(problems, "; "))
 }
 
-// primaryKeyText returns the text form of a primary key value, and false when the
-// value is missing (absent, null or empty).
+// primaryKeyText returns a primary key value as stored in staging, and false when the
+// value is missing (absent, null or empty). The key column and the link value in child
+// tables both use this text, so they always match.
 func primaryKeyText(value any) (string, bool) {
-	if value == nil {
-		return "", false
-	}
-	text := fmt.Sprintf("%v", value)
-	return text, text != ""
+	text, isPresent := source.StagingText(value)
+	return text, isPresent && text != ""
 }
 
 // validateConfig checks that configured child field names appear in at least one record.
@@ -334,9 +332,9 @@ func loaderColDefs(db *sqlx.DB, cols []string, pk string) string {
 
 func loaderUpsert(db *sqlx.DB, table string, cols []string, pk string, rec map[string]interface{}) error {
 	if pk != "" {
-		if pkVal := rec[pk]; pkVal != nil {
+		if pkVal, hasValue := primaryKeyText(rec[pk]); hasValue {
 			del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), quoted(pk)))
-			if _, err := db.Exec(del, fmt.Sprintf("%v", pkVal)); err != nil {
+			if _, err := db.Exec(del, pkVal); err != nil {
 				return fmt.Errorf("delete before upsert: %w", err)
 			}
 		}
@@ -351,12 +349,7 @@ func loaderWrite(db *sqlx.DB, table string, cols []string, rec map[string]interf
 	for i, c := range cols {
 		placeholders[i] = "?"
 		quotedCols[i] = quoted(c)
-		v := rec[c]
-		if v == nil {
-			vals[i] = nil
-		} else {
-			vals[i] = marshalValue(v)
-		}
+		vals[i] = source.StagingValue(rec[c])
 	}
 	sql := db.Rebind(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		quoted(table),

@@ -501,8 +501,8 @@
     },
     "staging": {
       "$ref": "#/$defs/StagingConfig",
-      "description": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen.",
-      "markdownDescription": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen."
+      "description": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen.\n\nElke waarde wordt als tekst opgeslagen, precies zoals in de bron: `111` blijft `111`\n(niet `111.0`), `1234567` blijft `1234567` en lange id's houden al hun cijfers.\nDatums worden ISO 8601 (`2025-03-01T00:00:00Z`). Het omzetten naar het juiste type\ngebeurt in de stap na staging.",
+      "markdownDescription": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen.\n\nElke waarde wordt als tekst opgeslagen, precies zoals in de bron: `111` blijft `111`\n(niet `111.0`), `1234567` blijft `1234567` en lange id's houden al hun cijfers.\nDatums worden ISO 8601 (`2025-03-01T00:00:00Z`). Het omzetten naar het juiste type\ngebeurt in de stap na staging."
     },
     "fhir": {
       "$ref": "#/$defs/FHIRConfig",

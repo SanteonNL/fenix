@@ -50,11 +50,33 @@ De feedbackpunten verwijzen naar [fenix_feedback.md](fenix_feedback.md).
 
 **Bewust niet in punt 7:** het opslagformaat van sleutels (`"111.0"`, `"1.234567e+06"`, afronding boven 16 cijfers). Dezelfde oorzaak als punt 8 en daar in één keer op te lossen. Tot die tijd gebruiken sleutelcontrole en koppeling hetzelfde formaat (`primaryKeyText`), zodat ze wel consistent zijn met elkaar.
 
+## Punt 8: elke waarde exact als tekst opslaan, zoals in de bron
+
+**Probleem:** staging slaat alles als tekst op (goed), maar de route naar die tekst veranderde de waarde. JSON-getallen gingen via een `float64` (`111` → `"111.0"`, `1234567` → `"1.234567e+06"`, id's boven 16 cijfers afgerond) en `sqldb`-waarden via Go's `%v` (datums als `2025-03-01 00:00:00 +0000 UTC`, GUID's en binaire kolommen als lijst getallen). Sleutel en koppelwaarde verschilden daardoor, en een gewone join vond niets.
+
+**Wijzigingen:**
+
+| Wat | Waar | Waarom |
+|---|---|---|
+| Eén functie voor waarde → tekst: `StagingText` (en `StagingValue` voor databaseparameters) | `source/value.go` | Alle bronnen, de primaire sleutel, de koppelwaarde en de CSV-uitvoer gebruiken dezelfde omzetting, dus sleutel en koppeling kunnen niet meer verschillen. Getallen zonder `.0` en zonder exponent, datums als ISO 8601, lijsten en objecten als JSON. |
+| JSON inlezen met `UseNumber()` | `source/local/source.go` (`parseJSONRecords`), `models/luscii/client/client.go`, `source/stagingfiles/writer.go` | Getallen blijven exact hun oorspronkelijke cijfers (`json.Number`): geen afronding, ook niet bij het herschrijven van de hiërarchische JSON-bestanden. |
+| Binaire SQL Server-kolommen via het kolomtype omzetten | `source/sqldb/source.go` (`binaryColumnValue`) | De driver geeft zowel DECIMAL als GUID/VARBINARY als bytes terug; alleen het kolomtype onderscheidt ze. GUID's zoals SQL Server ze toont (`6F9619FF-8B86-…`), binair als `0x…`. Geen nieuwe afhankelijkheid: de SQL Server-driver werd al geïmporteerd. |
+| Ongebruikte `marshalValue` en `flattenObjectFields` verwijderd | `source/local/source.go` | Vervangen door `StagingText`; `flattenObjectFields` werd al nergens aangeroepen. |
+| Uitleg "elke waarde als tekst, precies zoals in de bron" in de hovertekst van `staging` | `config/config.go`, `fenix-config.schema.json` | Aanbeveling 4 uit punt 8: de regel staat waar de gebruiker hem ziet. |
+| Tests | `source/value_test.go`, `source/sqldb/source_test.go`, `source/local/loader_test.go` | Omzetting per type; GUID-bytevolgorde; van begin tot eind: JSON met `111`, `1234567` en `9007199254740993` geeft exact die sleutels, en een join zonder CAST vindt alle child-rijen. |
+
+**Gevolg voor HipsETL:** waarden in staging veranderen van vorm (`"111.0"` → `"111"`, ook in gewone kolommen). De CAST-workaround in de PJA-queries (`docs/datasource_queries/PJA/README.md`) blijft werken, maar is niet meer nodig. Queries die op de oude vorm rekenen (bijvoorbeeld `LIKE '%.0'`) moeten worden nagekeken.
+
+**Getest:** `go vet`, `go test ./source/... ./config/`.
+
+**Niet getest:** `sqldb` tegen een echte SQL Server (de GUID-omzetting is getest met de bekende bytevolgorde uit de SQL Server-documentatie, niet met de driver zelf); Luscii tegen de echte API.
+
 ## Open punten en bevindingen
 
 - **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies: zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
 - **Optioneel uit punt 7, niet gedaan:** kleinkind-rijen ook de sleutel van het hoogste record geven, zodat je niet via elke tussenlaag hoeft te joinen.
-- **Opmaak:** `source/local/source.go` was op `main` al niet `gofmt`-schoon (dubbele lege regel); niet aangepast.
+- **Opmaak:** `source/local/source.go` en `source/sqldb/source.go` waren op `main` al niet `gofmt`-schoon (dubbele lege regel); niet aangepast.
+- **Primaire sleutel van child-tabellen:** een `primary_key_field` op een child moet uniek zijn over de hele child-tabel (alle children van alle parents). Een id dat alleen per parent uniek is (stap 1, 2, 3 per journey) kan dus geen `primary_key_field` zijn; daarvoor zou een samengestelde sleutel (parent-id + child-id) nodig zijn, die nu niet wordt ondersteund.
 - **Bug luscii:** sleutels in `json_options` worden naar kleine letters omgezet, `endpoint.table` niet. Bij een tabelnaam met hoofdletters worden de instellingen stil genegeerd.
 - **Velden voor later:** `fhir.profile`, `output.type: datalake` en `output.datalake` doen nog niets; bewust behouden, in de beschrijving gemarkeerd als "nog niet in gebruik".
 - **Opruimen (andere PR):** `fenix/.claude/settings.json` bevat persoonlijke paden van een collega.

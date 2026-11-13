@@ -119,7 +119,9 @@ func (c *Client) fetchPage(rawURL string) (*pageResponse, error) {
 		}
 
 		var page pageResponse
-		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		decoder := json.NewDecoder(resp.Body)
+		decoder.UseNumber() // keep numbers exact (json.Number): no float rounding of ids
+		if err := decoder.Decode(&page); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("decode %s: %w", rawURL, err)
 		}

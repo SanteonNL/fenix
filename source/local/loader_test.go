@@ -97,6 +97,42 @@ func TestLoadRejectsMissingAndDuplicateKeysWithoutTouchingTable(t *testing.T) {
 	}
 }
 
+func TestLoadStoresNumericKeysExactlyAsInSource(t *testing.T) {
+	database := openTestDatabase(t)
+	fileContent := []byte(`[
+		{"id": 111, "steps": [{"name": "intake"}]},
+		{"id": 1234567, "steps": [{"name": "intake"}]},
+		{"id": 9007199254740993, "steps": [{"name": "intake"}]}
+	]`)
+	records, err := parseJSONRecords(fileContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := newTestLoader().Load(database, "pja_journeys", records, journeysWithSteps(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	var parentKeys []string
+	if err := database.Select(&parentKeys, `SELECT "id" FROM "pja_journeys" ORDER BY LENGTH("id")`); err != nil {
+		t.Fatal(err)
+	}
+	expectedKeys := []string{"111", "1234567", "9007199254740993"}
+	if strings.Join(parentKeys, ",") != strings.Join(expectedKeys, ",") {
+		t.Errorf("parent keys = %v, want %v (no .0, no exponent, no rounding)", parentKeys, expectedKeys)
+	}
+
+	// A plain join, without casting, must find every child row.
+	var joinedRows int
+	joinQuery := `SELECT COUNT(*) FROM "pja_journeys_steps" AS step
+		JOIN "pja_journeys" AS journey ON step."pja_journeys_id" = journey."id"`
+	if err := database.Get(&joinedRows, joinQuery); err != nil {
+		t.Fatal(err)
+	}
+	if joinedRows != len(expectedKeys) {
+		t.Errorf("joined child rows = %d, want %d", joinedRows, len(expectedKeys))
+	}
+}
+
 // journeysWithSteps is the json_options of a journeys file whose steps become a child table.
 func journeysWithSteps() JSONFileConfig {
 	return JSONFileConfig{PrimaryKeyField: "id", Children: map[string]*JSONFileConfig{"steps": {}}}
