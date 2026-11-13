@@ -1,5 +1,10 @@
 # FENIX — Claude Context
 
+## Rules
+
+- **Config schema must stay in sync.** `fenix-config.schema.json` is generated from the config structs in `config/` (including their doc comments, which become the editor hover text). After changing a config struct, field, struct tag, or *only a field description*, run `make schema` and commit the regenerated schema in the same commit.
+- Config field descriptions are written in Dutch (they are read by Dutch users) and start with "Verplicht" or "Optioneel".
+
 ## Related Repositories
 
 ### HipsETL

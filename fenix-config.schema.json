@@ -1,0 +1,514 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "DataLakeConfig": {
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "certificate": {
+          "type": "string"
+        },
+        "certificateKey": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "DataLakeConfig is de koppeling met een datagateway (bv. dls-t.hips.santeon.nl). Nog niet in gebruik.",
+      "markdownDescription": "DataLakeConfig is de koppeling met een datagateway (bv. dls-t.hips.santeon.nl). Nog niet in gebruik."
+    },
+    "EndpointConfig": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Verplicht. URL-pad van het endpoint, achter `base_url`. Voorbeeld: `/v1/patients`.",
+          "markdownDescription": "Verplicht. URL-pad van het endpoint, achter `base_url`. Voorbeeld: `/v1/patients`."
+        },
+        "table": {
+          "type": "string",
+          "description": "Verplicht. Stagingtabel waarin de records komen. Voorbeeld: `luscii_patients`.",
+          "markdownDescription": "Verplicht. Stagingtabel waarin de records komen. Voorbeeld: `luscii_patients`."
+        },
+        "since_param": {
+          "type": "string",
+          "description": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`.",
+          "markdownDescription": "Optioneel. Queryparameter voor \"gewijzigd sinds\". Als deze is ingevuld, haalt een volgende run\nalleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`."
+        },
+        "end_param": {
+          "type": "string",
+          "description": "Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.\nVoorbeeld: `endDate`.",
+          "markdownDescription": "Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.\nVoorbeeld: `endDate`."
+        },
+        "id_field": {
+          "type": "string",
+          "description": "Optioneel, verouderd: gebruik `id_field` onder `json_options.\u003ctable\u003e`.\nVeld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden.",
+          "markdownDescription": "Optioneel, verouderd: gebruik `id_field` onder `json_options.\u003ctable\u003e`.\nVeld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "table"
+      ],
+      "description": "EndpointConfig is één Luscii-API-endpoint dat in een eigen stagingtabel wordt geladen.",
+      "markdownDescription": "EndpointConfig is één Luscii-API-endpoint dat in een eigen stagingtabel wordt geladen."
+    },
+    "FHIRConfig": {
+      "properties": {
+        "sqlFile": {
+          "type": "string",
+          "description": "Optioneel. SQL-bestand dat de stagingtabellen naar FHIR omzet; mag meerdere statements bevatten.\nLaat weg om de algemene conversie over te slaan. De opdrachtregeloptie `-sql` gaat hiervoor.",
+          "markdownDescription": "Optioneel. SQL-bestand dat de stagingtabellen naar FHIR omzet; mag meerdere statements bevatten.\nLaat weg om de algemene conversie over te slaan. De opdrachtregeloptie `-sql` gaat hiervoor."
+        },
+        "profile": {
+          "type": "string",
+          "description": "Optioneel, nog niet in gebruik. Naam of repository van het FHIR-profiel. Voorbeeld: `sim-on-fhir`.",
+          "markdownDescription": "Optioneel, nog niet in gebruik. Naam of repository van het FHIR-profiel. Voorbeeld: `sim-on-fhir`."
+        },
+        "profilesDir": {
+          "type": "string",
+          "description": "Optioneel. Map met FHIR-StructureDefinitions als `.json`-bestanden. Voorbeeld: `terminology/profiles/sim`.",
+          "markdownDescription": "Optioneel. Map met FHIR-StructureDefinitions als `.json`-bestanden. Voorbeeld: `terminology/profiles/sim`."
+        },
+        "conceptMapsDir": {
+          "type": "string",
+          "description": "Optioneel. Map met conceptmaps als platte CSV-bestanden. Voorbeeld: `terminology/conceptmaps/flat`.",
+          "markdownDescription": "Optioneel. Map met conceptmaps als platte CSV-bestanden. Voorbeeld: `terminology/conceptmaps/flat`."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "FHIRConfig is hoe de stagingdata naar FHIR-resources wordt omgezet.",
+      "markdownDescription": "FHIRConfig is hoe de stagingdata naar FHIR-resources wordt omgezet."
+    },
+    "JSONFileOptions": {
+      "properties": {
+        "id_field": {
+          "type": "string",
+          "description": "Optioneel, maar nodig als er `children` zijn. Veld waarvan de waarde uniek is per record. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `id_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey.",
+          "examples": [
+            "id"
+          ],
+          "markdownDescription": "Optioneel, maar nodig als er `children` zijn. Veld waarvan de waarde uniek is per record. Het wordt de primaire sleutel van de tabel, en child-rijen bewaren deze waarde om naar hun parent te verwijzen.\n\nVoorbeeld: `id_field: id` bij `journeys` → elke rij in `pja_journeys_steps` krijgt een kolom `pja_journeys_id` met de `id` van de bijbehorende journey."
+        },
+        "children": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/JSONFileOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "object",
+          "description": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `id_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    id_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan.",
+          "markdownDescription": "Optioneel. Lijsten binnen elk record die een eigen tabel worden, met de veldnaam als sleutel.\n\nDe child-tabel heet `\u003cparent-tabel\u003e_\u003cveld\u003e`. Gebruik `{}` voor \"eigen tabel, verder geen instructies\", of geef opnieuw `id_field` en `children` om nog een niveau dieper te splitsen.\n\nVoorbeeld:\n```yaml\nchildren:\n  steps:\n    id_field: id\n    children:\n      completions: {}\n```\n\nEen lijst die hier niet genoemd wordt, blijft als JSON-tekst in de parent-rij staan."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Hoe één JSON-bestand (of child-lijst) over stagingtabellen wordt verdeeld.\n\n`{}` betekent: één tabel, geneste lijsten blijven JSON-tekst.",
+      "markdownDescription": "Hoe één JSON-bestand (of child-lijst) over stagingtabellen wordt verdeeld.\n\n`{}` betekent: één tabel, geneste lijsten blijven JSON-tekst."
+    },
+    "LocalOutputConfig": {
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Optioneel. Uitvoermap. Standaard: `output`.",
+          "markdownDescription": "Optioneel. Uitvoermap. Standaard: `output`."
+        },
+        "useTimestamp": {
+          "type": "boolean",
+          "description": "Optioneel. Schrijf elke run naar een eigen submap met datum en tijd. Standaard: `true`.",
+          "markdownDescription": "Optioneel. Schrijf elke run naar een eigen submap met datum en tijd. Standaard: `true`."
+        },
+        "archiveCount": {
+          "type": "integer",
+          "description": "Optioneel. Aantal eerdere runs dat in de archiefmap blijft; `0` bewaart alles. Standaard: `5`.\nGeldt alleen als `useTimestamp` aan staat.",
+          "markdownDescription": "Optioneel. Aantal eerdere runs dat in de archiefmap blijft; `0` bewaart alles. Standaard: `5`.\nGeldt alleen als `useTimestamp` aan staat."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "LocalOutputConfig is uitvoer naar een lokale map.",
+      "markdownDescription": "LocalOutputConfig is uitvoer naar een lokale map."
+    },
+    "OutputConfig": {
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "ndjson",
+            "pretty"
+          ],
+          "description": "Optioneel. Bestandsformaat. `json`: één JSON-array. `ndjson`: één resource per regel.\n`pretty`: ingesprongen JSON. Standaard: `json`.",
+          "markdownDescription": "Optioneel. Bestandsformaat. `json`: één JSON-array. `ndjson`: één resource per regel.\n`pretty`: ingesprongen JSON. Standaard: `json`."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "local",
+            "datalake"
+          ],
+          "description": "Optioneel. Bestemming. Standaard: `local`. `datalake` is nog niet in gebruik.",
+          "markdownDescription": "Optioneel. Bestemming. Standaard: `local`. `datalake` is nog niet in gebruik."
+        },
+        "local": {
+          "$ref": "#/$defs/LocalOutputConfig",
+          "description": "Optioneel. Instellingen voor `type: local`.",
+          "markdownDescription": "Optioneel. Instellingen voor `type: local`."
+        },
+        "datalake": {
+          "$ref": "#/$defs/DataLakeConfig",
+          "description": "Optioneel, nog niet in gebruik. Instellingen voor `type: datalake`.",
+          "markdownDescription": "Optioneel, nog niet in gebruik. Instellingen voor `type: datalake`."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "OutputConfig is waar en in welk formaat de FHIR-uitvoer wordt geschreven.",
+      "markdownDescription": "OutputConfig is waar en in welk formaat de FHIR-uitvoer wordt geschreven."
+    },
+    "SourceConfig": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "local"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "base_url": false,
+              "api_key": false,
+              "connection_string": false,
+              "staging_dir": false,
+              "host": false,
+              "port": false,
+              "username": false,
+              "key_file": false,
+              "remote_dir": false,
+              "endpoints": false
+            },
+            "required": [
+              "dir"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "luscii"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "dir": false,
+              "delimiter": false,
+              "connection_string": false,
+              "staging_dir": false,
+              "host": false,
+              "port": false,
+              "username": false,
+              "key_file": false,
+              "remote_dir": false
+            },
+            "required": [
+              "base_url",
+              "api_key",
+              "endpoints"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "sftp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "base_url": false,
+              "api_key": false,
+              "dir": false,
+              "connection_string": false,
+              "staging_dir": false,
+              "endpoints": false
+            },
+            "required": [
+              "host",
+              "username",
+              "key_file"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "sqldb"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "base_url": false,
+              "api_key": false,
+              "dir": false,
+              "delimiter": false,
+              "host": false,
+              "port": false,
+              "username": false,
+              "key_file": false,
+              "remote_dir": false,
+              "endpoints": false,
+              "json_options": false
+            },
+            "required": [
+              "connection_string"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "local",
+            "sftp",
+            "sqldb",
+            "luscii"
+          ],
+          "description": "Verplicht. Soort bron; elk type gebruikt zijn eigen velden.\n\n- `local`: leest CSV- en JSON-bestanden uit een map. Verplicht: `dir`.\n- `sftp`: downloadt CSV- en JSON-bestanden van een SFTP-server en leest ze daarna als `local`. Verplicht: `host`, `username`, `key_file`.\n- `sqldb`: voert SQL-queries uit op een externe database. Verplicht: `connection_string`.\n- `luscii`: haalt records op via de Luscii-REST-API. Verplicht: `base_url`, `api_key`, `endpoints`.\n\nEen type werkt alleen als het programma dat Fenix draait dat type bevat; anders wordt de bron\novergeslagen met \"unknown source type\" in de log.",
+          "markdownDescription": "Verplicht. Soort bron; elk type gebruikt zijn eigen velden.\n\n- `local`: leest CSV- en JSON-bestanden uit een map. Verplicht: `dir`.\n- `sftp`: downloadt CSV- en JSON-bestanden van een SFTP-server en leest ze daarna als `local`. Verplicht: `host`, `username`, `key_file`.\n- `sqldb`: voert SQL-queries uit op een externe database. Verplicht: `connection_string`.\n- `luscii`: haalt records op via de Luscii-REST-API. Verplicht: `base_url`, `api_key`, `endpoints`.\n\nEen type werkt alleen als het programma dat Fenix draait dat type bevat; anders wordt de bron\novergeslagen met \"unknown source type\" in de log."
+        },
+        "base_url": {
+          "type": "string",
+          "description": "Verplicht bij `luscii`. Basis-URL van de API. Voorbeeld: `https://vitalsapi.luscii.com`.",
+          "markdownDescription": "Verplicht bij `luscii`. Basis-URL van de API. Voorbeeld: `https://vitalsapi.luscii.com`."
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Verplicht bij `luscii`. API-sleutel, meegestuurd als Bearer-token. Zet hier een omgevingsvariabele,\nniet de sleutel zelf. Voorbeeld: `${LUSCII_API_KEY}`.",
+          "markdownDescription": "Verplicht bij `luscii`. API-sleutel, meegestuurd als Bearer-token. Zet hier een omgevingsvariabele,\nniet de sleutel zelf. Voorbeeld: `${LUSCII_API_KEY}`."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Verplicht bij `local`. Map met de `.csv`- en `.json`-bestanden die geladen worden. Elk bestand\nwordt een tabel `\u003cbron\u003e_\u003cbestandsnaam\u003e`. Voorbeeld: `test/data/sim`.",
+          "markdownDescription": "Verplicht bij `local`. Map met de `.csv`- en `.json`-bestanden die geladen worden. Elk bestand\nwordt een tabel `\u003cbron\u003e_\u003cbestandsnaam\u003e`. Voorbeeld: `test/data/sim`."
+        },
+        "delimiter": {
+          "type": "string",
+          "description": "Optioneel, bij `local` en `sftp`. Scheidingsteken tussen kolommen in CSV-bestanden (één teken).\nStandaard: `,`. Voorbeeld: `\";\"`.",
+          "markdownDescription": "Optioneel, bij `local` en `sftp`. Scheidingsteken tussen kolommen in CSV-bestanden (één teken).\nStandaard: `,`. Voorbeeld: `\";\"`."
+        },
+        "connection_string": {
+          "type": "string",
+          "description": "Verplicht bij `sqldb`. Connectionstring van de database. Zet inloggegevens in omgevingsvariabelen.\nVoorbeeld: `server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix`.",
+          "markdownDescription": "Verplicht bij `sqldb`. Connectionstring van de database. Zet inloggegevens in omgevingsvariabelen.\nVoorbeeld: `server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix`."
+        },
+        "staging_dir": {
+          "type": "string",
+          "description": "Optioneel, bij `sqldb`. Map met de `.sql`-bestanden die worden uitgevoerd; elk queryresultaat\nwordt een stagingtabel. Standaard: `queries/\u003cbron\u003e/staging`.",
+          "markdownDescription": "Optioneel, bij `sqldb`. Map met de `.sql`-bestanden die worden uitgevoerd; elk queryresultaat\nwordt een stagingtabel. Standaard: `queries/\u003cbron\u003e/staging`."
+        },
+        "host": {
+          "type": "string",
+          "description": "Verplicht bij `sftp`. Hostnaam of IP-adres van de SFTP-server. Voorbeeld: `${ZBJ_SFTP_HOST}`.",
+          "markdownDescription": "Verplicht bij `sftp`. Hostnaam of IP-adres van de SFTP-server. Voorbeeld: `${ZBJ_SFTP_HOST}`."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Optioneel, bij `sftp`. Poort van de SFTP-server. Standaard: `22`.",
+          "markdownDescription": "Optioneel, bij `sftp`. Poort van de SFTP-server. Standaard: `22`."
+        },
+        "username": {
+          "type": "string",
+          "description": "Verplicht bij `sftp`. Gebruikersnaam om mee in te loggen. Voorbeeld: `${ZBJ_SFTP_USER}`.",
+          "markdownDescription": "Verplicht bij `sftp`. Gebruikersnaam om mee in te loggen. Voorbeeld: `${ZBJ_SFTP_USER}`."
+        },
+        "key_file": {
+          "type": "string",
+          "description": "Verplicht bij `sftp`. Pad naar het bestand met de private SSH-sleutel om mee in te loggen.\nVoorbeeld: `C:\\\\Users\\\\\u003cgebruiker\u003e\\\\.ssh\\\\id_rsa`.",
+          "markdownDescription": "Verplicht bij `sftp`. Pad naar het bestand met de private SSH-sleutel om mee in te loggen.\nVoorbeeld: `C:\\\\Users\\\\\u003cgebruiker\u003e\\\\.ssh\\\\id_rsa`."
+        },
+        "remote_dir": {
+          "type": "string",
+          "description": "Optioneel, bij `sftp`. Map op de server waaruit bestanden worden gedownload. Standaard: `/`. Voorbeeld: `/pja`.",
+          "markdownDescription": "Optioneel, bij `sftp`. Map op de server waaruit bestanden worden gedownload. Standaard: `/`. Voorbeeld: `/pja`."
+        },
+        "endpoints": {
+          "items": {
+            "$ref": "#/$defs/EndpointConfig"
+          },
+          "type": "array",
+          "description": "Verplicht bij `luscii`. De API-endpoints die worden opgehaald; elk vult een eigen stagingtabel.",
+          "markdownDescription": "Verplicht bij `luscii`. De API-endpoints die worden opgehaald; elk vult een eigen stagingtabel."
+        },
+        "json_options": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JSONFileOptions"
+          },
+          "type": "object",
+          "description": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    id_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`.",
+          "markdownDescription": "Optioneel, bij `local`, `sftp` en `luscii`. Per JSON-bestand: hoe de records over tabellen worden verdeeld. De sleutel is de bestandsnaam zonder extensie, in kleine letters (`journeys.json` → `journeys`). Bij `luscii` is de sleutel de `table` van het endpoint.\n\nVoorbeeld:\n```yaml\njson_options:\n  journeys:\n    id_field: id\n    children:\n      steps: {}\n```\n\nBij een `local`-bron `pja` geeft dit de tabellen `pja_journeys` en `pja_journeys_steps`."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "description": "SourceConfig is één bron. Welke velden gelden, hangt af van `type`; het schema\nmarkeert velden die niet bij het gekozen type horen.",
+      "markdownDescription": "SourceConfig is één bron. Welke velden gelden, hangt af van `type`; het schema\nmarkeert velden die niet bij het gekozen type horen."
+    },
+    "SourcesConfig": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SourceConfig"
+      },
+      "type": "object",
+      "description": "SourcesConfig maps source name (e.g. \"luscii\") to its configuration.",
+      "markdownDescription": "SourcesConfig maps source name (e.g. \"luscii\") to its configuration."
+    },
+    "StagingConfig": {
+      "properties": {
+        "database": {
+          "type": "string",
+          "enum": [
+            "sqlite",
+            "postgres",
+            "sqlserver"
+          ],
+          "description": "Optioneel. Soort database. Standaard: `sqlite`.",
+          "markdownDescription": "Optioneel. Soort database. Standaard: `sqlite`."
+        },
+        "driver": {
+          "type": "string",
+          "enum": [
+            "sqlite",
+            "sqlite3"
+          ],
+          "description": "Optioneel, bij `sqlite`. Driver. `sqlite` (standaard) is puur Go; `sqlite3` heeft CGO en een C-compiler nodig.",
+          "markdownDescription": "Optioneel, bij `sqlite`. Driver. `sqlite` (standaard) is puur Go; `sqlite3` heeft CGO en een C-compiler nodig."
+        },
+        "path": {
+          "type": "string",
+          "description": "Optioneel, bij `sqlite`. Databasebestand. Laat weg voor een database in het geheugen, die na de run weg is.\nEen bestand is handig om de stagingtabellen achteraf te bekijken. Voorbeeld: `output/staging.db`.",
+          "markdownDescription": "Optioneel, bij `sqlite`. Databasebestand. Laat weg voor een database in het geheugen, die na de run weg is.\nEen bestand is handig om de stagingtabellen achteraf te bekijken. Voorbeeld: `output/staging.db`."
+        },
+        "connection": {
+          "type": "string",
+          "description": "Verplicht bij `postgres` en `sqlserver`. Connectionstring. Voorbeeld: `host=localhost user=fenix dbname=staging`.",
+          "markdownDescription": "Verplicht bij `postgres` en `sqlserver`. Connectionstring. Voorbeeld: `host=localhost user=fenix dbname=staging`."
+        },
+        "files": {
+          "$ref": "#/$defs/StagingFilesConfig",
+          "description": "Optioneel. Schrijf de stagingdata ook naar bestanden (een platte CSV per tabel, plus hiërarchische JSON).",
+          "markdownDescription": "Optioneel. Schrijf de stagingdata ook naar bestanden (een platte CSV per tabel, plus hiërarchische JSON)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "StagingConfig is de database waarin brondata wordt geladen vóór de conversie.",
+      "markdownDescription": "StagingConfig is de database waarin brondata wordt geladen vóór de conversie."
+    },
+    "StagingFilesConfig": {
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Verplicht. Map voor de platte CSV-bestanden, één bestand per tabel. Voorbeeld: `output/staging`.",
+          "markdownDescription": "Verplicht. Map voor de platte CSV-bestanden, één bestand per tabel. Voorbeeld: `output/staging`."
+        },
+        "raw_dir": {
+          "type": "string",
+          "description": "Optioneel. Map voor de hiërarchische JSON-bestanden. Standaard: dezelfde map als `dir`.",
+          "markdownDescription": "Optioneel. Map voor de hiërarchische JSON-bestanden. Standaard: dezelfde map als `dir`."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dir"
+      ],
+      "description": "StagingFilesConfig schrijft de stagingdata naar platte CSV-bestanden en hiërarchische JSON-bestanden,\nnaast de stagingdatabase. Bij incrementeel laden worden nieuwe CSV-rijen toegevoegd en JSON-records\nsamengevoegd op hun id.",
+      "markdownDescription": "StagingFilesConfig schrijft de stagingdata naar platte CSV-bestanden en hiërarchische JSON-bestanden,\nnaast de stagingdatabase. Bij incrementeel laden worden nieuwe CSV-rijen toegevoegd en JSON-records\nsamengevoegd op hun id."
+    }
+  },
+  "properties": {
+    "environment": {
+      "type": "string",
+      "enum": [
+        "dev",
+        "prod"
+      ],
+      "description": "Optioneel. Vorm van de logregels. `dev`: gekleurd en leesbaar in de console. `prod`: één JSON-object per regel.",
+      "markdownDescription": "Optioneel. Vorm van de logregels. `dev`: gekleurd en leesbaar in de console. `prod`: één JSON-object per regel."
+    },
+    "logLevel": {
+      "type": "string",
+      "enum": [
+        "trace",
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ],
+      "description": "Optioneel. Laagste logniveau dat getoond wordt. Standaard: `debug` bij dev, `info` bij prod.",
+      "markdownDescription": "Optioneel. Laagste logniveau dat getoond wordt. Standaard: `debug` bij dev, `info` bij prod."
+    },
+    "staging": {
+      "$ref": "#/$defs/StagingConfig",
+      "description": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen.",
+      "markdownDescription": "Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).\nStandaard: een SQLite-database in het geheugen."
+    },
+    "fhir": {
+      "$ref": "#/$defs/FHIRConfig",
+      "description": "Optioneel. Hoe de stagingdata naar FHIR wordt omgezet.",
+      "markdownDescription": "Optioneel. Hoe de stagingdata naar FHIR wordt omgezet."
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig",
+      "description": "Optioneel. Waar en in welk formaat de FHIR-uitvoer wordt geschreven.",
+      "markdownDescription": "Optioneel. Waar en in welk formaat de FHIR-uitvoer wordt geschreven."
+    },
+    "sources": {
+      "$ref": "#/$defs/SourcesConfig",
+      "description": "Optioneel. De bronnen die in staging worden geladen, elk onder een zelfgekozen naam.\nBij `local` en `sftp` wordt die naam het begin van elke stagingtabel.\n\nVoorbeeld: een bron `pja` die `journeys.json` leest, maakt de tabel `pja_journeys`.",
+      "markdownDescription": "Optioneel. De bronnen die in staging worden geladen, elk onder een zelfgekozen naam.\nBij `local` en `sftp` wordt die naam het begin van elke stagingtabel.\n\nVoorbeeld: een bron `pja` die `journeys.json` leest, maakt de tabel `pja_journeys`."
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "title": "Fenix-configuratie",
+  "description": "Configbestand van Fenix. Beweeg de muis over een veld om te zien wat het doet.",
+  "markdownDescription": "Configbestand van Fenix. Beweeg de muis over een veld om te zien wat het doet."
+}

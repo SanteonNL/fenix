@@ -12,46 +12,126 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// LET OP: de commentaren bij de config-structs en hun velden hieronder worden de hovertekst in
+// de editor (via fenix-config.schema.json). Pas je een struct, een veld, een tag OF alleen een
+// beschrijving aan? Draai dan `make schema` en commit het bijgewerkte schema in dezelfde commit.
+//
+// De beschrijvingen zijn in het Nederlands, omdat ze voor de (Nederlandse) gebruikers van het
+// configbestand zijn. Elke beschrijving begint met "Verplicht" of "Optioneel"; in het schema is
+// alleen een veld met de tag `jsonschema:"required"` verplicht (de rest is standaard optioneel).
+// Welke bronvelden per `type` verplicht zijn, staat in tools/genschema (fieldsBySourceType).
+//
+//go:generate go -C ../tools run ./genschema -root .. -out ../fenix-config.schema.json
+
+// Config is het hoofdniveau van het Fenix-configbestand. Relatieve paden worden gelezen
+// vanaf de hoofdmap van de Fenix-repository.
 type Config struct {
-	Environment string        `yaml:"environment"` // "dev" (colored output) or "prod" (JSON output)
-	LogLevel    string        `yaml:"logLevel"`    // trace, debug, info, warn, error — defaults to debug in dev, info in prod
-	Staging     StagingConfig `yaml:"staging"`
-	FHIR        FHIRConfig    `yaml:"fhir"`
-	Output      OutputConfig  `yaml:"output"`
-	Sources     SourcesConfig `yaml:"sources"`
+	// Optioneel. Vorm van de logregels. `dev`: gekleurd en leesbaar in de console. `prod`: één JSON-object per regel.
+	Environment string `yaml:"environment" jsonschema:"enum=dev,enum=prod"`
+
+	// Optioneel. Laagste logniveau dat getoond wordt. Standaard: `debug` bij dev, `info` bij prod.
+	LogLevel string `yaml:"logLevel" jsonschema:"enum=trace,enum=debug,enum=info,enum=warn,enum=error"`
+
+	// Optioneel. De database waarin brondata wordt geladen vóór de conversie (de stagingdatabase).
+	// Standaard: een SQLite-database in het geheugen.
+	Staging StagingConfig `yaml:"staging"`
+
+	// Optioneel. Hoe de stagingdata naar FHIR wordt omgezet.
+	FHIR FHIRConfig `yaml:"fhir"`
+
+	// Optioneel. Waar en in welk formaat de FHIR-uitvoer wordt geschreven.
+	Output OutputConfig `yaml:"output"`
+
+	// Optioneel. De bronnen die in staging worden geladen, elk onder een zelfgekozen naam.
+	// Bij `local` en `sftp` wordt die naam het begin van elke stagingtabel.
+	//
+	// Voorbeeld: een bron `pja` die `journeys.json` leest, maakt de tabel `pja_journeys`.
+	Sources SourcesConfig `yaml:"sources"`
 }
 
 // SourcesConfig maps source name (e.g. "luscii") to its configuration.
 type SourcesConfig map[string]SourceConfig
 
-// EndpointConfig configures one API endpoint for sources that support a list of endpoints (e.g. luscii).
+// EndpointConfig is één Luscii-API-endpoint dat in een eigen stagingtabel wordt geladen.
 type EndpointConfig struct {
-	Path       string `yaml:"path"`        // URL path, e.g. /v1/export/patients
-	Table      string `yaml:"table"`       // target staging table name
-	SinceParam string `yaml:"since_param"` // query param for start date (enables incremental loading)
-	EndParam   string `yaml:"end_param"`   // query param for end date (appended alongside since_param)
-	IDField    string `yaml:"id_field"`    // response field used as PK for upsert deduplication
+	// Verplicht. URL-pad van het endpoint, achter `base_url`. Voorbeeld: `/v1/patients`.
+	Path string `yaml:"path" jsonschema:"required"`
+
+	// Verplicht. Stagingtabel waarin de records komen. Voorbeeld: `luscii_patients`.
+	Table string `yaml:"table" jsonschema:"required"`
+
+	// Optioneel. Queryparameter voor "gewijzigd sinds". Als deze is ingevuld, haalt een volgende run
+	// alleen records op die sinds de vorige run zijn gewijzigd (incrementeel laden). Voorbeeld: `startDate`.
+	SinceParam string `yaml:"since_param"`
+
+	// Optioneel. Queryparameter voor het einde van de periode; wordt samen met `since_param` meegestuurd.
+	// Voorbeeld: `endDate`.
+	EndParam string `yaml:"end_param"`
+
+	// Optioneel, verouderd: gebruik `id_field` onder `json_options.<table>`.
+	// Veld dat uniek is per record; wordt gebruikt om rijen bij te werken bij incrementeel laden.
+	IDField string `yaml:"id_field"`
 }
 
-// SourceConfig configures one external data source.
-// type: "luscii" calls the Luscii REST API; "local" reads files from a local directory;
-// "sqldb" queries an external SQL database and loads results into staging;
-// "sftp" downloads CSV/JSON files from a remote SFTP server.
+// SourceConfig is één bron. Welke velden gelden, hangt af van `type`; het schema
+// markeert velden die niet bij het gekozen type horen.
 type SourceConfig struct {
-	Type             string           `yaml:"type"`              // "luscii" | "local" | "sqldb" | "sftp"
-	BaseURL          string           `yaml:"base_url"`          // luscii: REST base URL
-	APIKey           string           `yaml:"api_key"`           // luscii: Bearer token
-	Dir              string           `yaml:"dir"`               // local: directory containing data files (.json or .csv)
-	Delimiter        string           `yaml:"delimiter"`         // local/csv/sftp: field delimiter, default ","
-	ConnectionString string           `yaml:"connection_string"` // sqldb: connection string for the external SQL database
-	StagingDir       string           `yaml:"staging_dir"`       // sqldb: directory containing staging SQL queries
-	Host             string           `yaml:"host"`              // sftp: hostname or IP
-	Port             int              `yaml:"port"`              // sftp: port, default 22
-	Username         string           `yaml:"username"`          // sftp: login username
-	KeyFile          string           `yaml:"key_file"`          // sftp: path to SSH private key file
-	RemoteDir        string           `yaml:"remote_dir"`        // sftp: remote directory to download files from
-	Endpoints        []EndpointConfig       `yaml:"endpoints"`    // luscii: list of API endpoints to fetch
-	JSONOptions      map[string]interface{} `yaml:"json_options"` // local/sftp: per-file JSON flattening config
+	// Verplicht. Soort bron; elk type gebruikt zijn eigen velden.
+	//
+	// - `local`: leest CSV- en JSON-bestanden uit een map. Verplicht: `dir`.
+	// - `sftp`: downloadt CSV- en JSON-bestanden van een SFTP-server en leest ze daarna als `local`. Verplicht: `host`, `username`, `key_file`.
+	// - `sqldb`: voert SQL-queries uit op een externe database. Verplicht: `connection_string`.
+	// - `luscii`: haalt records op via de Luscii-REST-API. Verplicht: `base_url`, `api_key`, `endpoints`.
+	//
+	// Een type werkt alleen als het programma dat Fenix draait dat type bevat; anders wordt de bron
+	// overgeslagen met "unknown source type" in de log.
+	Type string `yaml:"type" jsonschema:"required,enum=local,enum=sftp,enum=sqldb,enum=luscii"`
+
+	// Verplicht bij `luscii`. Basis-URL van de API. Voorbeeld: `https://vitalsapi.luscii.com`.
+	BaseURL string `yaml:"base_url"`
+
+	// Verplicht bij `luscii`. API-sleutel, meegestuurd als Bearer-token. Zet hier een omgevingsvariabele,
+	// niet de sleutel zelf. Voorbeeld: `${LUSCII_API_KEY}`.
+	APIKey string `yaml:"api_key"`
+
+	// Verplicht bij `local`. Map met de `.csv`- en `.json`-bestanden die geladen worden. Elk bestand
+	// wordt een tabel `<bron>_<bestandsnaam>`. Voorbeeld: `test/data/sim`.
+	Dir string `yaml:"dir"`
+
+	// Optioneel, bij `local` en `sftp`. Scheidingsteken tussen kolommen in CSV-bestanden (één teken).
+	// Standaard: `,`. Voorbeeld: `";"`.
+	Delimiter string `yaml:"delimiter"`
+
+	// Verplicht bij `sqldb`. Connectionstring van de database. Zet inloggegevens in omgevingsvariabelen.
+	// Voorbeeld: `server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix`.
+	ConnectionString string `yaml:"connection_string"`
+
+	// Optioneel, bij `sqldb`. Map met de `.sql`-bestanden die worden uitgevoerd; elk queryresultaat
+	// wordt een stagingtabel. Standaard: `queries/<bron>/staging`.
+	StagingDir string `yaml:"staging_dir"`
+
+	// Verplicht bij `sftp`. Hostnaam of IP-adres van de SFTP-server. Voorbeeld: `${ZBJ_SFTP_HOST}`.
+	Host string `yaml:"host"`
+
+	// Optioneel, bij `sftp`. Poort van de SFTP-server. Standaard: `22`.
+	Port int `yaml:"port"`
+
+	// Verplicht bij `sftp`. Gebruikersnaam om mee in te loggen. Voorbeeld: `${ZBJ_SFTP_USER}`.
+	Username string `yaml:"username"`
+
+	// Verplicht bij `sftp`. Pad naar het bestand met de private SSH-sleutel om mee in te loggen.
+	// Voorbeeld: `C:\\Users\\<gebruiker>\\.ssh\\id_rsa`.
+	KeyFile string `yaml:"key_file"`
+
+	// Optioneel, bij `sftp`. Map op de server waaruit bestanden worden gedownload. Standaard: `/`. Voorbeeld: `/pja`.
+	RemoteDir string `yaml:"remote_dir"`
+
+	// Verplicht bij `luscii`. De API-endpoints die worden opgehaald; elk vult een eigen stagingtabel.
+	Endpoints []EndpointConfig `yaml:"endpoints"`
+
+	// Optioneel, bij `local`, `sftp` en `luscii`. Hoe JSON-records over tabellen worden verdeeld.
+	// (De beschrijving in het schema staat in tools/genschema, omdat dit veld nog geen vaste structuur heeft.)
+	JSONOptions map[string]interface{} `yaml:"json_options"`
 }
 
 // EffectiveLogLevel returns the log level to use, applying the smart default:
@@ -66,20 +146,34 @@ func (c *Config) EffectiveLogLevel() string {
 	return "info"
 }
 
+// StagingConfig is de database waarin brondata wordt geladen vóór de conversie.
 type StagingConfig struct {
-	Database   string             `yaml:"database"`         // sqlite (default) | postgres | sqlserver
-	Driver     string             `yaml:"driver"`           // sqlite driver: "sqlite" (modernc, pure Go) or "sqlite3" (mattn, CGO)
-	Path       string             `yaml:"path"`             // sqlite: file path; omit or "" for in-memory (default)
-	Connection string             `yaml:"connection"`       // postgres/sqlserver: full connection string
-	Files      *StagingFilesConfig `yaml:"files,omitempty"` // optional: also write staging data to files
+	// Optioneel. Soort database. Standaard: `sqlite`.
+	Database string `yaml:"database" jsonschema:"enum=sqlite,enum=postgres,enum=sqlserver"`
+
+	// Optioneel, bij `sqlite`. Driver. `sqlite` (standaard) is puur Go; `sqlite3` heeft CGO en een C-compiler nodig.
+	Driver string `yaml:"driver" jsonschema:"enum=sqlite,enum=sqlite3"`
+
+	// Optioneel, bij `sqlite`. Databasebestand. Laat weg voor een database in het geheugen, die na de run weg is.
+	// Een bestand is handig om de stagingtabellen achteraf te bekijken. Voorbeeld: `output/staging.db`.
+	Path string `yaml:"path"`
+
+	// Verplicht bij `postgres` en `sqlserver`. Connectionstring. Voorbeeld: `host=localhost user=fenix dbname=staging`.
+	Connection string `yaml:"connection"`
+
+	// Optioneel. Schrijf de stagingdata ook naar bestanden (een platte CSV per tabel, plus hiërarchische JSON).
+	Files *StagingFilesConfig `yaml:"files,omitempty"`
 }
 
-// StagingFilesConfig enables writing staging data to flat CSV files and hierarchical JSON files
-// alongside (or instead of) the staging database.
-// Incremental runs append new CSV rows and merge JSON records by ID field.
+// StagingFilesConfig schrijft de stagingdata naar platte CSV-bestanden en hiërarchische JSON-bestanden,
+// naast de stagingdatabase. Bij incrementeel laden worden nieuwe CSV-rijen toegevoegd en JSON-records
+// samengevoegd op hun id.
 type StagingFilesConfig struct {
-	Dir    string `yaml:"dir"`     // local directory for flat CSVs (one file per table)
-	RawDir string `yaml:"raw_dir"` // local directory for hierarchical JSON (defaults to Dir if empty)
+	// Verplicht. Map voor de platte CSV-bestanden, één bestand per tabel. Voorbeeld: `output/staging`.
+	Dir string `yaml:"dir" jsonschema:"required"`
+
+	// Optioneel. Map voor de hiërarchische JSON-bestanden. Standaard: dezelfde map als `dir`.
+	RawDir string `yaml:"raw_dir"`
 	// Future: Azure blob storage support
 	// Azure *AzureStorageConfig `yaml:"azure,omitempty"`
 }
@@ -101,28 +195,52 @@ func (sc *StagingConfig) SQLiteDriver() string {
 	return "sqlite"
 }
 
+// FHIRConfig is hoe de stagingdata naar FHIR-resources wordt omgezet.
 type FHIRConfig struct {
-	SQLFile        string `yaml:"sqlFile"`        // Path to multi-statement SQL conversion file
-	Profile        string `yaml:"profile"`        // FHIR profile name or repo, e.g. "sim-on-fhir"
-	ProfilesDir    string `yaml:"profilesDir"`    // Directory with FHIR StructureDefinition .json files
-	ConceptMapsDir string `yaml:"conceptMapsDir"` // Directory with flat CSV concept map files
+	// Optioneel. SQL-bestand dat de stagingtabellen naar FHIR omzet; mag meerdere statements bevatten.
+	// Laat weg om de algemene conversie over te slaan. De opdrachtregeloptie `-sql` gaat hiervoor.
+	SQLFile string `yaml:"sqlFile"`
+
+	// Optioneel, nog niet in gebruik. Naam of repository van het FHIR-profiel. Voorbeeld: `sim-on-fhir`.
+	Profile string `yaml:"profile"`
+
+	// Optioneel. Map met FHIR-StructureDefinitions als `.json`-bestanden. Voorbeeld: `terminology/profiles/sim`.
+	ProfilesDir string `yaml:"profilesDir"`
+
+	// Optioneel. Map met conceptmaps als platte CSV-bestanden. Voorbeeld: `terminology/conceptmaps/flat`.
+	ConceptMapsDir string `yaml:"conceptMapsDir"`
 }
 
-// OutputConfig selects the output destination via Type ("local" or "datalake").
+// OutputConfig is waar en in welk formaat de FHIR-uitvoer wordt geschreven.
 type OutputConfig struct {
-	Format   string            `yaml:"format"` // json, ndjson, pretty
-	Type     string            `yaml:"type"`   // "local" (default) or "datalake"
-	Local    LocalOutputConfig `yaml:"local"`
-	DataLake *DataLakeConfig   `yaml:"datalake,omitempty"`
+	// Optioneel. Bestandsformaat. `json`: één JSON-array. `ndjson`: één resource per regel.
+	// `pretty`: ingesprongen JSON. Standaard: `json`.
+	Format string `yaml:"format" jsonschema:"enum=json,enum=ndjson,enum=pretty"`
+
+	// Optioneel. Bestemming. Standaard: `local`. `datalake` is nog niet in gebruik.
+	Type string `yaml:"type" jsonschema:"enum=local,enum=datalake"`
+
+	// Optioneel. Instellingen voor `type: local`.
+	Local LocalOutputConfig `yaml:"local"`
+
+	// Optioneel, nog niet in gebruik. Instellingen voor `type: datalake`.
+	DataLake *DataLakeConfig `yaml:"datalake,omitempty"`
 }
 
+// LocalOutputConfig is uitvoer naar een lokale map.
 type LocalOutputConfig struct {
-	Dir          string `yaml:"dir"`          // Output directory
-	UseTimestamp bool   `yaml:"useTimestamp"` // Create timestamped subdirectories (default: true)
-	ArchiveCount int    `yaml:"archiveCount"` // Number of previous runs to keep in archive (0 = keep all, default: 5)
+	// Optioneel. Uitvoermap. Standaard: `output`.
+	Dir string `yaml:"dir"`
+
+	// Optioneel. Schrijf elke run naar een eigen submap met datum en tijd. Standaard: `true`.
+	UseTimestamp bool `yaml:"useTimestamp"`
+
+	// Optioneel. Aantal eerdere runs dat in de archiefmap blijft; `0` bewaart alles. Standaard: `5`.
+	// Geldt alleen als `useTimestamp` aan staat.
+	ArchiveCount int `yaml:"archiveCount"`
 }
 
-// DataLakeConfig configures a data gateway endpoint (e.g. dls-t.hips.santeon.nl).
+// DataLakeConfig is de koppeling met een datagateway (bv. dls-t.hips.santeon.nl). Nog niet in gebruik.
 type DataLakeConfig struct {
 	URL            string `yaml:"url"`
 	Path           string `yaml:"path"`

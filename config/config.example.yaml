@@ -1,4 +1,5 @@
-# CSV to FHIR Converter Configuration
+# yaml-language-server: $schema=../fenix-config.schema.json
+# Fenix-configuratie. In VS Code met de Red Hat YAML-extensie: beweeg de muis over een veld voor uitleg.
 
 environment: dev  # dev (colored console output) | prod (JSON output)
 logLevel: info    # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
@@ -27,7 +28,7 @@ output:
 
 sources:
   hix-test:
-    type: sqlserver
+    type: sqldb
     connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
 
   luscii:
@@ -45,15 +46,6 @@ sources:
     type: local
     dir: "test/data/sim"
     delimiter: ";"
-    # json_options (local/sftp only): controls how a JSON file's records are split into tables.
-    # Keyed by filename without extension, lowercased (e.g. journeys.json -> "journeys").
-    #   id_field: response field used as the row's primary key, required for incremental upsert.
-    #   children: map of field name -> sub-config. Each listed field is pulled out of the
-    #             parent record into its own child table, named <source>_<file>_<field>,
-    #             linked back to the parent via a generated FK column.
-    #             - children.<field>: {}                     promote to a child table, flattened with no further nesting
-    #             - children.<field>: {id_field, children}   recurse another level (grandchild tables), same rules apply
-    # Any array field NOT listed under children is left as JSON text in the parent row (default behaviour).
     json_options:
       journeys:
         id_field: id                      # upsert key for the journeys table
