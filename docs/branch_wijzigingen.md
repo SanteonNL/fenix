@@ -28,9 +28,33 @@ De feedbackpunten verwijzen naar [fenix_feedback.md](fenix_feedback.md).
 
 **Niet getest:** de hovertekst in VS Code zelf.
 
+## Punt 7: `id_field` wordt `primary_key_field`, en sleutelfouten laten de tabel mislukken
+
+**Probleem:** `id_field` is in werkelijkheid de primaire sleutel (PRIMARY KEY, upsert-sleutel én de waarde waarmee child-rijen naar hun parent verwijzen), maar de naam laat dat niet zien. Daarnaast faalden sleutelfouten stil: zonder sleutel kregen alle child-rijen `"<nil>"` als verwijzing, en dubbele sleutels lieten rijen wegvallen met alleen een logregel.
+
+**Wijzigingen:**
+
+| Wat | Waar | Waarom |
+|---|---|---|
+| `id_field` hard hernoemd naar `primary_key_field` (config, Go-veld `PrimaryKeyField`, logs) | `source/local`, `source/luscii`, `config/config.example.yaml`, `tools/genschema` | De naam zegt nu wat het veld doet. Bewust geen overgangsperiode: de oude naam geeft een fout met de hint "renamed to primary_key_field". |
+| `json_options` wordt streng geparsed | `source/local/source.go` (`ParseJSONOptions`) | Onbekende opties, de oude naam en `children` zonder `primary_key_field` stoppen de bron bij het opstarten met een duidelijke fout (voorheen stil genegeerd of `"<nil>"`-koppelingen). |
+| Sleutelcontrole vóór het schrijven | `source/local/loader.go` (`checkPrimaryKeys`) | Een record zonder sleutelwaarde (ontbrekend, null of leeg) of een dubbele sleutel laat de hele tabel (en zijn children) mislukken, met aantallen en voorbeeldwaarden in de fout. De bestaande tabel blijft dan ongewijzigd. Andere tabellen en bronnen laden door. |
+| `id_field` per Luscii-endpoint verwijderd | `config/config.go`, `config/sources.go`, `source/luscii/source.go` | Was al verouderd; de sleutel staat in `json_options.<table>.primary_key_field`. `luscii.New()` krijgt `jsonOptions` als parameter in plaats van `IDField` per endpoint. Het commentaar dat HipsETL `New()` aanroept was onjuist: HipsETL gebruikt alleen `source/sftp`. |
+| Schema: `primary_key_field` verplicht zodra `children` gevuld is | `tools/genschema`, `fenix-config.schema.json` | De editor markeert de fout al tijdens het typen. |
+| Tests voor parsing en loader | `source/local/loader_test.go` | Eerste tests voor de loader: koppeling child → parent, weigeren van ontbrekende/dubbele sleutels zonder de tabel aan te tasten, en de configfouten. |
+| `any` in plaats van `interface{}` in nieuwe en herschreven code | `source/local` | Leesbaarder, zelfde type. Bestaande code niet aangepast (richtlijn: geen refactor alleen voor stijl). |
+
+**Gevolg voor HipsETL:** `config/template_fenix.config.yaml` (branch `feature/th_test_fenix_import`) en `docs/datasource_queries/PJA/README.md` gebruiken `id_field`. Bij het bijwerken van de Fenix-versie in HipsETL moeten die naar `primary_key_field`, anders stopt de PJA-bron met een fout.
+
+**Getest:** `go vet`, `go test ./config/ ./source/local/`; schema keurt het voorbeeldbestand goed en een bestand met `id_field` en met `children` zonder sleutel af.
+
+**Bewust niet in punt 7:** het opslagformaat van sleutels (`"111.0"`, `"1.234567e+06"`, afronding boven 16 cijfers). Dezelfde oorzaak als punt 8 en daar in één keer op te lossen. Tot die tijd gebruiken sleutelcontrole en koppeling hetzelfde formaat (`primaryKeyText`), zodat ze wel consistent zijn met elkaar.
+
 ## Open punten en bevindingen
 
-- **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies: zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
+- **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies (akkoord van Pepijn): zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
+- **Optioneel uit punt 7, niet gedaan:** kleinkind-rijen ook de sleutel van het hoogste record geven, zodat je niet via elke tussenlaag hoeft te joinen.
+- **Opmaak:** `source/local/source.go` was op `main` al niet `gofmt`-schoon (dubbele lege regel); niet aangepast.
 - **Bug luscii:** sleutels in `json_options` worden naar kleine letters omgezet, `endpoint.table` niet. Bij een tabelnaam met hoofdletters worden de instellingen stil genegeerd.
 - **Velden voor later:** `fhir.profile`, `output.type: datalake` en `output.datalake` doen nog niets; bewust behouden, in de beschrijving gemarkeerd als "nog niet in gebruik".
 - **Opruimen (andere PR):** `fenix/.claude/settings.json` bevat persoonlijke paden van een collega.

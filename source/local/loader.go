@@ -46,6 +46,11 @@ func (l *Loader) load(
 	parentFKCol string,
 	parentUpdatedIDs map[string]bool,
 ) error {
+	// Check keys before touching the database, so a bad batch leaves the table as it was.
+	if err := checkPrimaryKeys(table, records, cfg); err != nil {
+		return err
+	}
+
 	// Delete stale rows injected by the incremental parent before inserting.
 	if parentFKCol != "" && len(parentUpdatedIDs) > 0 {
 		del := db.Rebind(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quoted(table), quoted(parentFKCol)))
@@ -69,7 +74,7 @@ func (l *Loader) load(
 
 	for _, rec := range records {
 		flat := make(map[string]interface{})
-		parentID := fmt.Sprintf("%v", rec[cfg.PrimaryKeyField])
+		parentID, _ := primaryKeyText(rec[cfg.PrimaryKeyField])
 		if cfg.PrimaryKeyField != "" {
 			updatedIDs[parentID] = true
 		}
@@ -199,7 +204,68 @@ func (l *Loader) load(
 	return nil
 }
 
-// validateConfig checks that configured field names appear in at least one record.
+// checkPrimaryKeys verifies that every record has a value for the primary key field and
+// that no value occurs twice. Both would otherwise break the table silently: a missing
+// key links child rows to nothing, and a duplicate key makes the insert of that row fail.
+func checkPrimaryKeys(table string, records []map[string]any, fileConfig JSONFileConfig) error {
+	if fileConfig.PrimaryKeyField == "" {
+		if len(fileConfig.Children) > 0 {
+			return fmt.Errorf("table %s: children are set but primary_key_field is missing", table)
+		}
+		return nil
+	}
+
+	missingCount := 0
+	var duplicateValues []string
+	seenValues := make(map[string]bool, len(records))
+	for _, record := range records {
+		keyValue, hasValue := primaryKeyText(record[fileConfig.PrimaryKeyField])
+		if !hasValue {
+			missingCount++
+			continue
+		}
+		if seenValues[keyValue] {
+			duplicateValues = append(duplicateValues, keyValue)
+			continue
+		}
+		seenValues[keyValue] = true
+	}
+	return primaryKeyError(table, fileConfig.PrimaryKeyField, missingCount, duplicateValues)
+}
+
+// primaryKeyError describes missing and duplicate primary keys in one error, or returns nil.
+func primaryKeyError(table, primaryKeyField string, missingCount int, duplicateValues []string) error {
+	var problems []string
+	if missingCount > 0 {
+		problems = append(problems, fmt.Sprintf("%d record(s) without a value", missingCount))
+	}
+	if len(duplicateValues) > 0 {
+		const maxExamples = 3
+		examples := duplicateValues
+		if len(examples) > maxExamples {
+			examples = examples[:maxExamples]
+		}
+		problems = append(problems, fmt.Sprintf("%d duplicate value(s), e.g. %s",
+			len(duplicateValues), strings.Join(examples, ", ")))
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("table %s not loaded: primary key %q must be unique and filled in every record: %s",
+		table, primaryKeyField, strings.Join(problems, "; "))
+}
+
+// primaryKeyText returns the text form of a primary key value, and false when the
+// value is missing (absent, null or empty).
+func primaryKeyText(value any) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	text := fmt.Sprintf("%v", value)
+	return text, text != ""
+}
+
+// validateConfig checks that configured child field names appear in at least one record.
 // Mismatches are logged as warnings so users catch typos without a hard failure.
 func (l *Loader) validateConfig(table string, records []map[string]interface{}, cfg JSONFileConfig) {
 	if len(records) == 0 {
@@ -216,11 +282,6 @@ func (l *Loader) validateConfig(table string, records []map[string]interface{}, 
 		for k := range rec {
 			present[k] = true
 		}
-	}
-
-	if cfg.PrimaryKeyField != "" && !present[cfg.PrimaryKeyField] {
-		l.log.Warn().Str("table", table).Str("primary_key_field", cfg.PrimaryKeyField).
-			Msg("loader: primary_key_field not found in records — check config spelling")
 	}
 
 	for field := range cfg.Children {
