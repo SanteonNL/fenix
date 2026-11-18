@@ -1,4 +1,14 @@
-.claude/settings.local.json
+# Claude: alleen de gedeelde instellingen en skills committen
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+# Persoonlijke AI-instructies. Gedeelde instructies staan in AGENTS.md, CLAUDE.md en .agent/.
+.agent/**/personal/
+# CLAUDE.local.md is je persoonlijke variant van CLAUDE.md. Claude Code laadt hem naast CLAUDE.md.
+CLAUDE.local.md
+# Beslissingenlog per branch, zie .agent/documentation/decision-log.md
+.beslissingen/
+
 test/requests/.env
 
 # If you prefer the allow list template instead of the deny list, see community template:
@@ -24,20 +34,18 @@ test/requests/.env
 # Go workspace file
 go.work
 
-/output/
-
+# Uitvoer en tijdelijke bestanden, in elke map
+output/
+tmp/
+temp/
+# cmd/fenix/output is Go-code (package output), geen uitvoer
+!cmd/fenix/output/
 
 # Environment variable files
 *.env
-/output/temp/
-
 .env
 
 cmd/artdecor/conceptmap_*.csv
-output/temp/*.json
-output/temp/*.json
-
-tmp/
 
 terminology/conceptmaps/fhir/converted/
 
