@@ -71,12 +71,91 @@ De feedbackpunten verwijzen naar [fenix_feedback.md](fenix_feedback.md).
 
 **Niet getest:** `sqldb` tegen een echte SQL Server (de GUID-omzetting is getest met de bekende bytevolgorde uit de SQL Server-documentatie, niet met de driver zelf); Luscii tegen de echte API.
 
+## Nog te doen in deze branch: sleutel voor child-tabellen die alleen per parent uniek is
+
+Moet in deze PR worden opgelost. De oplossingsrichting is nog niet gekozen (zie "Mogelijke oplossingen"); dat wordt een ADR.
+
+### Het probleem
+
+Een patiënt doorloopt een zorgpad (journey). Elk zorgpad heeft genummerde stappen, en per stap wordt vastgelegd wanneer die is afgerond. De export ziet er zo uit (`journeys.json`):
+
+```json
+[
+  { "id": 101, "patient": "A", "steps": [
+      { "step_nr": 1, "name": "Intakegesprek",  "completions": [{ "completed_at": "2025-01-05" }] },
+      { "step_nr": 2, "name": "Operatie",       "completions": [{ "completed_at": "2025-02-10" }] } ] },
+  { "id": 102, "patient": "B", "steps": [
+      { "step_nr": 1, "name": "Intakegesprek",  "completions": [{ "completed_at": "2025-03-01" }] },
+      { "step_nr": 2, "name": "Nacontrole",     "completions": [] } ] }
+]
+```
+
+`step_nr` is uniek **binnen één zorgpad**, maar niet over alle zorgpaden samen: beide zorgpaden hebben een stap 1 en een stap 2. Alle stappen van alle zorgpaden komen in één tabel `pja_journeys_steps`. Een primaire sleutel geldt per tabel, dus `step_nr` kan daar geen primaire sleutel zijn.
+
+Dat is een probleem zodra de stappen zelf weer een child-tabel krijgen (`completions`), want die rijen moeten naar hun stap verwijzen.
+
+**Wat er nu gebeurt**, per config:
+
+1. `steps: {}` (stappen zonder sleutel): de tabel `pja_journeys_steps` laadt goed, met `pja_journeys_id` als verwijzing naar het zorgpad. Maar `completions` kan dan niet als eigen tabel worden gesplitst: children zonder `primary_key_field` geven een configfout. De afrondingen blijven als JSON-tekst in de stappentabel staan.
+2. `steps: { primary_key_field: step_nr, children: { completions: {} } }`: de waarden van `step_nr` zijn 1, 2, 1, 2. De tabel laadt niet, met de fout `table pja_journeys_steps not loaded: primary key "step_nr" must be unique and filled in every record: 2 duplicate value(s), e.g. 1, 2`.
+   - Vóór punt 7 werden de dubbele stappen stil weggegooid: stap 1 en 2 van zorgpad 102 ontbraken.
+   - En ook als het laden lukte: een afronding met `pja_journeys_steps_id = 1` zegt niet of het stap 1 van zorgpad 101 of van zorgpad 102 is.
+
+Er is nu dus geen config waarmee je deze export correct in drie gekoppelde tabellen krijgt.
+
+### Wanneer het terecht een fout blijft
+
+Komt dezelfde combinatie twee keer voor, bijvoorbeeld zorgpad 102 met twee keer `step_nr: 1`, dan weet ook een samengestelde sleutel niet welke afronding bij welke stap hoort. Dat blijft een fout in de brondata, en de tabel moet dan niet laden.
+
+### Mogelijke oplossingen (keuze volgt, met ADR)
+
+**A. Samengestelde sleutel uit meerdere kolommen.** De sleutel van een stap is (zorgpad-id, stapnummer). Elk dieper niveau krijgt alle sleutelkolommen van de niveaus erboven.
+
+`pja_journeys_steps` (sleutel: `pja_journeys_id` + `step_nr`)
+
+| pja_journeys_id | step_nr | name |
+|---|---|---|
+| 101 | 1 | Intakegesprek |
+| 101 | 2 | Operatie |
+| 102 | 1 | Intakegesprek |
+| 102 | 2 | Nacontrole |
+
+`pja_journeys_steps_completions`
+
+| pja_journeys_id | pja_journeys_steps_step_nr | completed_at |
+|---|---|---|
+| 101 | 1 | 2025-01-05 |
+| 101 | 2 | 2025-02-10 |
+| 102 | 1 | 2025-03-01 |
+
+Voordeel: alleen waarden uit de bron, leesbaar voor analisten. Nadeel: per niveau een koppelkolom extra, en joins over meerdere kolommen.
+
+**B. Eén sleutel die Fenix samenstelt**, bijvoorbeeld `101|1`.
+
+`pja_journeys_steps`
+
+| pja_journeys_steps_key | pja_journeys_id | step_nr | name |
+|---|---|---|---|
+| 101\|1 | 101 | 1 | Intakegesprek |
+| 101\|2 | 101 | 2 | Operatie |
+| 102\|1 | 102 | 1 | Intakegesprek |
+| 102\|2 | 102 | 2 | Nacontrole |
+
+`pja_journeys_steps_completions`
+
+| pja_journeys_steps_key | completed_at |
+|---|---|
+| 101\|1 | 2025-01-05 |
+| 101\|2 | 2025-02-10 |
+| 102\|1 | 2025-03-01 |
+
+Voordeel: één koppelkolom per niveau, eenvoudige joins. Nadeel: een waarde die niet in de bron staat; tot nu toe was het uitgangspunt dat Fenix nooit zelf een sleutel maakt.
+
 ## Open punten en bevindingen
 
 - **Luscii `json_options`:** de sleutel is daar de `table` van het endpoint, bij `local`/`sftp` de bestandsnaam. Advies: zet `primary_key_field` en `children` in het endpoint zelf, zodat er geen sleutel meer gekoppeld hoeft te worden. Hoort bij punt 9.
 - **Optioneel uit punt 7, niet gedaan:** kleinkind-rijen ook de sleutel van het hoogste record geven, zodat je niet via elke tussenlaag hoeft te joinen.
 - **Opmaak:** `source/local/source.go` en `source/sqldb/source.go` waren op `main` al niet `gofmt`-schoon (dubbele lege regel); niet aangepast.
-- **Primaire sleutel van child-tabellen:** een `primary_key_field` op een child moet uniek zijn over de hele child-tabel (alle children van alle parents). Een id dat alleen per parent uniek is (stap 1, 2, 3 per journey) kan dus geen `primary_key_field` zijn; daarvoor zou een samengestelde sleutel (parent-id + child-id) nodig zijn, die nu niet wordt ondersteund.
 - **Bug luscii:** sleutels in `json_options` worden naar kleine letters omgezet, `endpoint.table` niet. Bij een tabelnaam met hoofdletters worden de instellingen stil genegeerd.
 - **Velden voor later:** `fhir.profile`, `output.type: datalake` en `output.datalake` doen nog niets; bewust behouden, in de beschrijving gemarkeerd als "nog niet in gebruik".
 - **Opruimen (andere PR):** `fenix/.claude/settings.json` bevat persoonlijke paden van een collega.
