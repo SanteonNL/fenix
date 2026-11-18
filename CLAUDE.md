@@ -1,10 +1,10 @@
+@AGENTS.md
+
 # FENIX — Claude Context
 
 ## Related Repositories
 
 ### HipsETL
-**Path:** `C:\Users\t.hetterscheid\Repo\HipsETL`
-
 HipsETL is the ETL pipeline that feeds data into HIPS (Health Information Platform Services) — the primary consumer of FENIX's FHIR output. It is a Go application (`module dev.azure.com/SanteonNL/Santeon/_git/HIPSETL`) organized as multiple apps:
 
 - `datasetGenerator` — core ETL pipeline (DSG/ETL1), transforms source data into datasets
