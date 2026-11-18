@@ -38,8 +38,11 @@ go.work
 output/
 tmp/
 temp/
-# cmd/fenix/output is Go-code (package output), geen uitvoer
+# cmd/fenix/output is Go-code (package output): de .go-bestanden blijven in git,
+# uitvoer van een run vanuit cmd/fenix niet
 !cmd/fenix/output/
+cmd/fenix/output/*
+!cmd/fenix/output/*.go
 
 # Environment variable files
 *.env

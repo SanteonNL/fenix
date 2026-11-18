@@ -12,7 +12,7 @@ Volg `.agent/documentation/update-docs.md`, ook als de developer `/docs-bijwerke
 
 **Stap 1: controleren**
 
-Controleer alle wijzigingen op deze branch ten opzichte van `main`, inclusief de docs uit stap 0. Pas in deze stap zelf niets aan.
+Controleer alle wijzigingen op deze branch ten opzichte van `origin/main`, inclusief de docs uit stap 0. Haal eerst de laatste versie op met `git fetch origin main`, en vergelijk met `git diff origin/main...HEAD`. Gebruik niet de lokale `main`: die loopt vaak achter, en dan zie je ook gemergde PR's van anderen. Pas in deze stap zelf niets aan.
 
 **Controleer:**
 

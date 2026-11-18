@@ -12,8 +12,8 @@ This is how the domain knowledge from a branch ends up in `docs/`. The developer
 
 1. **Collect the input.**
    - The decision log `.beslissingen/<branch>.md` (see decision-log.md), if it exists.
-   - The diff of the branch against `main`: `git diff main...HEAD`, plus uncommitted changes.
-   - The pages in `docs/` that this branch already changed: `git diff main...HEAD -- docs/`. Docs written earlier in the branch may be out of date after later iterations. Compare every fact on them with the final code of the branch, and fix what no longer matches.
+   - The diff of the branch against `origin/main`: run `git fetch origin main` first, then `git diff origin/main...HEAD`, plus uncommitted changes. Do not use the local `main`: it is often behind, and then the diff also contains other people's merged PRs.
+   - The pages in `docs/` that this branch already changed: `git diff origin/main...HEAD -- docs/`. Docs written earlier in the branch may be out of date after later iterations. Compare every fact on them with the final code of the branch, and fix what no longer matches.
 2. **Do the impact check** from overview.md. Pay extra attention to **silent assumptions** in code that the branch touches or that depends on it:
    - code that lists "everything" and filters out what does not belong, such as all containers except those matching a pattern;
    - code that assumes a fixed naming convention or a fixed list;

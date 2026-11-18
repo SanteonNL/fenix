@@ -46,7 +46,7 @@ If the user does not know an answer, leave `{invullen: <the question>}` and list
 
 ## The Interview (/adr)
 
-1. **Choose the subject.** If the user gave one, use it. Otherwise read the diff of the branch against `main` and propose the architecture decisions you see as a numbered list. The user picks one, or names another subject. Do not start the interview before the user has chosen.
+1. **Choose the subject.** If the user gave one, use it. Otherwise read the diff of the branch against `origin/main` (after `git fetch origin main`, see update-docs.md) and propose the architecture decisions you see as a numbered list. The user picks one, or names another subject. Do not start the interview before the user has chosen.
 2. **Check existing ADRs.** Search `docs/adr/` for the subject, and for the names of the resources and applications the decision touches. Show the user the ADRs that the new decision may replace, with one sentence each on why. The user confirms which ADR is replaced. Then:
    - set the old ADR to `status: Vervangen door ADR-<new number>` and `datum` to today. This is the only change an accepted ADR may get;
    - give the new ADR `vervangt: ADR-<old number>` in its header;
