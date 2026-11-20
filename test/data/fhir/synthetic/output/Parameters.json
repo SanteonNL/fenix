@@ -1,0 +1,26 @@
+{
+  "resourceType": "Parameters",
+  "id": "ibd-dataset-export",
+  "parameter": [
+    {
+      "name": "_type",
+      "valueString": "Procedure,Observation,Patient"
+    },
+    {
+      "name": "_typeFilter",
+      "valueString": "Procedure?code=urn:oid:2.16.840.1.113883.2.4.3.27.15.5|034620,urn:oid:2.16.840.1.113883.2.4.3.27.15.5|034686,urn:oid:2.16.840.1.113883.2.4.3.27.15.5|034690,urn:oid:2.16.840.1.113883.2.4.3.27.15.5|035582&date=ge2018-01-01"
+    },
+    {
+      "name": "_typeFilter",
+      "valueString": "Observation?code=http://loinc.org|38445-3,http://snomed.info/sct|228273003&date=ge2018-01-01"
+    },
+    {
+      "name": "_typeFilter",
+      "valueString": "Patient?gender=male,female"
+    },
+    {
+      "name": "_elements",
+      "valueString": "Procedure.code,Procedure.performed[x],Procedure.subject,Observation.code,Observation.value[x],Observation.effective[x],Observation.subject,Patient.gender,Patient.birthDate"
+    }
+  ]
+}

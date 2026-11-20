@@ -1,0 +1,23 @@
+{
+  "resourceType": "Group",
+  "id": "ibd-dataset-cohort",
+  "type": "person",
+  "actual": true,
+  "name": "IBD cohort",
+  "modifierExtension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueExpression": {
+        "language": "application/x-fhir-query",
+        "expression": "Patient?birthdate=le2008-10-28"
+      }
+    },
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueExpression": {
+        "language": "application/x-fhir-query",
+        "expression": "EpisodeOfCare?type=urn:oid:2.16.840.1.113883.2.4.3.27.15.2|11,urn:oid:2.16.840.1.113883.2.4.3.27.15.2|21&status=active&date=ge2018-01-01&diagnosis:Condition.code=urn:oid:2.16.840.1.113883.2.4.3.27.15.4.0313|922,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.0313|923,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.0318|601,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.0318|602"
+      }
+    }
+  ]
+}

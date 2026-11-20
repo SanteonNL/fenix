@@ -94,7 +94,7 @@ func main() {
 	if *command == "findings" {
 		dir := resolvePath(repoRoot, cfg.Output.FindingsDir())
 		profileSvc, conceptMapSvc, conceptMapsDir, obsDefs := loadTerminology(cfg, repoRoot, &log)
-		log.Info().Str("addr", "http://"+*servePort+"/findings").Str("dir", dir).Msg("Serving the findings dashboard (and the ConceptMap editor at /conceptmaps)")
+		logFindingsLocation(&log, *servePort, dir)
 		if err := http.ListenAndServe(*servePort, fhirserver.NewToolsServer(dir, conceptMapsDir, profileSvc, conceptMapSvc, obsDefs, log)); err != nil {
 			log.Fatal().Err(err).Msg("Findings dashboard stopped")
 		}
@@ -322,6 +322,17 @@ func deidentifyBatch(cfg *config.Config, resources []interface{}, runID string) 
 	return err
 }
 
+// logFindingsLocation says where the findings dashboard is and which folder it reads, and warns when
+// that folder holds no findings yet (the usual reason for an empty dashboard).
+func logFindingsLocation(log *zerolog.Logger, addr, dir string) {
+	files, _ := filepath.Glob(filepath.Join(dir, "findings-*.jsonl"))
+	url := "http://" + addr + "/findings"
+	if len(files) == 0 {
+		log.Warn().Str("url", url).Str("dir", dir).Msg("Findings dashboard: no findings files there yet; they are written when a conversion (-cmd all|convert) or a Group $export finishes, with this config")
+		return
+	}
+	log.Info().Str("url", url).Str("dir", dir).Int("files", len(files)).Msg("Findings dashboard")
+}
 // newFindingsCollector builds the collector for data findings, per the output.findings config.
 func newFindingsCollector(cfg *config.Config) *findings.Collector {
 	c := findings.NewCollector()
@@ -556,6 +567,12 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, conceptMapsDir, conceptMapSvc, *log)
 	srv.SetExportTuning(cfg.Performance.ExportBatch(), cfg.Performance.ExportParallelism())
 	srv.SetFindingsDir(resolvePath(repoRoot, cfg.Output.FindingsDir()))
+	logFindingsLocation(log, *servePort, resolvePath(repoRoot, cfg.Output.FindingsDir()))
+	every, err := cfg.Output.FindingsFlushEvery()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Invalid configuration")
+	}
+	srv.FlushFindingsEvery(every)
 
 	addr := *servePort
 	log.Info().Str("addr", addr).Str("source", *sourceName).Msg("Starting FHIR API server")

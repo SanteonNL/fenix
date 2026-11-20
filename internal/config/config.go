@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -36,13 +37,13 @@ const BuiltinSource = "repo"
 // repository instead of next to the binary. An unset entry means the default
 // shown per field, i.e. a path inside the built-in "repo" source.
 type InputsConfig struct {
-	Queries     DirRef `yaml:"queries"`     // root that holds queries/<source>/fhir|dwh/*.sql and queries/dwh/cross; default: the repo root
-	QueryConfig DirRef `yaml:"queryConfig"` // query compiler config (substitutions.yaml, sources/*); default: config/queries
-	Profiles    DirRef `yaml:"profiles"`    // FHIR StructureDefinition .json files
-	ConceptMaps DirRef `yaml:"conceptMaps"` // FHIR ConceptMap .json files
+	Queries                DirRef `yaml:"queries"`                // root that holds queries/<source>/fhir|dwh/*.sql and queries/dwh/cross; default: the repo root
+	QueryConfig            DirRef `yaml:"queryConfig"`            // query compiler config (substitutions.yaml, sources/*); default: config/queries
+	Profiles               DirRef `yaml:"profiles"`               // FHIR StructureDefinition .json files
+	ConceptMaps            DirRef `yaml:"conceptMaps"`            // FHIR ConceptMap .json files
 	ObservationDefinitions DirRef `yaml:"observationDefinitions"` // optional: FHIR ObservationDefinition .json files; an Observation value is checked against the definition of its code
-	ValueSets   DirRef `yaml:"valueSets"`   // optional: FHIR ValueSet .json files; a code that is a member of the valueset a concept map targets needs no mapping
-	SQLFile     string `yaml:"sqlFile"`     // optional single multi-statement SQL file, relative to the repo root (same as the -sql flag)
+	ValueSets              DirRef `yaml:"valueSets"`              // optional: FHIR ValueSet .json files; a code that is a member of the valueset a concept map targets needs no mapping
+	SQLFile                string `yaml:"sqlFile"`                // optional single multi-statement SQL file, relative to the repo root (same as the -sql flag)
 }
 
 // DirRef points at a directory inside a source. Only sources that hold files
@@ -183,6 +184,10 @@ type OutputConfig struct {
 type FindingsConfig struct {
 	Dir string `yaml:"dir"` // default: <output.local.dir>/findings, a folder the run archiver leaves alone
 
+	// FlushEvery is how often the API server writes the findings that plain searches collected (a
+	// Group $export writes its own when it ends): "30s" by default, "off" to write only with exports.
+	FlushEvery string `yaml:"flushEvery"`
+
 	// IncludeResources stores the full resource of each example finding, so the dashboard can show
 	// it on hover. Off by default: the findings file then holds real (not de-identified) data.
 	IncludeResources bool `yaml:"includeResources"`
@@ -198,6 +203,22 @@ type ProfileConfig struct {
 	Enabled     bool     `yaml:"enabled"`
 	MaxDistinct int      `yaml:"maxDistinct"` // list values only for elements with at most this many distinct values (default 30)
 	Skip        []string `yaml:"skip"`        // elements never listed value by value: FHIR path or last segment, * and ? wildcards
+}
+
+// FindingsFlushEvery returns the interval of the API server's periodic findings flush, 0 when it is off.
+func (o OutputConfig) FindingsFlushEvery() (time.Duration, error) {
+	switch v := strings.TrimSpace(o.Findings.FlushEvery); strings.ToLower(v) {
+	case "":
+		return 30 * time.Second, nil
+	case "off", "false", "never":
+		return 0, nil
+	default:
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return 0, fmt.Errorf("output.findings.flushEvery %q: want a duration such as 30s, or off", v)
+		}
+		return d, nil
+	}
 }
 
 // FindingsDir returns the directory for findings files, relative to the repo

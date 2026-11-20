@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/findings"
 	"github.com/rs/zerolog"
 )
 
@@ -206,4 +209,56 @@ func TestValueSetEndpointListsConceptsForTheEditorPickLists(t *testing.T) {
 	if got := get("https://x/unknown"); got.Found || len(got.Concepts) != 0 {
 		t.Errorf("an unknown valueset: %+v", got)
 	}
+}
+
+// The data response says which folder it reads and how many files it found, so the dashboard can explain an empty page.
+func TestFindingsDataSaysWhereItLooks(t *testing.T) {
+	dir := t.TempDir()
+	h := FindingsHandler(dir)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/findings", nil))
+	if rec.Body.Len() != 0 || rec.Header().Get("X-Findings-Files") != "0" {
+		t.Errorf("empty folder: %d bytes, files %q", rec.Body.Len(), rec.Header().Get("X-Findings-Files"))
+	}
+	if got, err := url.PathUnescape(rec.Header().Get("X-Findings-Dir")); err != nil || got != dir {
+		t.Errorf("dir header %q (%v), want %q", rec.Header().Get("X-Findings-Dir"), err, dir)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "findings-a.jsonl"), []byte(`{"kind":"summary"}`+"\n"), 0o644)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/findings", nil))
+	if rec.Header().Get("X-Findings-Files") != "1" {
+		t.Errorf("files = %q", rec.Header().Get("X-Findings-Files"))
+	}
+}
+
+// Findings of plain searches reach the findings folder without an $export: one run per server session.
+func TestFlushFindingsEveryWritesTheSearchFindings(t *testing.T) {
+	dir := t.TempDir()
+	fc := converter.NewFHIRConverter(nil, zerolog.Nop(), nil, nil)
+	c := findings.NewCollector()
+	fc.SetFindings(c)
+	s := &Server{converter: fc, findingsDir: dir, source: "sim", log: zerolog.Nop()}
+
+	s.FlushFindingsEvery(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if files, _ := filepath.Glob(filepath.Join(dir, "findings-*.jsonl")); len(files) != 0 {
+		t.Fatalf("nothing collected, nothing written: %v", files)
+	}
+	c.Add(findings.Warning, findings.CodeDataUnmapped, "Patient", "", "Patient.gender", "m", "p1", "man")
+	c.ResourceDone("Patient", false)
+
+	var files []string
+	for i := 0; i < 50 && len(files) == 0; i++ {
+		time.Sleep(40 * time.Millisecond)
+		files, _ = filepath.Glob(filepath.Join(dir, "findings-serve-*.jsonl"))
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one serve run file, got %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	if !strings.Contains(string(b), `"query":"`+SearchesQuery+`"`) || !strings.Contains(string(b), `"source":"sim"`) || !strings.Contains(string(b), "FX-DATA-020") {
+		t.Errorf("file: %s", b)
+	}
+	// off: nothing is started
+	(&Server{converter: fc, findingsDir: dir, log: zerolog.Nop()}).FlushFindingsEvery(0)
 }

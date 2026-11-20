@@ -117,14 +117,82 @@ button:disabled { opacity: .4; cursor: default; }.ex { cursor: help; margin-righ
 .mapcell input { margin: 0; }
 .bulkbar { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 tr.dim td { opacity: .55; }
+.tabs { display: inline-flex; gap: 4px; margin-left: 16px; }
+.ovmain { display: block; padding: 16px 24px; }
+.ovpanel { padding: 14px; }
+.ovbar { display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: center; margin: 4px 0 12px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
+.legend i.ovmiss { background: repeating-linear-gradient(45deg, #fff 0 3px, #fdeaf1 3px 6px); border: 1px dashed var(--accent); }
+.ovsum { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.ovscroll { overflow-x: auto; }
+table.ov { border-collapse: separate; border-spacing: 2px; width: auto; }
+table.ov th, table.ov td { border: none; padding: 0; background: none; }
+table.ov th { font-size: 12px; color: var(--muted); font-weight: 600; text-align: left; padding: 2px 6px; }
+table.ov td.nm, table.ov th.nm { position: sticky; left: 0; background: var(--panel); min-width: 230px; padding: 2px 8px 2px 2px; white-space: nowrap; z-index: 1; }
+table.ov td.last, table.ov th.last { min-width: 110px; padding: 0 10px; white-space: nowrap; }
+tr.dsrow td.nm { font-weight: 700; }
+tr.modelrow td.nm { padding-left: 30px; font-weight: 400; }
+.twist { border: none; background: none; padding: 0 6px 0 0; cursor: pointer; font-size: 14px; color: var(--muted); border-radius: 0; }
+.twist:hover { color: var(--brand-dark); }
+a.dsname { color: var(--text); text-decoration: none; }
+a.dsname:hover { color: var(--brand-dark); text-decoration: underline; }
+.late { color: var(--accent-dark); font-weight: 600; font-size: 12px; }
+.ovc { width: 42px; height: 24px; border-radius: 4px; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ovc.ok { background: #8fd19e; color: #1d3a27; }
+.ovc.warn { background: #f8c15c; color: #4a3300; }
+.ovc.error { background: #e45a72; color: #fff; }
+.ovc.missing { background: repeating-linear-gradient(45deg, #fff 0 4px, #fdeaf1 4px 8px); border: 1px dashed var(--accent); color: var(--accent-dark); }
+.ovc.drop::after { content: "▼"; font-size: 8px; margin-left: 3px; }
+.ovc:hover { outline: 2px solid var(--brand); }
+.ovgrid { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 820px) { .ovgrid { grid-template-columns: 1fr; } }
+.cal { border: 1px solid var(--line, #e5e5e5); border-radius: 8px; padding: 8px; }
+.calhead { display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.calhead button { border: none; background: none; cursor: pointer; font-size: 16px; padding: 0 6px; color: var(--muted); }
+.calhead button:hover { color: var(--brand-dark); }
+.calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.calgrid .wd { font-size: 10px; color: var(--muted); text-align: center; }
+.calc { height: 28px; border-radius: 4px; font-size: 11px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); line-height: 1; }
+.calc.has { cursor: pointer; font-weight: 600; }
+.calc.has small { font-size: 8px; font-weight: 400; margin-top: 2px; }
+.calc.ok { background: #8fd19e; color: #1d3a27; }
+.calc.warn { background: #f8c15c; color: #4a3300; }
+.calc.error { background: #e45a72; color: #fff; }
+.calc.today { box-shadow: inset 0 0 0 1px var(--brand-dark); }
+.calc.sel { outline: 2px solid var(--brand-dark); outline-offset: 1px; }
+.calc.has:hover { outline: 2px solid var(--brand); }
+.calnote { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dayhead h3 { margin: 0; font-size: 15px; }
+table.ovday { border-collapse: collapse; width: 100%; }
+table.ovday th { font-size: 12px; color: var(--muted); text-align: left; padding: 4px 8px; }
+table.ovday td { padding: 6px 8px; border-top: 1px solid var(--line, #eee); vertical-align: middle; }
+table.ovday tr.dayrun { cursor: pointer; }
+table.ovday tr.dayrun:hover td { background: rgba(0,0,0,.03); }
+.ovc.mini { width: 20px; height: 22px; font-size: 10px; font-weight: 700; }
+.ovc.mini.drop::after { margin-left: 1px; font-size: 7px; }
+.ovc.mini.drop { width: 26px; }
+.ovc.more { background: #eef2f5; color: var(--muted); width: 26px; }
+.minis { display: flex; gap: 2px; padding: 0 3px; }
+table.ov th.dayh { text-align: center; cursor: pointer; padding: 2px 4px; line-height: 1.2; border-radius: 4px; }
+table.ov th.dayh:hover { color: var(--brand-dark); }
+table.ov th.selday, table.ov td.selday { background: var(--brand-bg, #e8f4fb); }
+table.ov th.selday { color: var(--brand-dark); }
+.ovnav { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+#ovday { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+#ovday:empty { display: none; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chips .ovc { width: auto; padding: 0 8px; font-size: 11px; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>FENIX Findings</h1>
-    <div class="sub">Data-quality findings of the FHIR resources FENIX produced, per run</div>
+    <div class="sub">Data-quality findings of the FHIR resources FENIX produced, per run<span id="dirinfo"></span></div>
   </div>
+  <span class="tabs"><button id="tabOverview" class="small on">Overview</button><button id="tabDetails" class="small">Details</button></span>
   <span class="spacer"></span>
   <button id="refresh" title="Reload the findings from the output folder">Refresh</button>
   <label class="small muted" title="Source codes you decided not to map are hidden from the warnings"><input id="showIgnored" type="checkbox"> Show ignored (<span id="ignoredCount">0</span>)</label>
@@ -138,7 +206,30 @@ tr.dim td { opacity: .55; }
     <input id="thrPct" type="number" min="1" value="20"> % and <input id="thrAbs" type="number" min="1" value="2"> resources</label>
 </header>
 
-<main>
+<main id="overviewView" class="ovmain">
+  <section class="panel ovpanel">
+    <h2>Datasets</h2>
+    <div class="ovbar">
+      <select id="ovDataset" title="Show one dataset"><option value="">All datasets</option></select>
+      <input id="ovFilter" type="search" placeholder="Filter datasets" style="min-width:180px">
+      <label class="muted small">Flag a dataset with no run for <input id="staleDays" type="number" min="1" value="7" style="width:56px"> days</label>
+      <span class="legend">
+        <span><i style="background:#8fd19e"></i>OK</span>
+        <span><i style="background:#f8c15c"></i>Warnings (for example a code that is not mapped)</span>
+        <span><i style="background:#e45a72"></i>Errors, or resources dropped</span>
+        <span><i class="ovmiss"></i>Model missing in this run</span>
+        <span>▼ fewer resources than the run before</span>
+      </span>
+    </div>
+    <div class="ovgrid">
+      <div id="ovcal"></div>
+      <div id="overview"></div>
+    </div>
+    <div id="ovday"></div>
+  </section>
+</main>
+
+<main id="detailsView" style="display:none">
   <div class="left">
     <section class="panel" id="calendar"></section>
     <section class="panel" id="tree"></section>
@@ -158,6 +249,12 @@ const state = {
   cmp: null,            // the export picked to compare with
   cmpMode: "auto",      // auto = previous run of the same request | picked | none
   filter: "",           // the export shown: source|query
+  view: "overview",     // overview (datasets) | details (one run)
+  ovOpen: new Set(),    // datasets opened in the overview
+  staleDays: 7,
+  ovDay: null,          // day picked in the calendar (dayKeyOf)
+  ovMonth: null,        // month shown in the calendar: { y, m }
+  ovDataset: "",        // dataset picked in the overview's dropdown ("" = all)
   folded: new Set(),    // dates folded in the run list
   selNode: null, collapsed: new Set(),
   ignored: new Set(),   // "path<NUL>code" of source codes marked "do not map" (stored on the server, applies to every run)
@@ -214,8 +311,13 @@ function ingest(records, keep) {
       const s = e.seen[r.resource_type] || (e.seen[r.resource_type] = { seen: 0, skipped: 0 });
       s.seen += r.seen || 0; s.skipped += r.skipped || 0;
     } else if (r.kind === "finding") e.allFindings.push(r);
-    else if (r.kind === "profile" && !e.profile.has(r.path)) e.profile.set(r.path, r);
+    else if (r.kind === "profile") {
+      const have = e.profile.get(r.path);
+      if (have) mergeProfile(have, r); else e.profile.set(r.path, { ...r, values: r.values && r.values.map(v => ({ ...v })) });
+    }
   }
+  // a run can be written in several pieces (the API server flushes every so often): one finding per rule and path
+  for (const e of byKey.values()) e.allFindings = mergeFindings(e.allFindings);
   state.exports = [...byKey.values()];
   // runs of the same source and the same set of queries are the same export and can be compared
   for (const e of state.exports) e.query = [...e.queries].sort().join(", ");
@@ -238,16 +340,50 @@ function ingest(records, keep) {
     if (navSel) {
       state.sel = navSel; state.cmp = nav.cmp ? same(nav.cmp) : null; state.cmpMode = nav.cmpMode || "auto";
       if (state.cmpMode === "picked" && !state.cmp) state.cmpMode = "auto";
-      state.filter = groupOf(navSel); state.selNode = nav.node;
+      state.filter = groupOf(navSel); state.selNode = nav.node; state.view = "details";
       if (nav.showIgnored !== state.showIgnored) { state.showIgnored = !!nav.showIgnored; applyIgnore(); }
       document.getElementById("showIgnored").checked = state.showIgnored;
     } else {
       state.sel = newest || null; state.cmp = null; state.cmpMode = "auto"; state.filter = newest ? groupOf(newest) : "";
       const linked = new URLSearchParams(location.hash.slice(1)).get("node"); // /findings#node=Patient.gender
       state.selNode = newest ? (linked && buildTree(newest).index.has(linked) ? linked : defaultNode(newest)) : null;
+      if (linked && newest && buildTree(newest).index.has(linked)) state.view = "details";
     }
   }
   render();
+}
+
+/* The same finding written in several pieces of one run becomes one: counts and values add up. */
+function mergeFindings(list) {
+  const by = new Map();
+  for (const f of list) {
+    const k = fkey(f), m = by.get(k);
+    if (!m) { by.set(k, { ...f, values: f.values && f.values.map(v => ({ ...v })), examples: [...(f.examples || [])], samples: [...(f.samples || [])] }); continue; }
+    m.count = (m.count || 0) + (f.count || 0);
+    m.other_values = (m.other_values || 0) + (f.other_values || 0);
+    for (const v of f.values || []) {
+      m.values = m.values || [];
+      const x = m.values.find(y => y.value === v.value);
+      if (x) x.count += v.count; else m.values.push({ ...v });
+    }
+    for (const ex of f.examples || []) if (m.examples.length < 3 && !m.examples.includes(ex)) m.examples.push(ex);
+    for (const sm of f.samples || []) if (m.samples.length < 3 && !m.samples.some(y => y.id === sm.id)) m.samples.push(sm);
+  }
+  return [...by.values()].map(m => { if (m.values) m.values.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)); return m; });
+}
+
+/* the value profile of an element written in several pieces: rows, empties and value counts add up */
+function mergeProfile(into, r) {
+  into.rows = (into.rows || 0) + (r.rows || 0);
+  into.empty = (into.empty || 0) + (r.empty || 0);
+  if (into.values && r.values) {
+    for (const v of r.values) { const x = into.values.find(y => y.value === v.value); if (x) x.count += v.count; else into.values.push({ ...v }); }
+    into.values.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    into.distinct = into.values.length;
+  } else {
+    into.distinct = Math.max(into.distinct || 0, r.distinct || 0);
+    into.note = into.note || r.note;
+  }
 }
 
 /* ---------- codes without a mapping: status, editor links, the ignore list ---------- */
@@ -413,6 +549,12 @@ async function fetchFindings(first) {
   try {
     const res = await fetch("/api/findings", { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
+    const dir = res.headers.get("X-Findings-Dir"); // the folder the server reads
+    if (dir) {
+      try { state.dir = decodeURIComponent(dir); } catch { state.dir = dir; }
+      state.fileCount = +res.headers.get("X-Findings-Files") || 0;
+      document.getElementById("dirinfo").textContent = " · reading " + state.dir + " (" + state.fileCount + (state.fileCount === 1 ? " file)" : " files)");
+    }
     const records = [];
     for (const line of (await res.text()).split(/\r?\n/)) {
       if (!line.trim()) continue;
@@ -524,7 +666,281 @@ const deltaEl = (now, prev) => {
 };
 
 /* ---------- render ---------- */
-function render() { renderCalendar(); renderTree(); renderDetail(); }
+function render() { renderCalendar(); renderTree(); renderDetail(); renderOverview(); applyView(); }
+
+function applyView() {
+  document.getElementById("overviewView").style.display = state.view === "overview" ? "" : "none";
+  document.getElementById("detailsView").style.display = state.view === "details" ? "" : "none";
+  document.getElementById("tabOverview").classList.toggle("on", state.view === "overview");
+  document.getElementById("tabDetails").classList.toggle("on", state.view === "details");
+}
+
+/* ---------- overview: the datasets (Groups of an $export) and whether something is wrong ---------- */
+const SEARCHES_DATASET = "API server (searches)";
+
+/* the dataset a run belongs to: the Group of an $export, the source of a conversion, or the API server's searches */
+function datasetOf(e) {
+  const q = e.query || "";
+  if (q.startsWith("Group/")) return q.slice(6).split(" ")[0];
+  if (q === SEARCHES_DATASET) return SEARCHES_DATASET;
+  return e.source ? e.source + " (conversion)" : (q || "conversion");
+}
+
+function datasetRuns() {
+  const by = new Map();
+  for (const e of state.exports) { const n = datasetOf(e); if (!by.has(n)) by.set(n, []); by.get(n).push(e); }
+  for (const runs of by.values()) runs.sort((a, b) => (a.time < b.time ? -1 : 1));
+  return by;
+}
+
+const modelsOf = e => new Set([...Object.keys(e.seen), ...e.findings.map(f => f.resource_type)]);
+
+/* how one model fared in one run: ok, warn (warnings only) or error (errors, or resources that were dropped); null when the run has none of it */
+function modelStatus(e, model) {
+  const s = e.seen[model], fs = e.findings.filter(f => f.resource_type === model);
+  if (!s && !fs.length) return null;
+  const errors = fs.filter(f => (SEV[f.severity] ?? 0) >= 2).length, warns = fs.filter(f => SEV[f.severity] === 1).length, skipped = s ? s.skipped : 0;
+  return { level: errors || skipped ? "error" : warns ? "warn" : "ok", errors, warns, skipped, seen: s ? s.seen : 0 };
+}
+
+/* the worst of its models */
+function runStatus(e) {
+  const out = { level: "ok", errors: 0, warns: 0, skipped: 0, seen: 0 }, rank = { ok: 0, warn: 1, error: 2 };
+  for (const m of modelsOf(e)) {
+    const st = modelStatus(e, m);
+    if (!st) continue;
+    out.errors += st.errors; out.warns += st.warns; out.skipped += st.skipped; out.seen += st.seen;
+    if (rank[st.level] > rank[out.level]) out.level = st.level;
+  }
+  return out;
+}
+
+/* a run as part of its dataset: its own status, plus the models the dataset's other runs have and this one lacks
+   (shown in red: a model that should be there and is not), and whether it has clearly fewer resources than the run before */
+function datasetRunStatus(runs, models, i) {
+  const run = runs[i], st = runStatus(run);
+  st.missing = models.filter(m => !modelStatus(run, m));
+  if (st.missing.length) st.level = "error";
+  const before = i > 0 ? runStatus(runs[i - 1]).seen : 0;
+  st.drop = before > 0 && st.seen < before && significant(st.seen, before);
+  st.before = before;
+  return st;
+}
+
+const dayMonth = t => { const d = new Date(t); return d.getDate() + "/" + (d.getMonth() + 1); };
+const daysAgo = t => Math.max(0, Math.floor((Date.now() - Date.parse(t)) / 86400000));
+
+/* open a run (and a model of it) in the details view */
+function openRun(e, model) {
+  state.sel = e; state.filter = groupOf(e); state.cmpMode = "auto"; state.cmp = null;
+  state.selNode = model && buildTree(e).index.has(model) ? model : defaultNode(e);
+  state.view = "details";
+  render();
+}
+
+/* One page: the calendar (left), the datasets on a shared timeline of days (right) and the runs of the picked day (below).
+   A column is one day; a dataset that ran more than once that day gets one small numbered box per run (1 = first run of that day). */
+const OV_MAX_DAYS = 14, OV_MAX_PER_DAY = 6;
+
+function renderOverview() {
+  const box = document.getElementById("overview"), calBox = document.getElementById("ovcal"), dayBox = document.getElementById("ovday");
+  box.replaceChildren(); calBox.replaceChildren(); dayBox.replaceChildren();
+  if (!state.exports.length) { box.append(emptyState()); return; }
+  const filter = document.getElementById("ovFilter").value.trim().toLowerCase();
+  const rank = { error: 2, warn: 1, ok: 0 };
+  const allSets = datasetRuns();
+  fillDatasetSelect([...allSets.keys()]);
+  const entries = [...allSets].filter(([name]) => (!state.ovDataset || name === state.ovDataset) && (!filter || name.toLowerCase().includes(filter)));
+  const days = runsPerDay(entries), keys = dayKeys(days);
+  if (!days.has(state.ovDay)) state.ovDay = keys[keys.length - 1] || null;
+  calBox.append(renderOvCalendar(days));
+  if (!entries.length) { box.append(h("div", { class: "muted" }, "No dataset matches.")); return; }
+
+  /* per dataset: its runs per day, in order, each with its status and its number within the day */
+  const rows = entries.map(([name, all]) => {
+    const perDay = new Map();
+    for (const d of days.values()) for (const r of d.runs) if (r.name === name) {
+      if (!perDay.has(d.key)) perDay.set(d.key, []);
+      perDay.get(d.key).push(r);
+    }
+    for (const list of perDay.values()) { list.sort((a, b) => (a.run.time < b.run.time ? -1 : 1)); list.forEach((r, i) => (r.seq = i + 1)); }
+    const latest = all[all.length - 1], ago = daysAgo(latest.time), models = [...new Set(all.flatMap(e => [...modelsOf(e)]))].sort();
+    const status = days.get(dayKeyOf(latest.time)).runs.find(r => r.run === latest).st;
+    return { name, all, latest, days: ago, models, perDay, overdue: ago >= state.staleDays, status };
+  }).sort((a, b) => Math.max(rank[b.status.level], b.status.drop ? 1 : 0) - Math.max(rank[a.status.level], a.status.drop ? 1 : 0) || (b.overdue - a.overdue) || a.name.localeCompare(b.name));
+
+  const bad = rows.filter(r => r.status.level === "error").length, warn = rows.filter(r => r.status.level === "warn").length, late = rows.filter(r => r.overdue).length, drops = rows.filter(r => r.status.drop).length;
+  box.append(h("div", { class: "ovsum" },
+    h("span", { class: "badge" }, rows.length + (rows.length === 1 ? " dataset" : " datasets")),
+    bad ? h("span", { class: "badge error" }, bad + " with errors in the latest run") : null,
+    warn ? h("span", { class: "badge warn" }, warn + " with warnings in the latest run") : null,
+    late ? h("span", { class: "badge chg" }, "⚑ " + late + " without a recent run") : null,
+    drops ? h("span", { class: "badge warn" }, "▼ " + drops + " with fewer resources than the run before") : null,
+    !bad && !warn && !late && !drops ? h("span", { class: "badge ok" }, "nothing wrong in the latest runs") : null));
+
+  /* the days shown: 14 days with runs, around the picked day */
+  const at = Math.max(0, keys.indexOf(state.ovDay));
+  const start = Math.max(0, Math.min(keys.length - OV_MAX_DAYS, at - Math.floor(OV_MAX_DAYS / 2)));
+  const cols = keys.slice(start, start + OV_MAX_DAYS);
+  const pick = k => { state.ovDay = k; const t = new Date(days.get(k).time); state.ovMonth = { y: t.getFullYear(), m: t.getMonth() }; renderOverview(); };
+
+  const tipOf = (r, st, model) => (model ? model + " · " : "") + "run " + r.seq + " of the day · " + when(r.run.time) + " · " + fmt(st.seen) + " resources" +
+    (st.missing && st.missing.length ? " · missing: " + st.missing.join(", ") : "") + (st.errors ? " · " + st.errors + " error rule" + (st.errors > 1 ? "s" : "") : "") +
+    (st.warns ? " · " + st.warns + " warning rule" + (st.warns > 1 ? "s" : "") : "") + (st.skipped ? " · " + st.skipped + " dropped" : "") + (st.drop ? " · fewer than the run before (" + fmt(st.before) + ")" : "");
+  /* one cell: the runs of a dataset (or one model of it) on one day, as numbered boxes */
+  const dayCell = (row, k, model) => {
+    const list = row.perDay.get(k) || [], td = h("td", { class: k === state.ovDay ? "selday" : null });
+    if (!list.length) return td;
+    const shown = list.length > OV_MAX_PER_DAY ? list.slice(-(OV_MAX_PER_DAY - 1)) : list;
+    const boxes = shown.map((r, idx) => {
+      let st = r.st, cls;
+      if (model) {
+        const ms = modelStatus(r.run, model);
+        if (!ms) return h("div", { class: "ovc mini missing", title: model + " missing in run " + r.seq + " of the day (" + when(r.run.time) + ")", onclick: () => openRun(r.run, model) }, String(r.seq));
+        const prevRun = row.all[row.all.indexOf(r.run) - 1], before = prevRun ? (modelStatus(prevRun, model) || {}).seen || 0 : 0;
+        st = { ...ms, before, drop: before > 0 && ms.seen < before && significant(ms.seen, before) };
+      }
+      cls = "ovc mini " + st.level + (st.drop ? " drop" : "");
+      return h("div", { class: cls, title: tipOf(r, st, model), onclick: () => openRun(r.run, model) }, String(r.seq));
+    });
+    if (shown.length < list.length) boxes.unshift(h("div", { class: "ovc mini more", title: (list.length - shown.length) + " earlier runs that day: see the list below", onclick: () => pick(k) }, "+" + (list.length - shown.length)));
+    td.append(h("div", { class: "minis" }, boxes));
+    return td;
+  };
+
+  const head = h("tr", {}, h("th", { class: "nm" }, "Dataset"), h("th", { class: "last" }, "Last run"),
+    cols.map(k => {
+      const t = new Date(days.get(k).time);
+      return h("th", { class: "dayh" + (k === state.ovDay ? " selday" : ""), title: dayLabel(t) + " · click to list its runs", onclick: () => pick(k) },
+        h("div", { class: "small" }, t.toLocaleDateString([], { weekday: "short" })), dayMonth(t));
+    }));
+  const body = h("tbody", {});
+  for (const r of rows) {
+    const open = state.ovOpen.has(r.name);
+    const latestLabel = r.days === 0 ? "today" : r.days === 1 ? "1 day ago" : r.days + " days ago";
+    body.append(h("tr", { class: "dsrow" },
+      h("td", { class: "nm" }, h("button", { class: "twist", onclick: () => { open ? state.ovOpen.delete(r.name) : state.ovOpen.add(r.name); renderOverview(); } }, open ? "⊟" : "⊞"),
+        h("a", { class: "dsname", href: "#", onclick: ev => { ev.preventDefault(); openRun(r.latest, null); } }, r.name)),
+      h("td", { class: "last" }, r.overdue ? h("span", { class: "late", title: "No run for " + r.days + " days (flagged from " + state.staleDays + ")" }, "⚑ " + latestLabel) : h("span", { class: "muted small" }, latestLabel)),
+      cols.map(k => dayCell(r, k, null))));
+    if (open) for (const m of r.models) {
+      const latestSt = modelStatus(r.latest, m);
+      body.append(h("tr", { class: "modelrow" },
+        h("td", { class: "nm" }, h("span", { class: "mname" }, m), latestSt ? h("span", { class: "muted small" }, " " + fmt(latestSt.seen)) : null),
+        h("td", { class: "last" }),
+        cols.map(k => dayCell(r, k, m))));
+    }
+  }
+  const nav = h("div", { class: "ovnav" },
+    h("button", { class: "small", disabled: start <= 0 ? "" : null, title: "Earlier days", onclick: () => pick(keys[Math.max(0, start - 1)]) }, "‹ earlier"),
+    h("span", { class: "muted small" }, "Columns are days with a run; the numbers are the runs of that day, in order. Click a box to open that run."),
+    h("button", { class: "small", disabled: start + OV_MAX_DAYS >= keys.length ? "" : null, title: "Later days", onclick: () => pick(keys[Math.min(keys.length - 1, start + OV_MAX_DAYS)]) }, "later ›"));
+  box.append(nav, h("div", { class: "ovscroll" }, h("table", { class: "ov" }, h("thead", {}, head), body)));
+  if (state.ovDay) dayBox.append(renderOvDay(days));
+}
+
+/* the dataset dropdown: every dataset in the folder, keeps the pick */
+function fillDatasetSelect(names) {
+  const sel = document.getElementById("ovDataset");
+  if (state.ovDataset && !names.includes(state.ovDataset)) state.ovDataset = "";
+  const want = ["", ...names.sort()].join("\u0000");
+  if (sel.dataset.names !== want) {
+    sel.replaceChildren(h("option", { value: "" }, "All datasets"), names.map(n => h("option", { value: n }, n)));
+    sel.dataset.names = want;
+  }
+  sel.value = state.ovDataset;
+}
+
+/* every run of the shown datasets, per day (dayKeyOf), with its status as part of its dataset; a day takes the worst of its runs */
+function runsPerDay(entries) {
+  const rank = { ok: 0, warn: 1, error: 2 }, days = new Map();
+  for (const [name, all] of entries) {
+    const models = [...new Set(all.flatMap(e => [...modelsOf(e)]))].sort();
+    all.forEach((run, i) => {
+      const k = dayKeyOf(run.time), st = datasetRunStatus(all, models, i);
+      if (!days.has(k)) days.set(k, { key: k, time: run.time, level: "ok", runs: [] });
+      const d = days.get(k);
+      d.runs.push({ name, run, st, models });
+      if (rank[st.level] > rank[d.level]) d.level = st.level;
+    });
+  }
+  for (const d of days.values()) d.runs.sort((a, b) => (a.run.time < b.run.time ? 1 : -1));
+  return days;
+}
+
+const dayKeys = days => [...days.values()].sort((a, b) => (a.time < b.time ? -1 : 1)).map(d => d.key);
+
+/* a small month calendar: a day with runs is coloured by its worst run; click it to see that day's runs */
+function renderOvCalendar(days) {
+  const keys = dayKeys(days);
+  if (!state.ovMonth) {
+    const last = days.get(state.ovDay) || days.get(keys[keys.length - 1]);
+    const d = last ? new Date(last.time) : new Date();
+    state.ovMonth = { y: d.getFullYear(), m: d.getMonth() };
+  }
+  const { y, m } = state.ovMonth;
+  const move = n => { const d = new Date(y, m + n, 1); state.ovMonth = { y: d.getFullYear(), m: d.getMonth() }; renderOverview(); };
+  const first = new Date(y, m, 1), lead = (first.getDay() + 6) % 7, count = new Date(y, m + 1, 0).getDate();
+  const todayKey = dayKeyOf(new Date().toISOString());
+  const grid = h("div", { class: "calgrid" }, ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(w => h("div", { class: "wd" }, w)),
+    Array.from({ length: lead }, () => h("div", {})));
+  let inMonth = { ok: 0, warn: 0, error: 0 };
+  for (let n = 1; n <= count; n++) {
+    const k = y + "-" + (m + 1) + "-" + n, d = days.get(k);
+    const cls = "calc" + (d ? " has " + d.level : "") + (k === todayKey ? " today" : "") + (d && k === state.ovDay ? " sel" : "");
+    if (d) inMonth[d.level]++;
+    const tip = d ? d.runs.length + (d.runs.length === 1 ? " run" : " runs") + ": " + [...new Set(d.runs.map(r => r.name))].join(", ") : "";
+    grid.append(h("div", { class: cls, title: tip || null, onclick: d ? () => { state.ovDay = k; renderOverview(); } : null },
+      String(n), d && d.runs.length > 1 ? h("small", {}, "×" + d.runs.length) : null));
+  }
+  const monthName = first.toLocaleDateString([], { month: "long", year: "numeric" });
+  return h("div", { class: "cal" },
+    h("div", { class: "calhead" }, h("button", { title: "Previous month", onclick: () => move(-1) }, "‹"), monthName, h("button", { title: "Next month", onclick: () => move(1) }, "›")),
+    grid,
+    h("div", { class: "calnote" }, inMonth.error + inMonth.warn + inMonth.ok
+      ? [inMonth.error ? inMonth.error + " red" : null, inMonth.warn ? inMonth.warn + " amber" : null, inMonth.ok ? inMonth.ok + " green" : null].filter(Boolean).join(" · ") + " days this month. Click a day for its runs."
+      : "No runs this month."),
+    keys.length ? h("div", { class: "calnote" }, h("a", { href: "#", onclick: ev => { ev.preventDefault(); const k = keys[keys.length - 1]; const d = new Date(days.get(k).time); state.ovMonth = { y: d.getFullYear(), m: d.getMonth() }; state.ovDay = k; renderOverview(); } }, "Latest day with a run")) : null);
+}
+
+/* the runs of the day picked in the calendar, newest first: dataset, its models (click one to open it), resources and result */
+function renderOvDay(days) {
+  const keys = dayKeys(days);
+  if (!keys.length) return h("div", { class: "muted" }, "No dataset matches.");
+  if (!days.has(state.ovDay)) state.ovDay = keys[keys.length - 1];
+  const d = days.get(state.ovDay), at = keys.indexOf(state.ovDay);
+  const go = k => { state.ovDay = k; const t = new Date(days.get(k).time); state.ovMonth = { y: t.getFullYear(), m: t.getMonth() }; renderOverview(); };
+  const lvlText = { ok: "OK", warn: "Warnings", error: "Errors" };
+  const table = h("table", { class: "ovday" }, h("thead", {}, h("tr", {}, ["Time", "Dataset", "Run", "Models", "Resources", "Result"].map(t => h("th", {}, t)))));
+  const body = h("tbody", {});
+  for (const r of d.runs) {
+    const st = r.st, why = [];
+    if (st.errors) why.push(st.errors + " error rule" + (st.errors > 1 ? "s" : ""));
+    if (st.skipped) why.push(st.skipped + " dropped");
+    if (st.missing.length) why.push("missing: " + st.missing.join(", "));
+    if (st.warns) why.push(st.warns + " warning rule" + (st.warns > 1 ? "s" : ""));
+    if (st.drop) why.push("▼ fewer than before (" + fmt(st.before) + ")");
+    const chips = r.models.map(m => {
+      const ms = modelStatus(r.run, m);
+      return h("div", { class: "ovc " + (ms ? ms.level : "missing"), title: ms ? m + ": " + fmt(ms.seen) + " resources" : m + " is missing in this run", onclick: ev => { ev.stopPropagation(); openRun(r.run, m); } }, m);
+    });
+    body.append(h("tr", { class: "dayrun", onclick: () => openRun(r.run, null) },
+      h("td", { class: "small" }, new Date(r.run.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+      h("td", {}, h("b", {}, r.name)),
+      h("td", {}, h("div", { class: "ovc mini " + st.level, title: "Run " + r.seq + " of this dataset on this day" }, String(r.seq || 1))),
+      h("td", {}, h("div", { class: "chips" }, chips)),
+      h("td", {}, fmt(st.seen)),
+      h("td", {}, h("span", { class: "badge " + st.level }, lvlText[st.level]), why.length ? h("div", { class: "muted small" }, why.join(" · ")) : null)));
+  }
+  table.append(body);
+  return h("div", {},
+    h("div", { class: "dayhead" },
+      h("button", { class: "small", disabled: at <= 0 ? "" : null, title: "Previous day with a run", onclick: () => go(keys[at - 1]) }, "‹"),
+      h("h3", {}, dayLabel(d.time)),
+      h("button", { class: "small", disabled: at >= keys.length - 1 ? "" : null, title: "Next day with a run", onclick: () => go(keys[at + 1]) }, "›"),
+      h("span", { class: "muted small" }, d.runs.length + (d.runs.length === 1 ? " run" : " runs") + " · click a run or a model to open it")),
+    h("div", { class: "ovscroll" }, table));
+}
 
 /* Pick an export (a request: source + query), then one of its runs. Runs are numbered in the order they
    happened and listed newest first under their date; the compare button sets the run to compare with. */
@@ -532,10 +948,22 @@ const dayLabel = t => new Date(t).toLocaleDateString([], { weekday: "short", day
 const dayKeyOf = t => { const d = new Date(t); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); };
 const ruleCounts = e => ({ errs: e.findings.filter(f => (SEV[f.severity] ?? 0) >= 2).length, warns: e.findings.filter(f => SEV[f.severity] === 1).length });
 
+/* Nothing to show: say which folder is read and when findings get written there. */
+function emptyState() {
+  const where = state.dir ? h("code", { style: "word-break:break-all" }, state.dir) : "the output folder";
+  return h("div", { class: "empty", style: "text-align:left" },
+    h("b", {}, "No findings in "), where, ".",
+    h("div", { class: "small", style: "margin-top:8px" }, "Findings files (", h("code", {}, "findings-*.jsonl"), ") are written there when"),
+    h("ul", { class: "small", style: "margin:4px 0 8px 16px;padding:0" },
+      h("li", {}, "a conversion finishes: ", h("code", {}, "fenix -cmd all"), " or ", h("code", {}, "-cmd convert")),
+      h("li", {}, "a Group ", h("code", {}, "$export"), " finishes on the API server")),
+    h("div", { class: "small" }, "A plain search on the API server does not write findings. The folder is ", h("code", {}, "output.findings.dir"), ", or ", h("code", {}, "<output.local.dir>/findings"), " of the config this server was started with. Run one with that config, then press Refresh."));
+}
+
 function renderCalendar() {
   const box = document.getElementById("calendar");
   box.replaceChildren(h("h2", {}, "Exports"));
-  if (!state.exports.length) { box.append(h("div", { class: "empty" }, "No findings yet.", h("br"), "They appear here after a conversion or an $export has run.")); return; }
+  if (!state.exports.length) { box.append(emptyState()); return; }
 
   const groups = [...state.groups.keys()];
   box.append(h("select", { style: "width:100%;margin-bottom:8px", onchange: e => {
@@ -789,6 +1217,11 @@ body.addEventListener("dragover", e => { e.preventDefault(); body.classList.add(
 body.addEventListener("dragleave", () => body.classList.remove("dragging"));
 body.addEventListener("drop", e => { e.preventDefault(); body.classList.remove("dragging"); load(e.dataTransfer.files); });
 document.getElementById("refresh").addEventListener("click", () => fetchFindings(false));
+document.getElementById("tabOverview").addEventListener("click", () => { state.view = "overview"; renderOverview(); applyView(); });
+document.getElementById("tabDetails").addEventListener("click", () => { state.view = "details"; applyView(); });
+document.getElementById("ovFilter").addEventListener("input", renderOverview);
+document.getElementById("ovDataset").addEventListener("change", e => { state.ovDataset = e.target.value; renderOverview(); });
+document.getElementById("staleDays").addEventListener("input", e => { state.staleDays = Math.max(1, +e.target.value || 7); renderOverview(); });
 document.getElementById("showIgnored").addEventListener("change", e => { state.showIgnored = e.target.checked; applyIgnore(); render(); });
 // back from the concept map editor (another tab, or the browser's back button): ask the server again
 window.addEventListener("focus", async () => { state.mapCache.clear(); state.defCache.clear(); state.answerCache.clear(); await loadIgnored(); applyIgnore(); render(); });

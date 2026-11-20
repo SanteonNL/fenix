@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/deident"
@@ -100,6 +101,24 @@ func (s *Server) SetExportTuning(batchSize, workers int) {
 // that run at the same time share the converter's collector, so whichever job
 // ends first writes them all. Call before serving.
 func (s *Server) SetFindingsDir(dir string) { s.findingsDir = dir }
+
+// FlushFindingsEvery writes the findings that plain searches collect, every interval, as one run per
+// server session (query "API server (searches)"). A Group $export writes its own findings when it ends and
+// takes whatever has piled up with it. Nothing is written while the collector is empty. Call before serving.
+func (s *Server) FlushFindingsEvery(every time.Duration) {
+	if s.findingsDir == "" || every <= 0 {
+		return
+	}
+	runID := "serve-" + time.Now().Format("20060102_150405")
+	go func() {
+		for range time.Tick(every) {
+			s.flushFindings(runID, SearchesQuery)
+		}
+	}()
+}
+
+// SearchesQuery names the findings of plain searches on the API server.
+const SearchesQuery = "API server (searches)"
 
 // flushFindings writes the collected findings under the given run id.
 func (s *Server) flushFindings(runID, query string) {

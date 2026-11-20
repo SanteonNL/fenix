@@ -20,6 +20,16 @@
               "equivalence": "inexact"
             }
           ]
+        },
+        {
+          "code": "XYZ-1",
+          "target": [
+            {
+              "code": "4548-4",
+              "display": "Hemoglobin A1c/Hemoglobin.total in Blood",
+              "equivalence": "equivalent"
+            }
+          ]
         }
       ]
     }

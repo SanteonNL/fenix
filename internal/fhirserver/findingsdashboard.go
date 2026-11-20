@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -147,6 +149,9 @@ func (a *findingsAPI) handleData(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(files)
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	// where the files are read from, so the dashboard can say so when there are none
+	w.Header().Set("X-Findings-Dir", url.PathEscape(a.dir))
+	w.Header().Set("X-Findings-Files", strconv.Itoa(len(files)))
 	for _, name := range files {
 		f, err := os.Open(name)
 		if err != nil {

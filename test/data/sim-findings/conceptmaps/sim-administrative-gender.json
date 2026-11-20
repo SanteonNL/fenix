@@ -61,6 +61,15 @@
               "equivalence": "equivalent"
             }
           ]
+        },
+        {
+          "code": "vrouw",
+          "target": [
+            {
+              "code": "female",
+              "equivalence": "equivalent"
+            }
+          ]
         }
       ],
       "unmapped": {
