@@ -33,20 +33,52 @@ type searchParamLookup func(resourceType, code string) (field, paramType string,
 //
 // A token param may carry the :in / :not-in modifier ("code:in=<ValueSet url>"):
 // the coding must (not) be a member of the ValueSet, expanded by the
-// conformance store (see valueSetMembersFunc). Other modifiers are left alone.
+// conformance store (see valueSetMembersFunc).
+//
+// A reference param may be chained ("condition:Condition.code=<token>"): the
+// referenced resource must match the search after the dot. The chain is
+// resolved by searching the target type (see chainFunc) and keeping the
+// resources whose reference points at one of the matches. Other modifiers are
+// left alone.
 type paramMatcher struct {
 	field     string
 	paramType string
 	value     string
-	modifier  string               // "" | "in" | "not-in"
+	modifier  string               // "" | "in" | "not-in" | "chain"
 	members   *conformance.Members // the union of the ValueSets of an :in / :not-in value
+	target    string               // chain: the referenced resource type, e.g. Condition
+	targetArg string               // chain: the search param on the target, e.g. code
+	ids       map[string]bool      // chain: ids of the target resources that match
 }
 
 // valueSetMembersFunc expands a ValueSet given by canonical url for :in / :not-in.
 type valueSetMembersFunc func(ref string) (conformance.Members, error)
 
+// chainFunc returns the ids of the targetType resources matching targetParam=value.
+type chainFunc func(targetType, targetParam, value string) (map[string]bool, error)
+
+// filterDeps are what filterUnwiredParams needs beyond the resources: both optional.
+type filterDeps struct {
+	expand valueSetMembersFunc // :in / :not-in
+	chain  chainFunc           // chained reference params
+}
+
 // valueSetModifiers are the token modifiers evaluated against a ValueSet.
 var valueSetModifiers = map[string]bool{"in": true, "not-in": true}
+
+// chainedParam splits a chained param "condition:Condition.code" into
+// (condition, Condition, code). ok is false for anything else.
+func chainedParam(code string) (base, target, targetParam string, ok bool) {
+	base, modifier, found := strings.Cut(code, ":")
+	if !found {
+		return "", "", "", false
+	}
+	target, targetParam, ok = strings.Cut(modifier, ".")
+	if !ok || target == "" || targetParam == "" || !validResourceTypeName(target) {
+		return "", "", "", false
+	}
+	return base, target, targetParam, true
+}
 
 // unwiredMatchers are the params SQL did not narrow that filterUnwiredParams
 // must check in Go.
@@ -55,6 +87,13 @@ func unwiredMatchers(resourceType string, fhirParams map[string]string, pushed m
 	for code, value := range fhirParams {
 		if pushed[code] {
 			continue // SQL already scoped this one
+		}
+		if base, target, targetParam, ok := chainedParam(code); ok {
+			if field, paramType, ok := lookup(resourceType, base); ok && paramType == "reference" {
+				matchers = append(matchers, paramMatcher{field: field, paramType: paramType, value: value,
+					modifier: "chain", target: target, targetArg: targetParam})
+			}
+			continue
 		}
 		base, modifier, _ := strings.Cut(code, ":")
 		field, paramType, ok := lookup(resourceType, base)
@@ -109,8 +148,40 @@ func (m paramMatcher) matches(fieldValue interface{}) bool {
 		return fieldValue != nil && inValueSet(fieldValue, *m.members)
 	case "not-in":
 		return fieldValue == nil || !inValueSet(fieldValue, *m.members)
+	case "chain":
+		for _, id := range referencedIDs(fieldValue) {
+			if m.ids[id] {
+				return true
+			}
+		}
+		return false
 	}
 	return matchParam(fieldValue, m.paramType, m.value)
+}
+
+// referencedIDs returns the id of every Reference anywhere inside v, e.g.
+// EpisodeOfCare.diagnosis[].condition.reference "Condition/42" -> "42".
+func referencedIDs(v interface{}) []string {
+	var out []string
+	switch val := v.(type) {
+	case []interface{}:
+		for _, item := range val {
+			out = append(out, referencedIDs(item)...)
+		}
+	case map[string]interface{}:
+		if ref, ok := val["reference"].(string); ok && ref != "" {
+			if i := strings.LastIndex(ref, "/"); i != -1 {
+				ref = ref[i+1:]
+			}
+			out = append(out, ref)
+		}
+		for k, item := range val {
+			if k != "reference" {
+				out = append(out, referencedIDs(item)...)
+			}
+		}
+	}
+	return out
 }
 
 // inValueSet reports whether any code in a token field (a plain code, a
@@ -142,15 +213,23 @@ func hasUnwiredParams(resourceType string, fhirParams map[string]string, pushed 
 	return len(unwiredMatchers(resourceType, fhirParams, pushed, lookup)) > 0
 }
 
-func filterUnwiredParams(resourceType string, fhirParams map[string]string, pushed map[string]bool, resources []interface{}, lookup searchParamLookup, expand valueSetMembersFunc) []interface{} {
+func filterUnwiredParams(resourceType string, fhirParams map[string]string, pushed map[string]bool, resources []interface{}, lookup searchParamLookup, deps filterDeps) []interface{} {
 	matchers := unwiredMatchers(resourceType, fhirParams, pushed, lookup)
 	if len(matchers) == 0 {
 		return resources
 	}
 	for i := range matchers {
-		if matchers[i].modifier != "" {
-			members := valueSetMembers(matchers[i].value, expand)
-			matchers[i].members = &members
+		switch m := &matchers[i]; m.modifier {
+		case "in", "not-in":
+			members := valueSetMembers(m.value, deps.expand)
+			m.members = &members
+		case "chain":
+			m.ids = map[string]bool{}
+			if deps.chain != nil {
+				if ids, err := deps.chain(m.target, m.targetArg, m.value); err == nil {
+					m.ids = ids // an error was refused up front (see Server.checkChainParams)
+				}
+			}
 		}
 	}
 
@@ -304,12 +383,32 @@ func tokenMatches(v interface{}, wantSystem, wantCode string) bool {
 // a bare id ("123") or "ResourceType/123" — either way, only the trailing
 // id segment is compared, against a Reference field ({"reference": "..."})
 // or an array of them.
+//
+// A comma-separated value is an OR. A canonical field (a plain string, e.g.
+// QuestionnaireResponse.questionnaire) matches the full canonical (a
+// |version on either side is ignored) or, like a Reference, its last segment.
 func matchReference(fieldValue interface{}, want string) bool {
+	if strings.Contains(want, ",") {
+		for _, w := range splitUnescaped(want, ',') {
+			if matchReference(fieldValue, unescape(w)) {
+				return true
+			}
+		}
+		return false
+	}
 	wantID := want
 	if i := strings.LastIndex(want, "/"); i != -1 {
 		wantID = want[i+1:]
 	}
 	switch val := fieldValue.(type) {
+	case string:
+		canonical, _, _ := strings.Cut(val, "|")
+		wantCanonical, _, _ := strings.Cut(want, "|")
+		if canonical == wantCanonical {
+			return true
+		}
+		id, _, _ := strings.Cut(wantID, "|")
+		return canonical == id || strings.HasSuffix(canonical, "/"+id)
 	case map[string]interface{}:
 		ref, _ := val["reference"].(string)
 		if ref == "" {
@@ -339,6 +438,9 @@ func matchReference(fieldValue interface{}, want string) bool {
 // so behaviour stays consistent whether or not a given date param happens
 // to be wired as pushdown.
 func matchDate(fieldValue interface{}, want string) bool {
+	if period, ok := fieldValue.(map[string]interface{}); ok {
+		return matchPeriod(period, want)
+	}
 	val, ok := fieldValue.(string)
 	if !ok || val == "" {
 		return false
@@ -369,6 +471,44 @@ func matchDate(fieldValue interface{}, want string) bool {
 		return cmp < 0
 	default: // "eq" or no recognised prefix: exact/prefix match
 		return strings.HasPrefix(val, date)
+	}
+}
+
+// matchPeriod compares a date search value with a Period ({"start","end"}),
+// as FHIR does for a range: ge/gt match when the period ends at or after the
+// date (or has no end), le/lt when it starts at or before it (or has no
+// start), and no prefix / eq when the date falls inside the period.
+func matchPeriod(period map[string]interface{}, want string) bool {
+	start, _ := period["start"].(string)
+	end, _ := period["end"].(string)
+	if start == "" && end == "" {
+		return false
+	}
+	prefix, date := "", want
+	if len(want) >= 2 {
+		switch strings.ToLower(want[:2]) {
+		case "ge", "gt", "le", "lt", "eq":
+			prefix, date = strings.ToLower(want[:2]), want[2:]
+		}
+	}
+	cmp := func(v string) int {
+		n := len(date)
+		if n > len(v) {
+			n = len(v)
+		}
+		return strings.Compare(v[:n], date)
+	}
+	switch prefix {
+	case "ge":
+		return end == "" || cmp(end) >= 0
+	case "gt":
+		return end == "" || cmp(end) > 0
+	case "le":
+		return start == "" || cmp(start) <= 0
+	case "lt":
+		return start == "" || cmp(start) < 0
+	default:
+		return (start == "" || cmp(start) <= 0) && (end == "" || cmp(end) >= 0)
 	}
 }
 

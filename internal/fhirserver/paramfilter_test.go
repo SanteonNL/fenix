@@ -43,7 +43,7 @@ func TestFilterUnwiredParams(t *testing.T) {
 	})
 
 	t.Run("no params leaves resources untouched", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{}, nil, resources, lookup, filterDeps{})
 		if !reflect.DeepEqual(got, resources) {
 			t.Errorf("got %v, want unchanged %v", got, resources)
 		}
@@ -51,42 +51,42 @@ func TestFilterUnwiredParams(t *testing.T) {
 
 	t.Run("pushed-down param is skipped, not re-filtered", func(t *testing.T) {
 		pushed := map[string]bool{"status": true}
-		got := filterUnwiredParams("Observation", map[string]string{"status": "final"}, pushed, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"status": "final"}, pushed, resources, lookup, filterDeps{})
 		if len(got) != 3 {
 			t.Fatalf("expected pushed-down param to be left alone (3 resources), got %d", len(got))
 		}
 	})
 
 	t.Run("unwired token param filters down to the match", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{"code": "A"}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"code": "A"}, nil, resources, lookup, filterDeps{})
 		if len(got) != 2 {
 			t.Fatalf("expected 2 matches for code=A, got %d: %v", len(got), got)
 		}
 	})
 
 	t.Run("unwired reference param filters to the subject", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{"patient": "456"}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"patient": "456"}, nil, resources, lookup, filterDeps{})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 match for patient=456, got %d: %v", len(got), got)
 		}
 	})
 
 	t.Run("unwired date param resolves the choice-type JSON key", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{"date": "ge2023-06-01"}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"date": "ge2023-06-01"}, nil, resources, lookup, filterDeps{})
 		if len(got) != 2 {
 			t.Fatalf("expected 2 matches for date=ge2023-06-01, got %d: %v", len(got), got)
 		}
 	})
 
 	t.Run("combined params AND together", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{"status": "final", "code": "A"}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"status": "final", "code": "A"}, nil, resources, lookup, filterDeps{})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 match for status=final&code=A, got %d: %v", len(got), got)
 		}
 	})
 
 	t.Run("unknown param is left alone, same as before this filter existed", func(t *testing.T) {
-		got := filterUnwiredParams("Observation", map[string]string{"not-a-real-param": "x"}, nil, resources, lookup, nil)
+		got := filterUnwiredParams("Observation", map[string]string{"not-a-real-param": "x"}, nil, resources, lookup, filterDeps{})
 		if len(got) != 3 {
 			t.Fatalf("expected unknown param to be ignored (3 resources), got %d", len(got))
 		}

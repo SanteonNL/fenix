@@ -306,6 +306,10 @@ func newFHIRResource(resourceType string) (interface{}, error) {
 		return &fhir.DiagnosticReport{}, nil
 	case "CarePlan":
 		return &fhir.CarePlan{}, nil
+	case "EpisodeOfCare":
+		return &fhir.EpisodeOfCare{}, nil
+	case "QuestionnaireResponse":
+		return &fhir.QuestionnaireResponse{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}

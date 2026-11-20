@@ -7,6 +7,7 @@ import (
 	"github.com/SanteonNL/fenix/internal/config"
 	"github.com/SanteonNL/fenix/internal/conformance"
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/datasets"
 	"github.com/SanteonNL/fenix/internal/fhirpackage"
 	"github.com/rs/zerolog"
 )
@@ -22,6 +23,7 @@ import (
 // brings ObservationDefinitions and none were loaded from a folder.
 func loadConformance(ctx context.Context, cfg *config.Config, repoRoot string, log *zerolog.Logger, dirs []string,
 	profileSvc *converter.ProfileService, conceptMapSvc *converter.ConceptMapService, obsDefs *converter.ObservationDefinitions,
+	ds *datasets.Catalog,
 ) (*conformance.Store, *converter.ObservationDefinitions) {
 	store := conformance.NewStore(*log)
 	for _, dir := range dirs {
@@ -58,7 +60,7 @@ func loadConformance(ctx context.Context, cfg *config.Config, repoRoot string, l
 			log.Error().Err(err).Msg("Failed to load FHIR package(s)")
 		}
 		for _, pkg := range pkgs {
-			obsDefs = usePackage(pkg, store, profileSvc, conceptMapSvc, obsDefs, log)
+			obsDefs = usePackage(pkg, store, profileSvc, conceptMapSvc, obsDefs, ds, log)
 		}
 	}
 
@@ -85,7 +87,7 @@ func loadConformance(ctx context.Context, cfg *config.Config, repoRoot string, l
 // usePackage adds every resource of a package to the store and feeds its own
 // resources into conversion as its "use" says.
 func usePackage(pkg fhirpackage.Package, store *conformance.Store, profileSvc *converter.ProfileService,
-	conceptMapSvc *converter.ConceptMapService, obsDefs *converter.ObservationDefinitions, log *zerolog.Logger,
+	conceptMapSvc *converter.ConceptMapService, obsDefs *converter.ObservationDefinitions, ds *datasets.Catalog, log *zerolog.Logger,
 ) *converter.ObservationDefinitions {
 	byType, err := pkg.Resources()
 	if err != nil {
@@ -118,6 +120,12 @@ func usePackage(pkg fhirpackage.Package, store *conformance.Store, profileSvc *c
 				obsDefs = converter.NewObservationDefinitions(conceptMapSvc, *log)
 			}
 			ev = ev.Int("observationDefinitions", obsDefs.AddFiles(byType["ObservationDefinition"]))
+		case "datasets":
+			n, err := ds.AddFiles(byType["Binary"])
+			if err != nil {
+				log.Warn().Err(err).Str("package", pkg.Name).Msg("Skipping unreadable dataset definitions")
+			}
+			ev = ev.Int("datasetDefinitions", n).Strs("datasets", ds.IDs())
 		}
 	}
 	if len(pkg.Use) > 0 {

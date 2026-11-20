@@ -1,0 +1,6 @@
+SubtrajectNr;Identificatienummer;ZorgTypeCodeSysteem;ZorgTypeCode;ZorgTypeOmschrijving;DBCOpeningsDatum;DBCSluitingsDatum;DBCgeldig;SpecialismeDiagnoseSysteem;SpecialismeDiagnoseCode;SpecialismeDiagnoseOmschrijving
+S2001;2001;https://declaratie.nza.nl/zorgtype;11;Reguliere zorg;2020-03-01;;true;urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313;922;Colitis ulcerosa
+S2002;2002;https://declaratie.nza.nl/zorgtype;21;Vervolg reguliere zorg;2019-06-01;2021-06-01;true;urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318;601;Ziekte van Crohn
+S2003;2003;https://declaratie.nza.nl/zorgtype;11;Reguliere zorg;2021-01-01;;true;urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313;100;Andere diagnose
+S2004;2004;https://declaratie.nza.nl/zorgtype;11;Reguliere zorg;2015-01-01;2016-12-31;true;urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313;922;Colitis ulcerosa
+S2005;2005;https://declaratie.nza.nl/zorgtype;11;Reguliere zorg;2022-01-01;;false;urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313;923;Colitis ulcerosa

@@ -14,6 +14,7 @@ import (
 // "http://hl7.org/fhir/ValueSet/administrative-gender").
 type ProfileService struct {
 	pathToValueset map[string]string // "Patient.gender" → valueset URI (no version)
+	pathToStrength map[string]string // "Patient.gender" → binding strength (required, extensible, ...)
 	elements       map[string]*ElementRule
 	children       map[string][]string // parent element path → paths one segment deeper
 	logger         zerolog.Logger
@@ -23,6 +24,7 @@ type ProfileService struct {
 func NewProfileService(logger zerolog.Logger) *ProfileService {
 	return &ProfileService{
 		pathToValueset: make(map[string]string),
+		pathToStrength: make(map[string]string),
 		elements:       make(map[string]*ElementRule),
 		children:       make(map[string][]string),
 		logger:         logger,
@@ -56,6 +58,7 @@ func (p *ProfileService) LoadProfile(filePath string) error {
 				path := element.Path
 				vs := stripVersion(*element.Binding.ValueSet)
 				p.pathToValueset[path] = vs
+				p.pathToStrength[path] = element.Binding.Strength.Code()
 				count++
 				break
 			}
@@ -93,6 +96,14 @@ func (p *ProfileService) ValuesetURI(fhirPath string) string {
 	return p.pathToValueset[fhirPath]
 }
 
+// StrictBinding reports whether the binding at fhirPath is required or
+// extensible: the codes are expected to come from the valueset, so a code
+// outside it is worth a warning even when no concept map targets the valueset.
+func (p *ProfileService) StrictBinding(fhirPath string) bool {
+	s := p.pathToStrength[fhirPath]
+	return s == "required" || s == "extensible"
+}
+
 // applyConceptMappings recursively walks a raw FHIR resource map.
 // currentPath is the FHIR path of the current map level (e.g. "Encounter" at root,
 // "Encounter.statusHistory" when recursing into statusHistory items).
@@ -115,7 +126,9 @@ func (p *ProfileService) ValuesetURI(fhirPath string) string {
 // unmapped, when not nil, is told about every source code that has no explicit
 // mapping although a concept map exists for its valueset: the code, how it was
 // treated (MapDefault: replaced by the fallback, MapNone: left as it is) and the
-// path of the element holding the code.
+// path of the element holding the code. For a required or extensible binding it
+// is also told about a code outside the valueset when no concept map targets it
+// (MapNoMap).
 func applyConceptMappings(raw map[string]any, currentPath string, profile *ProfileService, concepts *ConceptMapService, unmapped func(unmappedCode)) {
 	if profile == nil || concepts == nil {
 		return
@@ -124,6 +137,15 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 	for field, val := range raw {
 		childPath := currentPath + "." + field
 		vsURI := profile.ValuesetURI(childPath)
+		note := unmapped
+		if unmapped != nil && vsURI != "" && !profile.StrictBinding(childPath) {
+			// a preferred or example binding: other codes are fine without a concept map
+			note = func(u unmappedCode) {
+				if u.status != MapNoMap {
+					unmapped(u)
+				}
+			}
+		}
 
 		switch v := val.(type) {
 		case string:
@@ -132,7 +154,7 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 				if status == MapMapped || status == MapDefault {
 					raw[field] = mapped
 				}
-				noteUnmapped(unmapped, childPath, v, mapped, status)
+				noteUnmapped(note, childPath, v, mapped, status)
 			}
 		case []byte:
 			if vsURI != "" {
@@ -140,18 +162,18 @@ func applyConceptMappings(raw map[string]any, currentPath string, profile *Profi
 				if status == MapMapped || status == MapDefault {
 					raw[field] = mapped
 				}
-				noteUnmapped(unmapped, childPath, string(v), mapped, status)
+				noteUnmapped(note, childPath, string(v), mapped, status)
 			}
 		case map[string]any:
 			if vsURI != "" {
-				translateCodingLike(v, vsURI, concepts, childPath, unmapped)
+				translateCodingLike(v, vsURI, concepts, childPath, note)
 			}
 			applyConceptMappings(v, childPath, profile, concepts, unmapped)
 		case []any:
 			for _, elem := range v {
 				if m, ok := elem.(map[string]any); ok {
 					if vsURI != "" {
-						translateCodingLike(m, vsURI, concepts, childPath, unmapped)
+						translateCodingLike(m, vsURI, concepts, childPath, note)
 					}
 					applyConceptMappings(m, childPath, profile, concepts, unmapped)
 				}
@@ -226,13 +248,13 @@ func rawToString(val any) string {
 type unmappedCode struct {
 	path   string // element holding the code, e.g. "Patient.gender" or "Observation.code.coding.code"
 	code   string // the source code
-	target string // what it became: the map's fallback (status MapDefault), or the code itself (MapNone)
-	status string // MapDefault or MapNone
+	target string // what it became: the map's fallback (status MapDefault), or the code itself (MapNone, MapNoMap)
+	status string // MapDefault, MapNone or MapNoMap
 }
 
 // noteUnmapped tells unmapped about a code that was not explicitly mapped.
 func noteUnmapped(unmapped func(unmappedCode), path, code, target, status string) {
-	if unmapped == nil || (status != MapDefault && status != MapNone) {
+	if unmapped == nil || (status != MapDefault && status != MapNone && status != MapNoMap) {
 		return
 	}
 	unmapped(unmappedCode{path: path, code: code, target: target, status: status})

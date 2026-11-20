@@ -1,0 +1,183 @@
+### FENIX with the sim-on-fhir FHIR package (config/sim-on-fhir-package.yaml)
+#
+# Profiles, ValueSets and ObservationDefinitions come from ../sim-on-fhir/output/package.tgz,
+# SNOMED/LOINC from the Nationale Terminologieserver (NTS_USERNAME / NTS_PASSWORD in config/.env).
+# Data: the "sim" test data (test/data/sim/), queries in queries/sim/fhir/.
+#
+# Setup (once, and again after a new IG build or changed test data):
+#   go run ./cmd/fenix -config config/sim-on-fhir-package.yaml -cmd load sim
+# Start the API server:
+#   go run ./cmd/fenix -config config/sim-on-fhir-package.yaml -cmd serve -source sim
+#
+# Test data for the sb-ibd dataset (adults; the older rows 123/456/789/... are children):
+#   2001  DBC S2001: zorgtype 11, 0313|922, open since 2020-03-01      -> in the Group
+#         Verrichting V1 038853 (2021, in the IBD list), V3 190008 (not in the list)
+#         Calprotectin 101 (2021, local code FCAL, not mapped), 103 (2017, LOINC)
+#                                                Vragenlijst Q1 (2024)
+#   2002  DBC S2002: zorgtype 21, 0318|601, 2019-06-01..2021-06-01      -> in the Group
+#         Verrichting V2 035121 (2020), V4 038853 (2017)
+#         Calprotectin 102 (2020), 108 (2022, no result), both local code FCAL, not mapped
+#                                                Vragenlijst Q2 (2017)
+#   2003  DBC S2003: other diagnosis 0313|100                           -> not in the Group
+#   2004  DBC S2004: 0313|922 but 2015..2016 (before 2018)              -> not in the Group
+#   2005  DBC S2005: 0313|923 but DBCgeldig=false (entered-in-error)    -> not in the Group
+#
+# The calprotectin of 2001 and 2002 is delivered under the local lab code FCAL, which no concept map
+# translates, so the $export below holds no Observation with LOINC 38445-3: the findings get
+# FX-DATA-042 "code filtered on (code) occurs in no exported resource" at Observation.code.coding.code
+# for k363-calprotectin-before-scopie. The dashboard offers to map a source code to 38445-3; mapping
+# FCAL -> 38445-3 brings 101, 102 and 108 back, and 108 (no result) then gives FX-DATA-040 for value[x].
+
+@host = http://127.0.0.1:8080
+@base = {{host}}/r4
+
+### ─────────────────────────────────────────────────────────────────────
+### Observation queries (as in group-demo.http)
+### ─────────────────────────────────────────────────────────────────────
+
+### Every Observation
+GET {{base}}/Observation
+Accept: application/fhir+json
+
+### All Observations of patient 123
+GET {{base}}/Observation?patient=123
+Accept: application/fhir+json
+
+### One code (pushed down into SQL)
+GET {{base}}/Observation?code=MCD_A
+Accept: application/fhir+json
+
+### OR list in a pushed-down param — MCD_A and MCD_B
+GET {{base}}/Observation?code=MCD_A,MCD_B
+Accept: application/fhir+json
+
+### Calprotectin since 2018 — none: 101, 102, 108 carry the unmapped local code FCAL, 103 is from 2017
+GET {{base}}/Observation?code=http://loinc.org|38445-3&date=ge2018-01-01
+Accept: application/fhir+json
+
+### code:in the ObservationCodesSan ValueSet from the package — 103 (101, 102, 108 are FCAL, not mapped)
+GET {{base}}/Observation?code:in=https://ig.santeon.nl/sim-on-fhir/ValueSet/observation-codes-san
+Accept: application/fhir+json
+
+### code:in an unknown ValueSet — refused with an OperationOutcome instead of silently returning everything
+GET {{base}}/Observation?code:in=https://example.org/ValueSet/unknown
+Accept: application/fhir+json
+
+### ─────────────────────────────────────────────────────────────────────
+### The sb-ibd member-filter and export searches, one by one
+### ─────────────────────────────────────────────────────────────────────
+
+### Adults — 2001..2005
+GET {{base}}/Patient?birthdate=le2008-11-20
+Accept: application/fhir+json
+
+### Every DBC as EpisodeOfCare — S2001..S2005
+GET {{base}}/EpisodeOfCare
+Accept: application/fhir+json
+
+### status (S2005 is entered-in-error) — S2001..S2004
+GET {{base}}/EpisodeOfCare?status=active,finished
+Accept: application/fhir+json
+
+### date on the period (S2004 ended in 2016) — S2001, S2002, S2003, S2005
+GET {{base}}/EpisodeOfCare?date=ge2018-01-01
+Accept: application/fhir+json
+
+### The DBC diagnosis as Condition
+GET {{base}}/Condition?code=urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|922,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|601
+Accept: application/fhir+json
+
+### Chained: the EpisodeOfCare whose Condition has an IBD diagnosis — S2001, S2002, S2004, S2005
+GET {{base}}/EpisodeOfCare?condition:Condition.code=urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|922,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|923,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|601,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|602
+Accept: application/fhir+json
+
+### The whole EpisodeOfCare member-filter — S2001 and S2002
+GET {{base}}/EpisodeOfCare?type=https://declaratie.nza.nl/zorgtype|11,https://declaratie.nza.nl/zorgtype|21&status=active,finished&date=ge2018-01-01&condition:Condition.code=urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|922,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|923,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|601,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|602
+Accept: application/fhir+json
+
+### Procedures in the IBD list since 2018 — V1 and V2 (V3 not in the list, V4 from 2017)
+GET {{base}}/Procedure?code:in=https://ig.santeon.nl/sim-on-fhir/ValueSet/ibd-verrichting-codes-nza&date=ge2018-01-01
+Accept: application/fhir+json
+
+### Questionnaire since 2018 — Q1 (Q2 is from 2017)
+GET {{base}}/QuestionnaireResponse?questionnaire=http://decor.nictiz.nl/fhir/Questionnaire/2.16.840.1.113883.2.4.3.11.60.124.27.62--20250714064425&authored=ge2018-01-01
+Accept: application/fhir+json
+
+### ─────────────────────────────────────────────────────────────────────
+### Conformance resources from the package (and its dependencies)
+### ─────────────────────────────────────────────────────────────────────
+
+### Loaded packages: one ImplementationGuide per package
+GET {{base}}/ImplementationGuide?_count=20
+Accept: application/fhir+json
+
+### A profile by canonical url
+GET {{base}}/StructureDefinition?url=https://ig.santeon.nl/sim-on-fhir/StructureDefinition/observation-san
+Accept: application/fhir+json
+
+### The ObservationDefinitions
+GET {{base}}/ObservationDefinition
+Accept: application/fhir+json
+
+### Expand a ValueSet from the package (expansion-source "local")
+GET {{base}}/ValueSet/$expand?url=https://ig.santeon.nl/sim-on-fhir/ValueSet/ibd-verrichting-codes-nza&count=10
+Accept: application/fhir+json
+
+### Expand a SNOMED ECL set on the NTS (expansion-source "nts"; needs the NTS credentials)
+GET {{base}}/ValueSet/$expand?url=http://snomed.info/sct?fhir_vs=ecl/%3C%3C%2077176002%20OR%20%3C%3C%208392000%20OR%20%3C%3C%208517006
+Accept: application/fhir+json
+
+### Validate a code against a ValueSet
+GET {{base}}/ValueSet/$validate-code?url=https://ig.santeon.nl/sim-on-fhir/ValueSet/observation-codes-san&system=http://loinc.org&code=38445-3
+Accept: application/fhir+json
+
+### ─────────────────────────────────────────────────────────────────────
+### The generated sb-ibd Group and export, exactly as generated by sim-on-fhir
+### (fsh-generated/resources/Group-sb-ibd-cohort.json and Parameters-sb-ibd-export.json).
+### FENIX reads the Bulk Data member-filters (modifierExtension + valueExpression) and fills
+### {today-18y} in on every run.
+### ─────────────────────────────────────────────────────────────────────
+
+# @name sbIbdGroup
+POST {{base}}/Group
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Group",
+  "id": "sb-ibd-cohort",
+  "type": "person",
+  "actual": true,
+  "name": "sb-ibd Group",
+  "modifierExtension": [
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueExpression": {
+        "language": "application/x-fhir-query",
+        "expression": "Patient?birthdate=le{today-18y}"
+      }
+    },
+    {
+      "url": "http://hl7.org/fhir/uv/bulkdata/StructureDefinition/member-filter",
+      "valueExpression": {
+        "language": "application/x-fhir-query",
+        "expression": "EpisodeOfCare?type=https://declaratie.nza.nl/zorgtype|11,https://declaratie.nza.nl/zorgtype|21&status=active,finished&date=ge2018-01-01&condition:Condition.code=urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|922,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.313|923,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|601,urn:oid:2.16.840.1.113883.2.4.3.27.15.4.318|602"
+      }
+    }
+  ]
+}
+
+### Resolve its members — quantity 2 (patients 2001 and 2002)
+GET {{base}}/Group/{{sbIbdGroup.response.body.id}}
+Accept: application/fhir+json
+
+### $export with the generated sb-ibd parameters (FENIX takes them as query parameters,
+### not as a Parameters body). Result: no Observation (FCAL is not mapped, see the top) / Patient 2001, 2002 /
+### Procedure V1, V2 / QuestionnaireResponse Q1.
+# @name sbIbdExport
+POST {{base}}/Group/{{sbIbdGroup.response.body.id}}/$export?_type=Procedure%2CObservation%2CQuestionnaireResponse%2CPatient&_typeFilter=Procedure%3Fcode%3Ain%3Dhttps%3A%2F%2Fig.santeon.nl%2Fsim-on-fhir%2FValueSet%2Fibd-verrichting-codes-nza%26date%3Dge2018-01-01&_typeFilter=Observation%3Fcode%3Dhttp%3A%2F%2Floinc.org%7C38445-3%26date%3Dge2018-01-01&_typeFilter=QuestionnaireResponse%3Fquestionnaire%3Dhttp%3A%2F%2Fdecor.nictiz.nl%2Ffhir%2FQuestionnaire%2F2.16.840.1.113883.2.4.3.11.60.124.27.62--20250714064425%26authored%3Dge2018-01-01&_typeFilter=Patient%3Fgender%3Dmale%2Cfemale&_elements=Procedure.identifier%2CProcedure.code%2CProcedure.performed%5Bx%5D%2CProcedure.subject%2CObservation.identifier%2CObservation.code%2CObservation.value%5Bx%5D%2CObservation.effective%5Bx%5D%2CObservation.subject%2CQuestionnaireResponse.identifier%2CQuestionnaireResponse.questionnaire%2CQuestionnaireResponse.authored%2CQuestionnaireResponse.item%2CQuestionnaireResponse.subject%2CPatient.identifier%2CPatient.gender%2CPatient.birthDate
+Accept: application/fhir+json
+Prefer: respond-async
+
+### Export status (the Content-Location of the kick-off): one NDJSON file per type
+GET {{host}}{{sbIbdExport.response.headers.Content-Location}}
+Accept: application/json

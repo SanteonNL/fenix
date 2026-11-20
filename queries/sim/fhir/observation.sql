@@ -43,6 +43,22 @@ WHERE 1=1
 {{- if .code_system}} AND MetingNaamCodeSysteem = '{{.code_system}}'{{end}}
 {{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
 
+-- ── Statement 1b: identifier (required by sb-ibd-observation, min 1) ──────
+-- Same filters as the root statement so no identifier row is orphaned.
+SELECT
+    MetingID                                AS resource_id,
+    MetingID || '_identifier'               AS id,
+    MetingID                                AS parent_id,
+    'Observation.identifier'                AS fhir_path,
+    'urn:santeon:sim:meting'                AS "system",
+    MetingID                                AS "value"
+FROM sim_algemenemeting
+WHERE 1=1
+{{- if .status}} AND Status = '{{.status}}'{{end}}
+{{- if .code_in}} AND MetingNaamCode IN ({{.code_in}}){{end}}
+{{- if .code_system}} AND MetingNaamCodeSysteem = '{{.code_system}}'{{end}}
+{{- if .subject}} AND Identificatienummer = '{{.subject}}'{{end}};
+
 -- ── Statement 2: code.coding (MetingNaam) ─────────────────────────────────
 SELECT
     MetingID                                AS resource_id,

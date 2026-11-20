@@ -161,6 +161,71 @@ func TestValueSetMembersNeedNoMapping(t *testing.T) {
 	}
 }
 
+// Without a concept map, a code outside the valueset of a required or extensible binding
+// is still a warning — but only when the valueset lists all its members, and not for a
+// preferred or example binding.
+func TestCodeOutsideTheValueSetWithoutConceptMapIsAWarning(t *testing.T) {
+	const listed = "https://example.org/ValueSet/obs-code"
+	const filtered = "https://example.org/ValueSet/obs-code-filter"
+	s := conceptMaps(t, nil) // no concept maps at all
+	dir := dirWith(t, "listed.json", `{"resourceType":"ValueSet","id":"listed","url":"`+listed+`",
+	 "compose":{"include":[{"system":"http://loinc.org","concept":[{"code":"38445-3"}]}]}}`)
+	// one listed code, plus all of an ECL filter: the list is not all of it
+	if err := os.WriteFile(filepath.Join(dir, "filtered.json"), []byte(`{"resourceType":"ValueSet","id":"filtered","url":"`+filtered+`",
+	 "compose":{"include":[{"system":"http://loinc.org","concept":[{"code":"38445-3"}]},
+	  {"system":"http://snomed.info/sct","filter":[{"property":"constraint","op":"=","value":"<< 363787002"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LoadValueSetsDir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(vs, strength, code string) []unmappedCode {
+		p := NewProfileService(zerolog.Nop())
+		p.pathToValueset["Observation.code"] = vs
+		p.pathToStrength["Observation.code"] = strength
+		raw := map[string]any{"resourceType": "Observation", "code": map[string]any{"coding": []any{map[string]any{"system": "x", "code": code}}}}
+		var got []unmappedCode
+		applyConceptMappings(raw, "Observation", p, s, func(u unmappedCode) { got = append(got, u) })
+		return got
+	}
+
+	if got := check(listed, "required", "FCAL"); len(got) != 1 || got[0].status != MapNoMap || got[0].code != "FCAL" || got[0].path != "Observation.code.coding.code" {
+		t.Errorf("required binding, code outside the valueset: %+v", got)
+	}
+	if got := check(listed, "extensible", "FCAL"); len(got) != 1 {
+		t.Errorf("extensible binding, code outside the valueset: %+v", got)
+	}
+	if got := check(listed, "required", "38445-3"); len(got) != 0 {
+		t.Errorf("a member is fine: %+v", got)
+	}
+	if got := check(listed, "preferred", "FCAL"); len(got) != 0 {
+		t.Errorf("a preferred binding allows other codes: %+v", got)
+	}
+	if got := check(filtered, "required", "FCAL"); len(got) != 0 {
+		t.Errorf("a valueset with a filter does not list all its members: %+v", got)
+	}
+
+	// the finding itself
+	p := NewProfileService(zerolog.Nop())
+	p.pathToValueset["Observation.code"] = listed
+	p.pathToStrength["Observation.code"] = "required"
+	p.registerElement("u", fhir.ElementDefinition{Path: "Observation", Min: ptr(0), Max: ptr("*")})
+	fc := NewFHIRConverter(nil, zerolog.Nop(), p, s)
+	c := findings.NewCollector()
+	fc.SetFindings(c)
+	fc.reportFindings("o1", "Observation", map[string]any{"resourceType": "Observation"}, nil, check(listed, "required", "FCAL")...)
+	var f findings.Record
+	for _, r := range c.Drain("run", "src", "q", time.Time{}) {
+		if r.Kind == "finding" {
+			f = r
+		}
+	}
+	if f.Code != findings.CodeDataNotInValueSet || f.Severity != findings.Warning || f.Path != "Observation.code.coding.code" {
+		t.Errorf("finding: %+v", f)
+	}
+}
+
 func dirWith(t *testing.T, name, body string) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,7 +102,9 @@ func (s *Server) matchingPatients(resourceType string, params map[string]string)
 
 // extractPatientID returns the patient id a converted resource belongs to:
 // its own id for Patient, or the id referenced by its "subject" element
-// otherwise. Resources without a recognisable subject are skipped.
+// otherwise, or by its "patient" element for the resources that name it so
+// (EpisodeOfCare, AllergyIntolerance, Coverage, ...). Resources without a
+// recognisable patient are skipped.
 func extractPatientID(resourceType string, resource interface{}) (string, bool) {
 	b, err := json.Marshal(resource)
 	if err != nil {
@@ -117,15 +121,22 @@ func extractPatientID(resourceType string, resource interface{}) (string, bool) 
 		return p.ID, true
 	}
 
-	var r struct {
-		Subject *struct {
-			Reference string `json:"reference"`
-		} `json:"subject"`
+	type ref struct {
+		Reference string `json:"reference"`
 	}
-	if err := json.Unmarshal(b, &r); err != nil || r.Subject == nil || r.Subject.Reference == "" {
+	var r struct {
+		Subject *ref `json:"subject"`
+		Patient *ref `json:"patient"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
 		return "", false
 	}
-	return strings.TrimPrefix(r.Subject.Reference, "Patient/"), true
+	for _, x := range []*ref{r.Subject, r.Patient} {
+		if x != nil && x.Reference != "" {
+			return strings.TrimPrefix(x.Reference, "Patient/"), true
+		}
+	}
+	return "", false
 }
 
 func (s *Server) resolveGroupMembersSQL(filters []querycompiler.GroupFilter) (string, error) {
@@ -167,17 +178,39 @@ func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The id the client gave (sb-ibd-cohort, as the sim-on-fhir IG generates
+	// it) links the Group to a dataset of the loaded packages before the server
+	// assigns its own id; its $export is then checked against that dataset.
+	var postedID string
+	if group.Id != nil {
+		postedID = *group.Id
+	}
+	ds, isDataset := s.datasets.ForGroup(postedID)
+
 	id := uuid.NewString()
 	group.Id = &id
 
 	s.groupsMu.Lock()
 	s.groups[id] = &group
+	if isDataset {
+		if s.groupDatasets == nil {
+			s.groupDatasets = map[string]string{}
+		}
+		s.groupDatasets[id] = ds.ID
+	}
 	s.groupsMu.Unlock()
 
-	s.log.Info().
+	ev := s.log.Info().
 		Str("groupId", id).
-		Int("memberFilters", len(extractMemberFilters(group.Extension))).
-		Msg("Group created")
+		Int("memberFilters", len(extractMemberFilters(&group)))
+	if isDataset {
+		ev = ev.Str("dataset", ds.ID)
+		if len(ds.Missing) > 0 {
+			s.log.Warn().Str("dataset", ds.ID).Strs("requirements", ds.Missing).
+				Msg("Dataset names data requirements the loaded packages do not hold; their elements are not checked")
+		}
+	}
+	ev.Msg("Group created")
 
 	w.Header().Set("Content-Type", "application/fhir+json")
 	w.Header().Set("Location", "/r4/Group/"+id)
@@ -255,7 +288,7 @@ func (s *Server) handleGroupRead(w http.ResponseWriter, id string) {
 // plus in-Go filtering for that one filter, and its patient numbers are joined
 // into the same group query.
 func groupMembersSQL(s groupMembersResolver, group *fhir.Group) (string, error) {
-	filters := extractMemberFilters(group.Extension)
+	filters := extractMemberFilters(group)
 	if len(filters) == 0 {
 		ids := make([]string, 0, len(group.Member))
 		for _, m := range group.Member {
@@ -294,7 +327,7 @@ func groupMembersSQL(s groupMembersResolver, group *fhir.Group) (string, error) 
 // member list. A Group with no member-filter extensions is static — its own
 // Member list is returned unchanged.
 func resolveGroupMembers(s groupMembersResolver, group *fhir.Group) ([]fhir.GroupMember, error) {
-	if len(extractMemberFilters(group.Extension)) == 0 {
+	if len(extractMemberFilters(group)) == 0 {
 		return group.Member, nil
 	}
 
@@ -318,22 +351,72 @@ func resolveGroupMembers(s groupMembersResolver, group *fhir.Group) ([]fhir.Grou
 	return members, nil
 }
 
-// extractMemberFilters returns the valueString of every member-filter
-// extension on a Group, in document order.
-func extractMemberFilters(exts []fhir.Extension) []string {
+// extractMemberFilters returns the FHIR search of every member-filter on a
+// Group, in document order. Both forms are read: the Bulk Data form
+// (modifierExtension with valueExpression, application/x-fhir-query, as the
+// sim-on-fhir IG generates it) and FENIX's original extension with valueString.
+func extractMemberFilters(group *fhir.Group) []string {
 	var out []string
-	for _, e := range exts {
-		if e.Url == memberFilterURL && e.ValueString != nil {
-			out = append(out, *e.ValueString)
+	for _, e := range group.ModifierExtension {
+		if f, ok := memberFilterValue(e); ok {
+			out = append(out, f)
+		}
+	}
+	for _, e := range group.Extension {
+		if f, ok := memberFilterValue(e); ok {
+			out = append(out, f)
 		}
 	}
 	return out
 }
 
+func memberFilterValue(e fhir.Extension) (string, bool) {
+	if e.Url != memberFilterURL {
+		return "", false
+	}
+	if e.ValueString != nil {
+		return *e.ValueString, true
+	}
+	if e.ValueExpression != nil && e.ValueExpression.Expression != nil {
+		return *e.ValueExpression.Expression, true
+	}
+	return "", false
+}
+
+// todayPlaceholder is a relative date in a filter: {today}, {today-18y},
+// {today+3m}, {today-90d}. The sim-on-fhir dataset definitions use it so a
+// Group stays valid over time; FENIX fills it in on every run.
+var todayPlaceholder = regexp.MustCompile(`\{today(?:([+-])(\d+)([dmy]))?\}`)
+
+// fillToday replaces every {today...} placeholder by a concrete date.
+func fillToday(filter string, today time.Time) string {
+	return todayPlaceholder.ReplaceAllStringFunc(filter, func(m string) string {
+		p := todayPlaceholder.FindStringSubmatch(m)
+		d := today
+		if p[1] != "" {
+			n, _ := strconv.Atoi(p[2])
+			if p[1] == "-" {
+				n = -n
+			}
+			switch p[3] {
+			case "d":
+				d = d.AddDate(0, 0, n)
+			case "m":
+				d = d.AddDate(0, n, 0)
+			case "y":
+				d = d.AddDate(n, 0, 0)
+			}
+		}
+		return d.Format("2006-01-02")
+	})
+}
+
 // parseMemberFilter splits a member-filter valueString ("ResourceType?params")
 // into its resource type and FHIR search params, using the same single-value-
 // per-key shape handleSearch builds from a real request's query string.
+// {today...} placeholders are filled in first (see fillToday).
 func parseMemberFilter(filter string) (resourceType string, params map[string]string, err error) {
+	filter = fillToday(filter, time.Now())
 	resourceType, rawQuery, _ := strings.Cut(filter, "?")
 	if resourceType == "" {
 		return "", nil, fmt.Errorf("missing resource type before '?'")

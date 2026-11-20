@@ -59,9 +59,14 @@ const (
 	CodeDataFixed      = "FX-DATA-013" // profile: value differs from the fixed value
 	CodeDataChoiceType = "FX-DATA-014" // profile: value[x] type not allowed
 
-	CodeDataUnmapped     = "FX-DATA-020" // source code has no mapping: the concept map's default replaces it
-	CodeDataUnmappedNone = "FX-DATA-021" // source code has no mapping and there is no default: passed through unchanged
+	CodeDataUnmapped      = "FX-DATA-020" // source code has no mapping: the concept map's default replaces it
+	CodeDataUnmappedNone  = "FX-DATA-021" // source code has no mapping and there is no default: passed through unchanged
+	CodeDataNotInValueSet = "FX-DATA-022" // code is not in the valueset of a required/extensible binding and no concept map targets that valueset
 
 	CodeDataObsType   = "FX-DATA-030" // Observation value is of a type its ObservationDefinition does not permit
 	CodeDataObsAnswer = "FX-DATA-031" // coded Observation value is not a valid answer for its observation code (ObservationDefinition)
+
+	CodeDataDatasetElement = "FX-DATA-040" // export of a dataset: an element its data requirements need is missing from a resource
+	CodeDataDatasetType    = "FX-DATA-041" // export of a dataset: a resource type its data requirements need is not in _type
+	CodeDataDatasetCode    = "FX-DATA-042" // export of a dataset: a code its data requirements filter on occurs in no exported resource
 )

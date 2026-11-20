@@ -108,7 +108,7 @@ inputs:
   # use: what is also fed into conversion, as the folder inputs would be.
   packages:
     - file: {source: sim-on-fhir, path: output/package.tgz}
-      use: [profiles, valueSets, observationDefinitions]
+      use: [profiles, valueSets, observationDefinitions, datasets]   # datasets: $export of a dataset cohort Group warns about missing required elements
       dependencies: true                  # nictiz.nl.gbb, hl7.fhir.eu.base, ... from packages.fhir.org (served only)
       exclude: [hl7.fhir.r4.core, hl7.fhir.uv.xver-r5.r4]   # FHIR core (built in) and the 163 MB R5 cross-version package
   # packageCache: .cache/packages         # default
@@ -156,6 +156,8 @@ output:
     dir: output
     useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
     archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
+  findings:
+    includeResources: true   # keep the full resource of each example (shown on hover); sim test data is fake
   # Data-quality findings (FX-DATA-nnn: wrong types/codes, profile violations) as JSON lines,
   # one findings-<runID>.jsonl per run, separate from the application log. Meant for dashboards.
   # findings:

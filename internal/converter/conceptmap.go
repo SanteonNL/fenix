@@ -47,10 +47,11 @@ type valuesetMap struct {
 // old flat CSV format.
 type ConceptMapService struct {
 	mu         sync.RWMutex
-	byValueset map[string]*valuesetMap    // target_valueset_uri (no version) -> map
-	valueSets  map[string]map[string]bool // valueset url (no version) -> its member codes, see LoadValueSetsDir
-	vsURLs     map[string]string          // valueset url or "ValueSet/<id>" -> its canonical url (no version)
+	byValueset map[string]*valuesetMap      // target_valueset_uri (no version) -> map
+	valueSets  map[string]map[string]bool   // valueset url (no version) -> its member codes, see LoadValueSetsDir
+	vsURLs     map[string]string            // valueset url or "ValueSet/<id>" -> its canonical url (no version)
 	vsConcepts map[string][]ValueSetConcept // valueset url or "ValueSet/<id>" -> its listed concepts, for the editor's pick-lists
+	vsComplete map[string]bool              // valueset url or "ValueSet/<id>" -> its listed members are all of it (no filter, import or whole code system)
 	extraMaps  []string                     // ConceptMap files from outside the editor folder (packages), reloaded by LoadDir
 	logger     zerolog.Logger
 }
@@ -170,6 +171,7 @@ func (s *ConceptMapService) loadValueSets(files []string, replace bool) int {
 	sets := map[string]map[string]bool{}
 	urls := map[string]string{}
 	concepts := map[string][]ValueSetConcept{}
+	complete := map[string]bool{}
 	read := 0
 	for _, file := range files {
 		data, err := os.ReadFile(file)
@@ -177,7 +179,7 @@ func (s *ConceptMapService) loadValueSets(files []string, replace bool) int {
 			s.logger.Warn().Err(err).Str("file", filepath.Base(file)).Msg("Skipping valueset")
 			continue
 		}
-		url, id, list := valueSetMembers(data)
+		url, id, list, all := valueSetMembers(data)
 		if url == "" || len(list) == 0 {
 			continue
 		}
@@ -187,6 +189,7 @@ func (s *ConceptMapService) loadValueSets(files []string, replace bool) int {
 				continue
 			}
 			urls[name] = stripVersion(url)
+			complete[name] = all
 			if sets[name] == nil {
 				sets[name] = map[string]bool{}
 			}
@@ -199,12 +202,16 @@ func (s *ConceptMapService) loadValueSets(files []string, replace bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if replace || s.valueSets == nil {
-		s.valueSets, s.vsURLs, s.vsConcepts = sets, urls, concepts
+		s.valueSets, s.vsURLs, s.vsConcepts, s.vsComplete = sets, urls, concepts, complete
 		return read
 	}
 	for name, members := range sets {
 		if s.valueSets[name] == nil {
 			s.valueSets[name] = map[string]bool{}
+			s.vsComplete[name] = complete[name]
+		} else {
+			// the same valueset from two files: only complete if both list all of it
+			s.vsComplete[name] = s.vsComplete[name] && complete[name]
 		}
 		for code := range members {
 			s.valueSets[name][code] = true
@@ -245,7 +252,10 @@ type ValueSetConcept struct {
 }
 
 // valueSetMembers returns the url, id and listed members of a ValueSet resource.
-func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept) {
+// complete says the listed members are all of it: an expansion, or a compose
+// whose every include lists its concepts (no filter, no imported valueset, no
+// whole code system). Only then can a code outside the list be called wrong.
+func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept, complete bool) {
 	var vs struct {
 		ID       string `json:"id"`
 		URL      string `json:"url"`
@@ -259,6 +269,8 @@ func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept) {
 					Code    string `json:"code"`
 					Display string `json:"display"`
 				} `json:"concept"`
+				Filter   []json.RawMessage `json:"filter"`
+				ValueSet []string          `json:"valueSet"`
 			} `json:"include"`
 		} `json:"compose"`
 		Expansion struct {
@@ -270,7 +282,7 @@ func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept) {
 		} `json:"expansion"`
 	}
 	if json.Unmarshal(data, &vs) != nil {
-		return "", "", nil
+		return "", "", nil, false
 	}
 	if vs.URL == "" && vs.ValueSet != nil {
 		// the wrapper holds the resource one level down: read it again from there
@@ -281,15 +293,22 @@ func valueSetMembers(data []byte) (url, id string, concepts []ValueSetConcept) {
 			return valueSetMembers(w.ValueSet)
 		}
 	}
+	complete = len(vs.Compose.Include) > 0
 	for _, inc := range vs.Compose.Include {
+		if len(inc.Concept) == 0 || len(inc.Filter) > 0 || len(inc.ValueSet) > 0 {
+			complete = false
+		}
 		for _, c := range inc.Concept {
 			concepts = append(concepts, ValueSetConcept{System: inc.System, Code: c.Code, Display: c.Display})
 		}
 	}
+	if len(vs.Expansion.Contains) > 0 {
+		complete = true
+	}
 	for _, c := range vs.Expansion.Contains {
 		concepts = append(concepts, ValueSetConcept{System: c.System, Code: c.Code, Display: c.Display})
 	}
-	return vs.URL, vs.ID, concepts
+	return vs.URL, vs.ID, concepts, complete
 }
 
 // ValueSetConcepts returns the listed concepts of a valueset given by canonical URL or
@@ -300,6 +319,7 @@ func (s *ConceptMapService) ValueSetConcepts(ref string) ([]ValueSetConcept, boo
 	c, ok := s.vsConcepts[stripVersion(ref)]
 	return append([]ValueSetConcept(nil), c...), ok
 }
+
 // ValueSetURL returns the canonical URL (no version) of a valueset given by URL or by
 // reference "ValueSet/<id>", or "" when it is not known. Concept maps are indexed by
 // that URL, so this is how a reference becomes the valueset a map can target.
@@ -366,14 +386,19 @@ func (s *ConceptMapService) Translate(valuesetURI, sourceCode string) (targetCod
 
 // TranslateStatus is Translate plus how the code was treated: MapValid, MapMapped
 // (an explicit mapping), MapDefault (the fixed fallback replaced it), MapNone
-// (a map exists, but neither a mapping nor a fallback), or "" when no concept map
-// is loaded for the valueset at all.
+// (a map exists, but neither a mapping nor a fallback), MapNoMap (no concept map
+// for the valueset, and the code is not one of its members), or "" when no concept
+// map is loaded for the valueset and the code is a member or the members are not known.
 func (s *ConceptMapService) TranslateStatus(valuesetURI, sourceCode string) (targetCode, targetDisplay, targetSystem, status string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	vm, ok := s.byValueset[stripVersion(valuesetURI)]
+	vs := stripVersion(valuesetURI)
+	vm, ok := s.byValueset[vs]
 	if !ok {
+		if s.vsComplete[vs] && sourceCode != "" && !s.valueSets[vs][sourceCode] {
+			return sourceCode, "", "", MapNoMap
+		}
 		return sourceCode, "", "", ""
 	}
 
@@ -481,6 +506,7 @@ const (
 	MapMapped  = "mapped"  // an explicit mapping applies
 	MapDefault = "default" // no mapping: the group's fixed "unmapped" code replaces it
 	MapNone    = "none"    // no mapping and no default: passed through unchanged
+	MapNoMap   = "nomap"   // no concept map targets the valueset and the code is not a member: passed through unchanged
 )
 
 // CodeResolution says what Translate does with one source code.

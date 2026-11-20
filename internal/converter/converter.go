@@ -841,6 +841,9 @@ func ExportToJSON(resources []interface{}) ([]byte, error) {
 // cachedFHIRType returns the reflect.Type for a FHIR type name, using a
 // package-level cache so each type's struct fields are inspected only once.
 func cachedFHIRType(typeName string) (reflect.Type, bool) {
+	if typeName == "" {
+		return nil, false // an unresolved path, not a type
+	}
 	if v, ok := fhirTypeCache.Load(typeName); ok {
 		return v.(reflect.Type), true
 	}
@@ -882,8 +885,8 @@ func computeArrayFields(resourceType string) map[string]bool {
 	arrayFields := make(map[string]bool)
 
 	t, ok := cachedFHIRType(resourceType)
-	if !ok {
-		return arrayFields
+	if !ok || t.Kind() != reflect.Struct {
+		return arrayFields // unknown or not a struct (e.g. an unresolved path): nothing to wrap
 	}
 
 	// Iterate through struct fields
@@ -929,35 +932,32 @@ func computeTypeNameFromPath(path string) string {
 		return ""
 	}
 
-	// Get the resource type (first part)
-	resourceType := parts[0]
-
 	// Get the field name (last part)
 	fieldName := parts[len(parts)-1]
 
-	t, ok := cachedFHIRType(resourceType)
-	if !ok {
-		return ""
-	}
-
-	// Find the struct field
-	field, ok := t.FieldByNameFunc(func(name string) bool {
-		// Match JSON tag to field name
-		if f, found := t.FieldByName(name); found {
-			jsonTag := f.Tag.Get("json")
-			tagName := strings.Split(jsonTag, ",")[0]
-			return tagName == fieldName
+	// Walk the path through the resource's struct by JSON tag, so nested
+	// backbone elements resolve too (QuestionnaireResponse.item.answer ->
+	// QuestionnaireResponseItemAnswer, EpisodeOfCare.diagnosis -> EpisodeOfCareDiagnosis).
+	// Every struct type found on the way is registered in fhirTypeCache under its
+	// name, so the name-based lookups (getArrayFieldsForType, getTypeNameForField)
+	// find it as well.
+	if t, ok := cachedFHIRType(parts[0]); ok {
+		for i, seg := range parts[1:] {
+			ft, ok := structFieldType(t, seg)
+			if !ok {
+				break
+			}
+			if ft.Kind() == reflect.Struct && ft.Name() != "" {
+				fhirTypeCache.LoadOrStore(ft.Name(), ft)
+			}
+			if i == len(parts)-2 {
+				return ft.Name()
+			}
+			if ft.Kind() != reflect.Struct {
+				break
+			}
+			t = ft
 		}
-		return false
-	})
-
-	if ok && field.Type.Kind() == reflect.Slice {
-		// Get the element type name
-		elemType := field.Type.Elem()
-		if elemType.Kind() == reflect.Ptr {
-			elemType = elemType.Elem()
-		}
-		return elemType.Name()
 	}
 
 	// Fallback: capitalize the field name
@@ -965,6 +965,26 @@ func computeTypeNameFromPath(path string) string {
 		return strings.ToUpper(fieldName[:1]) + fieldName[1:]
 	}
 	return ""
+}
+
+// structFieldType returns the type of the field of struct t whose JSON name is
+// jsonName, with pointers and slices unwrapped (e.g. []*Coding -> Coding).
+func structFieldType(t reflect.Type, jsonName string) (reflect.Type, bool) {
+	if t.Kind() != reflect.Struct {
+		return nil, false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if strings.Split(f.Tag.Get("json"), ",")[0] != jsonName {
+			continue
+		}
+		ft := f.Type
+		for ft.Kind() == reflect.Ptr || ft.Kind() == reflect.Slice {
+			ft = ft.Elem()
+		}
+		return ft, true
+	}
+	return nil, false
 }
 
 // normalizeObjectArrayFields wraps scalar values in arrays where the struct definition expects arrays

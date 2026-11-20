@@ -14,6 +14,7 @@ import (
 
 	"github.com/SanteonNL/fenix/internal/conformance"
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/datasets"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/SanteonNL/fenix/internal/patientnumbers"
@@ -47,8 +48,11 @@ type Server struct {
 	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
 	deidentKey     []byte
 
-	groupsMu sync.RWMutex
-	groups   map[string]*fhir.Group // Bulk Export Group definitions posted via POST /r4/Group, keyed by id
+	groupsMu      sync.RWMutex
+	groups        map[string]*fhir.Group // Bulk Export Group definitions posted via POST /r4/Group, keyed by id
+	groupDatasets map[string]string      // Group id -> dataset id, for Groups posted as a dataset's cohort (see SetDatasets)
+
+	datasets *datasets.Catalog // dataset definitions of the loaded packages; nil checks no exports against them
 
 	exportsMu sync.RWMutex
 	exports   map[string]*exportJob // $export jobs kicked off via POST /r4/Group/{id}/$export, keyed by job id
@@ -88,6 +92,7 @@ func New(compiler *querycompiler.Compiler, conv *converter.FHIRConverter, source
 		conceptMapSvc:  conceptMapSvc,
 		log:            log,
 		groups:         make(map[string]*fhir.Group),
+		groupDatasets:  make(map[string]string),
 		exports:        make(map[string]*exportJob),
 	}
 }
@@ -370,11 +375,43 @@ type searchOpts struct {
 	// skipWrite leaves the compiled queries unwritten — the same queries were
 	// already written for an earlier batch of the same export.
 	skipWrite bool
+	// codesInGo leaves the token params (code, code:in, status, ...) out of the
+	// SQL and filters on them in Go after conversion, so every coded row of the
+	// selected patients is converted and validated: a source code that no concept
+	// map translates still gets its FX-DATA-02x finding, instead of being dropped
+	// unseen by the SQL. Costs converting the rows the filter then discards.
+	codesInGo bool
+}
+
+// splitCodeParams splits fhirParams into the params that stay in SQL and the
+// token params that are filtered in Go only (see searchOpts.codesInGo). A
+// token param with a modifier the Go filter does not evaluate stays in SQL.
+func (s *Server) splitCodeParams(resourceType string, fhirParams map[string]string) (sqlParams map[string]string, inGo map[string]bool) {
+	sqlParams = make(map[string]string, len(fhirParams))
+	inGo = map[string]bool{}
+	for code, value := range fhirParams {
+		base, modifier, _ := strings.Cut(code, ":")
+		if _, _, _, chained := chainedParam(code); !chained && (modifier == "" || valueSetModifiers[modifier]) {
+			if _, paramType, ok := s.compiler.SearchParamField(resourceType, base); ok && paramType == "token" {
+				inGo[code] = true
+				continue
+			}
+		}
+		sqlParams[code] = value
+	}
+	return sqlParams, inGo
 }
 
 // searchInGroup is search, optionally restricted to a group's patients (see searchOpts).
 func (s *Server) searchInGroup(ctx context.Context, resourceType string, fhirParams map[string]string, o searchOpts) (resources []interface{}, found bool, err error) {
-	rendered, err := s.render(resourceType, fhirParams, o.membersSQL)
+	sqlParams, inGo := fhirParams, map[string]bool(nil)
+	if o.codesInGo {
+		if err := s.checkSearchParams(fhirParams); err != nil { // the Go-only params are checked too
+			return nil, false, err
+		}
+		sqlParams, inGo = s.splitCodeParams(resourceType, fhirParams)
+	}
+	rendered, err := s.render(resourceType, sqlParams, o.membersSQL)
 	if err != nil {
 		return nil, false, err
 	}
@@ -391,13 +428,13 @@ func (s *Server) searchInGroup(ctx context.Context, resourceType string, fhirPar
 		s.writeCompiledQueries(queryDir, resourceType, rendered, o.groupFile)
 	}
 
-	resources, err = s.convertRendered(ctx, resourceType, fhirParams, rendered)
+	resources, err = s.convertRenderedExcept(ctx, resourceType, fhirParams, rendered, inGo)
 	return resources, true, err
 }
 
 // render compiles the queries for (resourceType, fhirParams), restricted to membersSQL when set.
 func (s *Server) render(resourceType string, fhirParams map[string]string, membersSQL string) ([]querycompiler.RenderedQuery, error) {
-	if err := s.checkValueSetParams(fhirParams); err != nil {
+	if err := s.checkSearchParams(fhirParams); err != nil {
 		return nil, err
 	}
 	var rendered []querycompiler.RenderedQuery
@@ -416,6 +453,13 @@ func (s *Server) render(resourceType string, fhirParams map[string]string, membe
 // convertRendered runs rendered, converts the rows to FHIR resources, and
 // applies the in-Go filter for params SQL did not narrow (see search).
 func (s *Server) convertRendered(ctx context.Context, resourceType string, fhirParams map[string]string, rendered []querycompiler.RenderedQuery) ([]interface{}, error) {
+	return s.convertRenderedExcept(ctx, resourceType, fhirParams, rendered, nil)
+}
+
+// convertRenderedExcept is convertRendered for SQL that was rendered without
+// the params in notInSQL: those are filtered in Go even when the query could
+// push them down.
+func (s *Server) convertRenderedExcept(ctx context.Context, resourceType string, fhirParams map[string]string, rendered []querycompiler.RenderedQuery, notInSQL map[string]bool) ([]interface{}, error) {
 	// Join all rendered queries into one multi-statement SQL string.
 	// ConvertSQL handles ";" as statement separator, so results from all queries
 	// are merged into a single resource map keyed by resource_id.
@@ -430,7 +474,11 @@ func (s *Server) convertRendered(ctx context.Context, resourceType string, fhirP
 		return nil, fmt.Errorf("conversion failed: %w", err)
 	}
 
-	return filterUnwiredParams(resourceType, fhirParams, s.sqlPushedCodes(resourceType, fhirParams), resources, s.compiler.SearchParamField, s.valueSetMembers()), nil
+	pushed := s.sqlPushedCodes(resourceType, fhirParams)
+	for code := range notInSQL {
+		delete(pushed, code)
+	}
+	return filterUnwiredParams(resourceType, fhirParams, pushed, resources, s.compiler.SearchParamField, s.filterDeps()), nil
 }
 
 // sqlPushedCodes are the params the SQL for (resourceType, fhirParams) really narrows on.

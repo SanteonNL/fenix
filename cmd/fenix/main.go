@@ -11,9 +11,10 @@ import (
 
 	"net/http"
 
-	"github.com/SanteonNL/fenix/internal/conformance"
 	"github.com/SanteonNL/fenix/internal/config"
+	"github.com/SanteonNL/fenix/internal/conformance"
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/datasets"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/fhirserver"
 	"github.com/SanteonNL/fenix/internal/findings"
@@ -94,7 +95,7 @@ func main() {
 	// staging database nor any output.
 	if *command == "findings" {
 		dir := resolvePath(repoRoot, cfg.Output.FindingsDir())
-		profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, _ := loadTerminology(cfg, repoRoot, &log)
+		profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, _, _ := loadTerminology(cfg, repoRoot, &log)
 		logFindingsLocation(&log, *servePort, dir)
 		if err := http.ListenAndServe(*servePort, fhirserver.NewToolsServer(dir, conceptMapsDir, profileSvc, conceptMapSvc, obsDefs, log)); err != nil {
 			log.Fatal().Err(err).Msg("Findings dashboard stopped")
@@ -334,6 +335,7 @@ func logFindingsLocation(log *zerolog.Logger, addr, dir string) {
 	}
 	log.Info().Str("url", url).Str("dir", dir).Int("files", len(files)).Msg("Findings dashboard")
 }
+
 // newFindingsCollector builds the collector for data findings, per the output.findings config.
 func newFindingsCollector(cfg *config.Config) *findings.Collector {
 	c := findings.NewCollector()
@@ -363,7 +365,7 @@ func runFHIRConversion(db *sqlx.DB, cfg *config.Config, sqlPath string, repoRoot
 		return
 	}
 
-	profileSvc, conceptMapSvc, _, obsDefs, _ := loadTerminology(cfg, repoRoot, log)
+	profileSvc, conceptMapSvc, _, obsDefs, _, _ := loadTerminology(cfg, repoRoot, log)
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 	conv.SetObservationDefinitions(obsDefs)
@@ -466,8 +468,9 @@ func connectSourceDirectly(name string, cfg *config.Config, log *zerolog.Logger)
 // loadTerminology loads FHIR profiles and ConceptMaps from wherever the config
 // points: the repositories referenced by inputs.profiles / inputs.conceptMaps. It also returns the resolved ConceptMaps
 // directory, which the ConceptMap editor writes back to, and the conformance
-// store (folders + inputs.packages + inputs.terminologyServers, see loadConformance).
-func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*converter.ProfileService, *converter.ConceptMapService, string, *converter.ObservationDefinitions, *conformance.Store) {
+// store (folders + inputs.packages + inputs.terminologyServers, see loadConformance)
+// and the dataset definitions of the packages with use "datasets".
+func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (*converter.ProfileService, *converter.ConceptMapService, string, *converter.ObservationDefinitions, *conformance.Store, *datasets.Catalog) {
 	ctx := context.Background()
 
 	profileSvc := converter.NewProfileService(*log)
@@ -508,9 +511,10 @@ func loadTerminology(cfg *config.Config, repoRoot string, log *zerolog.Logger) (
 			log.Warn().Err(err).Msg("Failed to load observation definitions")
 		}
 	}
+	datasetCatalog := datasets.NewCatalog()
 	store, obsDefs := loadConformance(ctx, cfg, repoRoot, log, []string{profilesDir, conceptMapsDir, valueSetsDir, defsDir},
-		profileSvc, conceptMapSvc, obsDefs)
-	return profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, store
+		profileSvc, conceptMapSvc, obsDefs, datasetCatalog)
+	return profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, store, datasetCatalog
 }
 
 // startFHIRServer starts the FHIR API server. It blocks until the server exits.
@@ -547,7 +551,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	}
 	compiler.SetSQLBaseDir(cfg.QueriesRoot(context.Background(), repoRoot, *log))
 
-	profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, conformanceStore := loadTerminology(cfg, repoRoot, log)
+	profileSvc, conceptMapSvc, conceptMapsDir, obsDefs, conformanceStore, datasetCatalog := loadTerminology(cfg, repoRoot, log)
 
 	conv := converter.NewFHIRConverter(db, *log, profileSvc, conceptMapSvc)
 	conv.SetConcurrency(cfg.Performance.EffectiveStatementWorkers(pool), cfg.Performance.BuildWorkers)
@@ -572,6 +576,7 @@ func startFHIRServer(stagingDB *sqlx.DB, cfg *config.Config, repoRoot string, lo
 	srv := fhirserver.New(compiler, conv, *sourceName, *groupID, outputDir, deidentRuleset, deidentKey, conceptMapsDir, conceptMapSvc, *log)
 	srv.SetExportTuning(cfg.Performance.ExportBatch(), cfg.Performance.ExportParallelism())
 	srv.SetConformance(conformanceStore)
+	srv.SetDatasets(datasetCatalog)
 	srv.SetFindingsDir(resolvePath(repoRoot, cfg.Output.FindingsDir()))
 	logFindingsLocation(log, *servePort, resolvePath(repoRoot, cfg.Output.FindingsDir()))
 	every, err := cfg.Output.FindingsFlushEvery()

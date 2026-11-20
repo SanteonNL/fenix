@@ -1,6 +1,7 @@
 package fhirserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,8 +26,61 @@ func (s *Server) valueSetMembers() valueSetMembersFunc {
 	return s.conformance.Members
 }
 
+// filterDeps are the expander for :in / :not-in and the resolver for chained params.
+func (s *Server) filterDeps() filterDeps {
+	return filterDeps{expand: s.valueSetMembers(), chain: s.chainIDs}
+}
+
+// chainIDs resolves a chained param: the ids of the targetType resources that
+// match targetParam=value, found with an ordinary search on targetType.
+func (s *Server) chainIDs(targetType, targetParam, value string) (map[string]bool, error) {
+	resources, found, err := s.searchContext(context.Background(), targetType, map[string]string{targetParam: value})
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("no queries configured for resource type %q in source %q", targetType, s.source)
+	}
+	ids := make(map[string]bool, len(resources))
+	for _, r := range resources {
+		b, err := json.Marshal(r)
+		if err != nil {
+			continue
+		}
+		var head struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(b, &head) == nil && head.ID != "" {
+			ids[head.ID] = true
+		}
+	}
+	return ids, nil
+}
+
+// checkSearchParams refuses a search FENIX cannot evaluate correctly, instead
+// of silently filtering everything (or nothing) away: an :in / :not-in
+// ValueSet that cannot be expanded, or a chained param whose target type has
+// no queries.
+func (s *Server) checkSearchParams(fhirParams map[string]string) error {
+	if err := s.checkValueSetParams(fhirParams); err != nil {
+		return err
+	}
+	for code := range fhirParams {
+		if _, target, targetParam, ok := chainedParam(code); ok {
+			rendered, err := s.render(target, map[string]string{targetParam: fhirParams[code]}, "")
+			if err != nil {
+				return fmt.Errorf("%s: %w", code, err)
+			}
+			if len(rendered) == 0 {
+				return fmt.Errorf("%s: resource type %q is not configured for source %q", code, target, s.source)
+			}
+		}
+	}
+	return nil
+}
+
 // checkValueSetParams refuses a search whose :in / :not-in ValueSets cannot be
-// expanded, instead of silently filtering everything (or nothing) away.
+// expanded.
 func (s *Server) checkValueSetParams(fhirParams map[string]string) error {
 	for code, urls := range valueSetParams(fhirParams) {
 		if s.conformance == nil {

@@ -46,6 +46,45 @@ resources:
           patient: SUBSTR("subject.reference", 9)
           pushdown: [status, code]
 
+  # The sb-ibd dataset of sim-on-fhir (test/requests/sim-on-fhir.http): DBC, Verrichting and
+  # VragenlijstAntwoord. Only patient is pushed down; type/status/date/code(:in), the chained
+  # condition:Condition.code and the rest are filtered in Go after conversion.
+  EpisodeOfCare:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/episodeofcare.sql
+        pushdown: [patient]
+        member_filter:
+          patient: SUBSTR("patient.reference", 9)
+          pushdown: []
+
+  Condition:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/condition.sql
+        pushdown: [patient]
+        member_filter:
+          patient: SUBSTR("subject.reference", 9)
+          pushdown: []
+
+  Procedure:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/procedure.sql
+        pushdown: [patient]
+        member_filter:
+          patient: SUBSTR("subject.reference", 9)
+          pushdown: []
+
+  QuestionnaireResponse:
+    queries:
+      - name: main
+        sql: queries/sim/fhir/questionnaireresponse.sql
+        pushdown: [patient]
+        member_filter:
+          patient: SUBSTR("subject.reference", 9)
+          pushdown: []
+
 # Patient-number strategy (DSG patient-id strategy): queries run for the active number AND all its old
 # numbers; output is brought back to the single active number. Columns:
 # (number, replacedby). Example chain in test/data/sim/PatientNumbers.csv:

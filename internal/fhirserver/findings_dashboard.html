@@ -106,6 +106,7 @@ tr.new td, tr.gone td { background: var(--warn-bg); }
 .cbtn { padding: 0 8px; line-height: 18px; }
 button:disabled { opacity: .4; cursor: default; }.ex { cursor: help; margin-right: 6px; border-bottom: 1px dotted var(--muted); }
 .ex.has { color: var(--brand-dark); border-bottom-color: var(--brand); }
+.ex.good.has { color: #2e8b57; border-bottom-color: #2e8b57; }
 #pop { position: fixed; z-index: 20; display: none; width: 540px; max-width: calc(100vw - 16px); max-height: 60vh; overflow: auto; background: var(--panel); border: 1px solid var(--brand); border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 10px 14px; }
 #pop .pophead { margin-bottom: 6px; }
 #pop pre { margin: 0; font: 12px/1.45 var(--mono); }
@@ -308,8 +309,12 @@ function ingest(records, keep) {
     if (r.query) e.queries.add(r.query);
     if (r.time && (!e.time || r.time < e.time)) e.time = r.time;
     if (r.kind === "summary") {
-      const s = e.seen[r.resource_type] || (e.seen[r.resource_type] = { seen: 0, skipped: 0 });
+      const s = e.seen[r.resource_type] || (e.seen[r.resource_type] = { seen: 0, skipped: 0, examples: [], samples: [] });
       s.seen += r.seen || 0; s.skipped += r.skipped || 0;
+      // clean = resources without any finding; absent in files written before it was counted
+      if (r.clean !== undefined) s.clean = (s.clean || 0) + r.clean;
+      for (const ex of r.examples || []) if (s.examples.length < 3 && !s.examples.includes(ex)) s.examples.push(ex);
+      for (const sm of r.samples || []) if (s.samples.length < 3 && !s.samples.some(y => y.id === sm.id)) s.samples.push(sm);
     } else if (r.kind === "finding") e.allFindings.push(r);
     else if (r.kind === "profile") {
       const have = e.profile.get(r.path);
@@ -389,7 +394,7 @@ function mergeProfile(into, r) {
 /* ---------- codes without a mapping: status, editor links, the ignore list ---------- */
 const enc = encodeURIComponent;
 const ikey = (path, code) => path + "\u0000" + code;
-const isUnmappedRule = code => code === "FX-DATA-020" || code === "FX-DATA-021";
+const isUnmappedRule = code => code === "FX-DATA-020" || code === "FX-DATA-021" || code === "FX-DATA-022";
 const isAnswerRule = code => code === "FX-DATA-031"; // an answer that is not valid for its observation code
 const isIgnorableRule = code => isUnmappedRule(code) || isAnswerRule(code);
 
@@ -544,6 +549,41 @@ function mapColumn(path, m) {
   return { head: "Concept map", cell: n => (n.startsWith("(") ? null : mapCell(path, n, byCode.get(n), m)), dim: n => state.ignored.has(ikey(path, n)) };
 }
 
+/* ---------- codes a dataset filters on that the data does not hold (FX-DATA-042) ---------- */
+const isMissingCodeRule = code => code === "FX-DATA-042";
+
+/* the source codes this export left unmapped at the same element (FX-DATA-020/021/022): the candidates
+   to map onto a code the dataset needs */
+function unmappedSources(exp, path) {
+  const out = new Set();
+  for (const f of (exp && exp.findings) || []) {
+    if (!isUnmappedRule(f.code) || f.path !== path) continue;
+    for (const v of f.values || []) if (!v.ignored && v.value !== "") out.add(v.value);
+  }
+  return [...out].sort();
+}
+
+/* the extra column of a missing code: open the concept map with that code filled in as the target,
+   for each unmapped source code, or for a source code still to be typed in */
+function missingCodeColumn(sources, m) {
+  if (!m) return { head: "Concept map", dim: () => false, cell: n => (n.startsWith("(") ? null : h("span", { class: "muted small" }, "…")) };
+  if (!m.bound) return { head: "Concept map", dim: () => false, cell: n => (n.startsWith("(") ? null : h("span", { class: "muted small" }, "element has no ValueSet binding")) };
+  const byCode = new Map((m.codes || []).map(c => [c.code, c]));
+  const href = (src, target) => {
+    const q = (src ? "&code=" + enc(src) : "") + "&target=" + enc(target.split("|").pop()) + "&back=" + enc("/findings");
+    const file = (src && byCode.get(src) && byCode.get(src).file) || (m.has_map && m.files && m.files[0]);
+    return file ? "/conceptmaps#edit=" + enc(file) + q : "/conceptmaps#new=" + enc(m.valueset) + q;
+  };
+  const link = (src, target, label) => h("a", { class: "maplink", href: href(src, target), onclick: saveNav, title: (src || "a source code") + " → " + target }, label);
+  return {
+    head: "Concept map",
+    dim: () => false,
+    cell: n => (n.startsWith("(") ? null : h("span", { class: "small" },
+      sources.map(s => [link(s, n, "map " + s + " → it"), " · "]),
+      link("", n, sources.length ? "another source code" : "map a source code to it"))),
+  };
+}
+
 /* The page is served by FENIX (/findings), which reads the findings folder: no files to pick. */
 async function fetchFindings(first) {
   try {
@@ -626,11 +666,13 @@ function valueMap(f) {
   if (f.other_values) m.set("(other values, not listed)", f.other_values);
   return m;
 }
+/* a missing element: required by the profile (010) or by a data requirement of the exported dataset (040) */
+const isMissingRule = code => code === "FX-DATA-010" || code === "FX-DATA-040";
 /* empty/missing hits for a set of findings: missing-element findings plus "(empty)" values */
 function nullCount(findings) {
   let n = 0;
   for (const f of findings) {
-    if (!f.values || !f.values.length) { if (f.code === "FX-DATA-010") n += f.count; continue; }
+    if (!f.values || !f.values.length) { if (isMissingRule(f.code)) n += f.count; continue; }
     for (const v of f.values) if (isNullish(v.value)) n += v.count;
   }
   return n;
@@ -1079,8 +1121,12 @@ function renderDetail() {
   box.append(h("div", { class: "stats" },
     node.model && total ? stat("Resources", fmt(total), cmp && cTotal ? deltaEl(total, cTotal) : null) : null,
     node.model && total ? stat("Skipped", fmt(exp.seen[model].skipped) + " (" + pct(exp.seen[model].skipped, total) + ")", cmp && cTotal ? deltaEl(exp.seen[model].skipped, cmp.seen[model].skipped) : null) : null,
+    node.model && total && exp.seen[model].clean !== undefined ? stat("Without findings", fmt(exp.seen[model].clean) + " (" + pct(exp.seen[model].clean, total) + ")", cmp && cTotal && cmp.seen[model].clean !== undefined ? deltaEl(exp.seen[model].clean, cmp.seen[model].clean) : null) : null,
     node.prof ? null : stat("Empty / missing", fmt(nulls) + " (" + pct(nulls, total) + ")", cmp ? deltaEl(nulls, cNulls) : null)));
   if (node.prof) box.append(contentsCard(node.prof, cmpNode && cmpNode.prof));
+  const good = exp.seen[model];
+  if (good && good.examples && good.examples.length)
+    box.append(exampleList({ resource_type: model, path: node.model ? "" : node.path, examples: good.examples, samples: good.samples }, true));
 
   const key = f => fkey(f), have = new Set(node.sub.map(key));
   const gone = cmpNode ? cmpNode.sub.filter(f => !have.has(key(f))) : [];
@@ -1097,14 +1143,14 @@ function renderDetail() {
 const stat = (label, value, extra) => h("div", { class: "stat" }, h("span", { class: "muted small" }, label), h("b", {}, value), extra);
 
 /* Example resources: hover an id to see the whole resource (when the converter kept it). */
-function exampleList(f) {
+function exampleList(f, clean) {
   const samples = new Map((f.samples || []).map(x => [x.id, x.resource]));
-  return h("div", { class: "small muted", style: "margin-top:6px" }, "Example resources (hover): ",
-    f.examples.map(id => h("code", { class: "ex" + (samples.has(id) ? " has" : ""), onmouseenter: ev => showSample(ev.currentTarget, f, id, samples.get(id)), onmouseleave: scheduleHide }, id)));
+  return h("div", { class: "small muted", style: "margin-top:6px" }, clean ? "Correct resources, without any finding (hover): " : "Example resources (hover): ",
+    f.examples.map(id => h("code", { class: "ex" + (samples.has(id) ? " has" : "") + (clean ? " good" : ""), onmouseenter: ev => showSample(ev.currentTarget, f, id, samples.get(id), clean), onmouseleave: scheduleHide }, id)));
 }
 let popTimer = null;
 function scheduleHide() { clearTimeout(popTimer); popTimer = setTimeout(() => { document.getElementById("pop").style.display = "none"; }, 250); }
-function showSample(el, f, id, resource) {
+function showSample(el, f, id, resource, clean) {
   clearTimeout(popTimer);
   const pop = document.getElementById("pop");
   const last = (f.path || "").split(".").pop(), choice = last.endsWith("[x]"), want = last.replace("[x]", "");
@@ -1114,7 +1160,7 @@ function showSample(el, f, id, resource) {
         const m = /^\s*"([^"]+)":/.exec(line), hit = m && (choice ? m[1].startsWith(want) : m[1] === want);
         return h("span", { class: hit ? "hl" : "ln" }, line + "\n");
       }));
-  pop.replaceChildren(h("div", { class: "pophead" }, h("b", {}, f.resource_type + " " + id), h("span", { class: "muted small" }, "  as built, with the problem in place")), body);
+  pop.replaceChildren(h("div", { class: "pophead" }, h("b", {}, f.resource_type + " " + id), h("span", { class: "muted small" }, clean ? "  as built, without any finding" : "  as built, with the problem in place")), body);
   pop.style.display = "block";
   const r = el.getBoundingClientRect(), w = pop.offsetWidth, hgt = pop.offsetHeight;
   pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
@@ -1180,7 +1226,10 @@ function findingCard(f, exp, cmp, old, comparing) {
   const has = f && f.values && f.values.length;
   const defs = has && shown.code === "FX-DATA-030" ? definitionsFor(f.values.map(v => v.value.split(": ")[0])) : null;
   const answers = has && isAnswerRule(shown.code) ? answersFor(f.values.map(v => v.value)) : null;
-  const extra = shown.code === "FX-DATA-030" ? definitionColumn(shown.code, defs) : isAnswerRule(shown.code) ? answerColumn(shown.path, answers) : mapColumn(shown.path, m);
+  const sources = has && isMissingCodeRule(shown.code) ? unmappedSources(exp, shown.path) : null;
+  const mm = sources ? mappingFor(shown.path, sources) : null;
+  const extra = shown.code === "FX-DATA-030" ? definitionColumn(shown.code, defs) : isAnswerRule(shown.code) ? answerColumn(shown.path, answers)
+    : sources ? missingCodeColumn(sources, mm) : mapColumn(shown.path, m);
   // what the select-and-ignore bar works on: the answers, or the codes of the concept map
   const bulk = isAnswerRule(shown.code) ? (answers && extra ? { codes: [...answers].map(([c, a]) => ({ code: c, status: a.status })) } : null) : (m && extra ? m : null);
   const table = valuesTable(valueMap(f), valueMap(old), total, cTotal, comparing, sv, "Resources", extra);

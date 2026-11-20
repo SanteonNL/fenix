@@ -73,15 +73,21 @@ func (c *Compiler) SetParamTranslator(t ParamTranslator) { c.translate = t }
 // InexactParams returns the token params whose reverse concept mapping can't
 // be listed (the code is the concept map's catch-all "unmapped" target).
 // They are not applied in SQL at all, so callers must filter them in Go
-// even though they are listed in pushdown.
+// even though they are listed in pushdown. A token param with an OR list
+// (comma) is also inexact: SQL narrows on its codes only, Go checks the
+// exact system|code pairs.
 func (c *Compiler) InexactParams(resourceType string, fhirParams map[string]string) map[string]bool {
 	out := map[string]bool{}
-	if c.translate == nil {
-		return out
-	}
 	for code, value := range fhirParams {
 		info, ok := lookupSearchParam(c.searchIndex, resourceType, code)
 		if !ok || info.paramType != "token" {
+			continue
+		}
+		if len(tokenAlternatives(value)) > 1 {
+			out[code] = true
+			continue
+		}
+		if c.translate == nil {
 			continue
 		}
 		field := fieldName(resourceType, info.expression)

@@ -28,6 +28,8 @@ import (
 //	valueSets               members that need no concept mapping
 //	conceptMaps             code translations
 //	observationDefinitions  checks of Observation values
+//	datasets                the sim-on-fhir dataset and data requirement definitions (Binary):
+//	                        a Group $export of a dataset's cohort warns about missing required elements
 //
 // use is empty by default: the package is then only served, conversion is unchanged.
 type PackageRef struct {
@@ -38,7 +40,7 @@ type PackageRef struct {
 	File         *DirRef  `yaml:"file"`         // local .tgz or extracted package folder instead of a registry
 	Dependencies bool     `yaml:"dependencies"` // follow package.json dependencies (served only, never fed into conversion)
 	Exclude      []string `yaml:"exclude"`      // dependency names not followed; default [hl7.fhir.r4.core]
-	Use          []string `yaml:"use"`          // profiles | valueSets | conceptMaps | observationDefinitions
+	Use          []string `yaml:"use"`          // profiles | valueSets | conceptMaps | observationDefinitions | datasets
 }
 
 // TerminologyServer is a FHIR terminology server under inputs.terminologyServers.
@@ -117,7 +119,7 @@ func (t TerminologyServer) Validate() error {
 }
 
 // PackageUses are the valid values of PackageRef.Use.
-var PackageUses = map[string]bool{"profiles": true, "valueSets": true, "conceptMaps": true, "observationDefinitions": true}
+var PackageUses = map[string]bool{"profiles": true, "valueSets": true, "conceptMaps": true, "observationDefinitions": true, "datasets": true}
 
 // Validate checks one package reference.
 func (p PackageRef) Validate() error {
@@ -135,7 +137,7 @@ func (p PackageRef) Validate() error {
 	}
 	for _, u := range p.Use {
 		if !PackageUses[u] {
-			return fmt.Errorf("package %s: unknown use %q (profiles, valueSets, conceptMaps, observationDefinitions)", label, u)
+			return fmt.Errorf("package %s: unknown use %q (profiles, valueSets, conceptMaps, observationDefinitions, datasets)", label, u)
 		}
 	}
 	return nil

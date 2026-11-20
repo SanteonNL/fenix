@@ -1,0 +1,13 @@
+{
+  "id": "sb-ibd-observation-code-map",
+  "title": "Map to sb-ibd-observation-code",
+  "status": "draft",
+  "targetCanonical": "https://ig.santeon.nl/sim-on-fhir/ValueSet/sb-ibd-observation-code",
+  "group": [
+    {
+      "target": "http://loinc.org",
+      "element": []
+    }
+  ],
+  "resourceType": "ConceptMap"
+}

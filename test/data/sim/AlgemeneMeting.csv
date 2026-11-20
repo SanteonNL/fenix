@@ -7,3 +7,11 @@ MetingID;Identificatienummer;MetingNaamCodeSysteem;MetingNaamCode;MetingNaamOmsc
 7;1229;https://santeon.nl/sct;MCD_B;;;;;;https://santeon.nl/sct;A2;;;2023-10-13T19:19:19+02:00;;;;;;;;;;;final
 8;1230;https://santeon.nl/sct;MCD_L;;;;;;https://santeon.nl/sct;L3;;;2023-10-13T19:19:19+01:00;;;;;;;;;;;final
 9;999;https://santeon.nl/sct;MCD_A;;;;;;https://santeon.nl/sct;A2;;;2023-10-13T19:19:19+02:00;;;;;;;;;;;final
+101;2001;https://santeon.nl/sct;FCAL;Fecaal calprotectine (lokale labcode, niet gemapt);250;http://unitsofmeasure.org;ug/g;;;;;;2021-03-01T09:00:00+01:00;;;;;;;;;;;final
+102;2002;https://santeon.nl/sct;FCAL;Fecaal calprotectine (lokale labcode, niet gemapt);80;http://unitsofmeasure.org;ug/g;;;;;;2020-01-15T09:00:00+01:00;;;;;;;;;;;final
+103;2001;http://loinc.org;38445-3;Calprotectin [Mass/volume] in Stool;30;http://unitsofmeasure.org;ug/g;;;;;;2017-01-01T09:00:00+01:00;;;;;;;;;;;final
+104;2003;https://santeon.nl/sct;CALP;Calprotectine feces (lokale labcode);95;http://unitsofmeasure.org;ug/g;;;;;;2021-06-10T09:00:00+02:00;;;;;;;;;;;final
+105;2004;https://santeon.nl/sct;FCAL;Fecaal calprotectine (lokale labcode, niet gemapt);410;http://unitsofmeasure.org;ug/g;;;;;;2022-02-03T09:00:00+01:00;;;;;;;;;;;final
+106;2005;http://loinc.org;38445-8;Calprotectin in Stool (typfout in LOINC-code);60;http://unitsofmeasure.org;ug/g;;;;;;2022-09-21T09:00:00+02:00;;;;;;;;;;;final
+107;2003;http://loinc.org;2345-7;Glucose [Mass/volume] in Serum or Plasma;5.4;http://unitsofmeasure.org;mmol/L;;;;;;2021-06-10T09:00:00+02:00;;;;;;;;;;;final
+108;2002;https://santeon.nl/sct;FCAL;Fecaal calprotectine (lokale labcode, niet gemapt) (geen uitslag);;;;;;;;;2022-05-01T09:00:00+02:00;;;;;;;;;;;final

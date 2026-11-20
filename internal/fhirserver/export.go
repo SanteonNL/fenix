@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SanteonNL/fenix/internal/datasets"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
 	"github.com/google/uuid"
 )
@@ -71,6 +72,7 @@ type exportRequest struct {
 	runID          string
 	queriesDir     string
 	groupFile      string
+	dataset        *datasets.Dataset // the dataset the Group is the cohort of; nil = not checked (see SetDatasets)
 }
 
 // handleGroupExport kicks off a bulk export of a Group's current members —
@@ -166,6 +168,7 @@ func (s *Server) handleGroupExport(w http.ResponseWriter, r *http.Request, group
 		// hashing gap described above.
 		runID:     uuid.NewString(),
 		groupFile: groupQueryFileName(group),
+		dataset:   s.datasetForGroup(groupID),
 	}
 
 	// Everything this export runs is written to <outputDir>/exports/
@@ -262,11 +265,14 @@ func (s *Server) runExport(ctx context.Context, job *exportJob, req exportReques
 	sort.Strings(memberIDs)
 	batches := chunk(memberIDs, s.exportBatch())
 
+	s.reportMissingDatasetTypes(req.dataset, req.resourceTypes)
+
 	for i, resourceType := range req.resourceTypes {
 		var elements map[string][]string
 		if decl, ok := req.elementsByType[resourceType]; ok {
 			elements = map[string][]string{resourceType: decl}
 		}
+		codes := s.datasetCodeTracker(req.dataset, resourceType, req.typeFilters[resourceType])
 		path := filepath.Join(job.spoolDir, resourceType+".ndjson")
 		n, status, err := s.exportType(ctx, exportTypeJob{
 			resourceType:   resourceType,
@@ -274,6 +280,8 @@ func (s *Server) runExport(ctx context.Context, job *exportJob, req exportReques
 			batches:        batches,
 			patientNumbers: pm,
 			elements:       elements,
+			dataset:        req.dataset,
+			codes:          codes,
 			runID:          req.runID,
 			queriesDir:     req.queriesDir,
 			groupFile:      req.groupFile,
@@ -286,6 +294,7 @@ func (s *Server) runExport(ctx context.Context, job *exportJob, req exportReques
 			fail(status, fmt.Errorf("exporting %s: %w", resourceType, err))
 			return
 		}
+		s.reportMissingDatasetCodes(req.dataset, codes)
 		job.mu.Lock()
 		job.files[resourceType] = path
 		job.counts[resourceType] = n

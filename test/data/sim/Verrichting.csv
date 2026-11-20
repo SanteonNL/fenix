@@ -1,0 +1,5 @@
+VerrichtingID;Identificatienummer;VerrichtingTypeCodeNZaSysteem;VerrichtingTypeCodeNZa;VerrichtingTypeOmschrijvingNZa;VerrichtingStartDatum;SubtrajectNr
+V1;2001;urn:oid:2.16.840.1.113883.2.4.3.27.15.5;038853;Coloscopie;2021-04-12;S2001
+V2;2002;urn:oid:2.16.840.1.113883.2.4.3.27.15.5;035121;Sigmoïdoscopie;2020-02-03;S2002
+V3;2001;urn:oid:2.16.840.1.113883.2.4.3.27.15.5;190008;Niet in de IBD-codelijst;2021-04-12;S2001
+V4;2002;urn:oid:2.16.840.1.113883.2.4.3.27.15.5;038853;Coloscopie;2017-05-05;S2002

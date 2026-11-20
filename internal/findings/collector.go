@@ -3,6 +3,7 @@ package findings
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -44,7 +45,7 @@ type Record struct {
 	Path        string       `json:"path,omitempty"`
 	Message     string       `json:"message,omitempty"`
 	Count       int          `json:"count,omitempty"`        // resources affected
-	Examples    []string     `json:"examples,omitempty"`     // ids of a few affected resources
+	Examples    []string     `json:"examples,omitempty"`     // ids of a few affected resources (summary: of a few clean ones)
 	Samples     []Sample     `json:"samples,omitempty"`      // their full resources, only when the collector has IncludeResources set
 	Values      []ValueCount `json:"values,omitempty"`       // offending values, most frequent first (capped, see maxValues)
 	OtherValues int          `json:"other_values,omitempty"` // resources whose value did not fit under the cap
@@ -59,9 +60,11 @@ type Record struct {
 	Max      string `json:"max,omitempty"`
 	Note     string `json:"note,omitempty"` // why the values are not listed
 
-	// kind = summary
-	Seen    int `json:"seen,omitempty"`    // resources of this type that were built
-	Skipped int `json:"skipped,omitempty"` // of those, resources dropped because they failed validation
+	// kind = summary. Examples and Samples then hold a few clean resources (no
+	// finding at all), to compare with the ones a finding shows.
+	Seen    int  `json:"seen,omitempty"`    // resources of this type that were built
+	Skipped int  `json:"skipped,omitempty"` // of those, resources dropped because they failed validation
+	Clean   *int `json:"clean,omitempty"`   // of those, resources without any finding (absent in files written before it was counted)
 }
 
 type valueTally struct {
@@ -73,7 +76,21 @@ type key struct {
 	code, resource, profile, path, message string
 }
 
-type typeStats struct{ seen, skipped int }
+type typeStats struct {
+	seen, skipped, clean int
+	examples             []string        // ids of a few clean resources
+	samples              []Sample        // their contents, when IncludeResources is set
+	cleanIDs             map[string]bool // ids counted in clean, so NotClean can take one back
+}
+
+func (c *Collector) statsOf(resourceType string) *typeStats {
+	s := c.stats[resourceType]
+	if s == nil {
+		s = &typeStats{}
+		c.stats[resourceType] = s
+	}
+	return s
+}
 
 // Collector aggregates findings. It is safe for concurrent use: the
 // converter's build workers all report into the same one.
@@ -160,14 +177,72 @@ func (c *Collector) AddSample(sev Severity, code, resourceType, profile, path, m
 func (c *Collector) ResourceDone(resourceType string, skipped bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := c.stats[resourceType]
-	if s == nil {
-		s = &typeStats{}
-		c.stats[resourceType] = s
-	}
+	s := c.statsOf(resourceType)
 	s.seen++
 	if skipped {
 		s.skipped++
+	}
+}
+
+// Clean counts one resource of resourceType that has no finding at all, and
+// keeps it as an example of good data while there is room, so the dashboard
+// can show what a correct resource looks like next to the wrong ones. resource
+// serialises it and is only called when its contents will be kept.
+func (c *Collector) Clean(resourceType, id string, resource func() []byte) {
+	var b []byte
+	if c.IncludeResources && resource != nil && id != "" {
+		c.mu.Lock()
+		want := len(c.statsOf(resourceType).examples) < maxExamples
+		c.mu.Unlock()
+		if want {
+			b = resource() // outside the lock: serialising is the slow part
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.statsOf(resourceType)
+	s.clean++
+	if id == "" {
+		return
+	}
+	if s.cleanIDs == nil {
+		s.cleanIDs = map[string]bool{}
+	}
+	s.cleanIDs[id] = true
+	if len(s.examples) >= maxExamples || slices.Contains(s.examples, id) {
+		return
+	}
+	s.examples = append(s.examples, id)
+	if b != nil {
+		s.samples = append(s.samples, Sample{ID: id, Resource: json.RawMessage(b)})
+	}
+}
+
+// NotClean takes back a resource that Clean counted, because a check after
+// conversion (the data requirements of a dataset export) found a problem
+// with it: it no longer counts as clean nor serves as an example of good data.
+// A resource Clean did not count is left alone, so calling it for every
+// finding of a resource is fine.
+func (c *Collector) NotClean(resourceType, id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.stats[resourceType]
+	if s == nil || !s.cleanIDs[id] {
+		return
+	}
+	delete(s.cleanIDs, id)
+	s.clean--
+	for i, ex := range s.examples {
+		if ex == id {
+			s.examples = append(s.examples[:i:i], s.examples[i+1:]...)
+			break
+		}
+	}
+	for i, sm := range s.samples {
+		if sm.ID == id {
+			s.samples = append(s.samples[:i:i], s.samples[i+1:]...)
+			break
+		}
 	}
 }
 
@@ -220,7 +295,10 @@ func (c *Collector) Drain(runID, source, query string, now time.Time) []Record {
 	}
 	sort.Strings(types)
 	for _, t := range types {
-		out = append(out, Record{Kind: "summary", RunID: runID, Time: now, Source: source, Query: query, Resource: t, Seen: stats[t].seen, Skipped: stats[t].skipped})
+		s := stats[t]
+		clean := s.clean
+		out = append(out, Record{Kind: "summary", RunID: runID, Time: now, Source: source, Query: query, Resource: t,
+			Seen: s.seen, Skipped: s.skipped, Clean: &clean, Examples: s.examples, Samples: s.samples})
 	}
 	for _, r := range profileRecords(prof, c.ProfileMaxDistinct, c.ProfileSkip) {
 		r.RunID, r.Time, r.Source, r.Query = runID, now, source, query

@@ -50,6 +50,28 @@ func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdo
 			if to != "" {
 				vars[field+"_to"] = to
 			}
+		} else if info.paramType == "token" && len(tokenAlternatives(value)) > 1 {
+			// A comma is an OR: every alternative goes into <field>_in, and no
+			// single-value vars are set. InexactParams reports the param, so the
+			// in-Go filter checks the exact system|code pairs afterwards.
+			var codes []string
+			for _, alt := range tokenAlternatives(value) {
+				code := alt[1]
+				if translate != nil {
+					if sources, exact, mapped := translate(resourceType, field, code); mapped {
+						if !exact {
+							codes = nil // one alternative cannot be listed: no SQL filter at all
+							break
+						}
+						codes = append(codes, sources...)
+						continue
+					}
+				}
+				codes = append(codes, code)
+			}
+			if codes != nil {
+				vars[field+"_in"] = sqlList(codes)
+			}
 		} else {
 			vars[field] = value
 			if info.paramType == "token" {
@@ -73,6 +95,51 @@ func buildTemplateVars(resourceType string, fhirParams map[string]string, pushdo
 		}
 	}
 	return vars
+}
+
+// tokenAlternatives splits a token search value on its unescaped commas into
+// [system, code] pairs (system "" when absent), removing the FHIR escapes
+// (\, \| \$ \\). "a|1,b|2" -> [[a 1] [b 2]].
+func tokenAlternatives(value string) [][2]string {
+	var out [][2]string
+	for _, alt := range splitEscaped(value, ',') {
+		parts := splitEscaped(alt, '|')
+		if len(parts) == 1 {
+			out = append(out, [2]string{"", unescapeToken(parts[0])})
+			continue
+		}
+		out = append(out, [2]string{unescapeToken(parts[0]), unescapeToken(strings.Join(parts[1:], `\|`))})
+	}
+	return out
+}
+
+func splitEscaped(s string, sep byte) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case sep:
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(parts, s[start:])
+}
+
+func unescapeToken(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // splitDateValue parses a FHIR date value with optional comparison prefix.

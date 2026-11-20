@@ -92,11 +92,11 @@ func TestInModifier(t *testing.T) {
 		map[string]interface{}{"resourceType": "Procedure"}}
 	vs := "https://ig.santeon.nl/sim-on-fhir/ValueSet/ibd-verrichting"
 
-	in := filterUnwiredParams("Procedure", map[string]string{"code:in": vs}, nil, resources, lookup, s.valueSetMembers())
+	in := filterUnwiredParams("Procedure", map[string]string{"code:in": vs}, nil, resources, lookup, s.filterDeps())
 	if len(in) != 1 {
 		t.Fatalf(":in should keep only the member coding, got %d", len(in))
 	}
-	notIn := filterUnwiredParams("Procedure", map[string]string{"code:not-in": vs}, nil, resources, lookup, s.valueSetMembers())
+	notIn := filterUnwiredParams("Procedure", map[string]string{"code:not-in": vs}, nil, resources, lookup, s.filterDeps())
 	if len(notIn) != 3 {
 		t.Fatalf(":not-in should keep the other three (also the one without code), got %d", len(notIn))
 	}

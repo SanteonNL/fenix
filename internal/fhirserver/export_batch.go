@@ -10,6 +10,7 @@ import (
 	"regexp"
 
 	"github.com/SanteonNL/fenix/internal/converter"
+	"github.com/SanteonNL/fenix/internal/datasets"
 	"github.com/SanteonNL/fenix/internal/patientnumbers"
 	"github.com/SanteonNL/fenix/internal/querycompiler"
 )
@@ -61,6 +62,8 @@ type exportTypeJob struct {
 	batches        [][]string               // patient ids, per batch
 	patientNumbers *patientnumbers.Registry // old -> active patient numbers; nil = none
 	elements       map[string][]string      // _elements for de-identification
+	dataset        *datasets.Dataset        // checked for missing required elements; nil = none
+	codes          *codeTracker             // collects the codes the dataset filters on that occur; nil = none
 	runID          string
 	queriesDir     string // where compiled queries go ("" = default location)
 	groupFile      string
@@ -147,6 +150,7 @@ func (s *Server) exportBatchOf(ctx context.Context, job exportTypeJob, index int
 		queryDir:   job.queriesDir,
 		groupFile:  job.groupFile,
 		skipWrite:  index > 0, // every batch compiles to the same query file
+		codesInGo:  true,      // every code of the group's patients is validated, so an unmapped one is reported (FX-DATA-02x)
 	})
 	if err != nil {
 		return batchOut{err: err, status: http.StatusInternalServerError}
@@ -155,12 +159,18 @@ func (s *Server) exportBatchOf(ctx context.Context, job exportTypeJob, index int
 		return batchOut{err: fmt.Errorf("resource type %q is not configured for source %q", job.resourceType, s.source), status: http.StatusBadRequest}
 	}
 
+	s.checkDatasetElements(job.dataset, job.resourceType, resources)
+	job.codes.observe(resources)
 	resources = job.patientNumbers.UseActiveNumber(resources)
 
 	if s.deidentRuleset != nil {
 		if err := s.deidentifyWithRunID(resources, job.elements, job.runID); err != nil {
 			return batchOut{err: fmt.Errorf("de-identifying: %w", err), status: http.StatusUnprocessableEntity}
 		}
+	} else {
+		// Without de-identification, _elements trims the output itself: only the
+		// declared and the mandatory elements are exported (Bulk Data _elements).
+		resources = trimElements(job.resourceType, resources, job.elements[job.resourceType])
 	}
 
 	var buf bytes.Buffer

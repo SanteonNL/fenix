@@ -18,6 +18,11 @@ import (
 // goroutines; a nil collector (the default) turns reporting off.
 func (fc *FHIRConverter) SetFindings(c *findings.Collector) { fc.findings = c }
 
+// Findings returns the collector set with SetFindings, nil when reporting is
+// off, so checks outside the converter (a dataset export) report into the
+// same findings file.
+func (fc *FHIRConverter) Findings() *findings.Collector { return fc.findings }
+
 // FlushFindings writes everything collected so far to dir as
 // findings-<runID>.jsonl and clears the collector. It returns "" when there was
 // nothing to write or reporting is off.
@@ -90,9 +95,12 @@ func (fc *FHIRConverter) reportFindings(resourceID, rootPath string, raw map[str
 		if u.code == "" {
 			u.code = "(empty)"
 		}
-		if u.status == MapDefault {
+		switch u.status {
+		case MapDefault:
 			report(findings.Warning, findings.CodeDataUnmapped, path, fmt.Sprintf("no mapping for this source code; the concept map's default (%q) replaces it", u.target), u.code)
-		} else {
+		case MapNoMap:
+			report(findings.Warning, findings.CodeDataNotInValueSet, path, "code is not in the bound valueset and no concept map targets it; it is passed through unchanged", u.code)
+		default:
 			report(findings.Warning, findings.CodeDataUnmappedNone, path, "no mapping for this source code and the concept map has no default; it is passed through unchanged", u.code)
 		}
 	}
@@ -114,6 +122,14 @@ func (fc *FHIRConverter) reportFindings(resourceID, rootPath string, raw map[str
 
 	if fc.profile != nil && fc.profile.HasProfileFor(rootPath) {
 		fc.checkProfile(rootPath, raw, report)
+	}
+
+	// No finding at all: count it, and keep a few as samples of good data.
+	if len(reported) == 0 && structErr == nil {
+		fc.findings.Clean(rootPath, resourceID, func() []byte {
+			b, _ := json.Marshal(raw)
+			return b
+		})
 	}
 }
 

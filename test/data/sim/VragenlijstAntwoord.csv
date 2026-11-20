@@ -1,0 +1,4 @@
+VragenlijstAntwoordID;Identificatienummer;QuestionnaireResponseQuestionnaire;InvulDatumTijd;QuestionnaireResponseItemLinkId;AntwoordCodeSysteem;AntwoordCode;AntwoordCodeOmschrijving;AntwoordWaarde
+Q1;2001;http://decor.nictiz.nl/fhir/Questionnaire/2.16.840.1.113883.2.4.3.11.60.124.27.62--20250714064425;2024-01-10T10:00:00+01:00;1;;;;8
+Q1;2001;http://decor.nictiz.nl/fhir/Questionnaire/2.16.840.1.113883.2.4.3.11.60.124.27.62--20250714064425;2024-01-10T10:00:00+01:00;2;http://snomed.info/sct;373066001;Ja;
+Q2;2002;http://decor.nictiz.nl/fhir/Questionnaire/2.16.840.1.113883.2.4.3.11.60.124.27.62--20250714064425;2017-03-03T10:00:00+01:00;1;;;;6

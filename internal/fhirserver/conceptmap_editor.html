@@ -678,6 +678,8 @@ backBtn.addEventListener('click', leave);
 // ---- deep links from the findings dashboard ----
 //   /conceptmaps#edit=<file>&code=<source code>&back=/findings      open that map at the code: its row, or a new row for it
 //   /conceptmaps#new=<valueset>&code=<source code>&back=/findings   a new map for that valueset, with the code as its first row
+//   ...&target=<target code>   also fills in the target of that row (a code a dataset needs but the data lacks);
+//                              without code= an empty row is added for the source code to be typed in
 let returnTo = null; // where Save and Cancel go when the page was opened from a link
 
 function leave() {
@@ -687,32 +689,50 @@ function leave() {
 
 // focusCode scrolls to the row of a source code, adding a row for it (in the group that holds the
 // fallback, else the first) when the map has none, and puts the cursor in its target code field.
-function focusCode(code) {
-  let added = false;
-  if (!current.group.some(g => g.element.some(el => el.code === code))) {
-    let g = current.group.find(x => x.unmapped) || current.group[0];
+// With a target, that target code is filled in when the row has none yet; without a source code a
+// new empty row gets the target and the cursor goes to its source code field.
+function focusCode(code, target) {
+  code = code || '';
+  let added = false, filled = false, g = null, el = null;
+  if (code) {
+    for (const x of current.group) {
+      const e = x.element.find(e => e.code === code);
+      if (e) { g = x; el = e; break; }
+    }
+  }
+  if (!el) {
+    g = current.group.find(x => x.unmapped) || current.group[0];
     if (!g) { g = { element: [] }; current.group.push(g); }
-    g.element.push({ code: code, target: [{ code: '', equivalence: 'equivalent' }] });
+    el = { code: code, target: [{ code: '', equivalence: 'equivalent' }] };
+    g.element.push(el);
     added = true;
-    renderGroups();
   }
-  const input = [...document.querySelectorAll('input[data-role="tgt"]')].find(i => i.dataset.src === code);
-  if (input) {
-    input.scrollIntoView({ block: 'center' });
-    input.focus();
-    input.closest('tr').classList.add('flash');
+  if (target && !el.target[0].code) {
+    el.target[0].code = target;
+    applyConcept(g, el.target[0], target);
+    filled = true;
   }
-  toast(added ? 'Added "' + code + '": fill in the target code and Save' : 'Showing "' + code + '"');
+  if (added || filled) renderGroups();
+  const input = [...document.querySelectorAll('input[data-role="tgt"]')].filter(i => i.dataset.src === code).pop();
+  const focus = input && (code ? input : input.closest('tr').querySelector('.src-cell input'));
+  if (focus) {
+    focus.scrollIntoView({ block: 'center' });
+    focus.focus();
+    focus.closest('tr').classList.add('flash');
+  }
+  if (!code) toast('Added a row to "' + target + '": fill in the source code and Save');
+  else if (added) toast('Added "' + code + '"' + (target ? ' → "' + target + '": check it and Save' : ': fill in the target code and Save'));
+  else toast('Showing "' + code + '"' + (filled ? ' → "' + target + '"' : ''));
 }
 
 async function handleDeepLink() {
   const p = new URLSearchParams(location.hash.slice(1));
   returnTo = p.get('back');
   if (returnTo && !returnTo.startsWith('/')) returnTo = null; // only links back into this server
-  const code = p.get('code');
+  const code = p.get('code'), target = p.get('target');
   if (p.get('edit')) {
     await openFile(p.get('edit'));
-    if (current && code) focusCode(code);
+    if (current && (code || target)) focusCode(code, target);
   } else if (p.get('new')) {
     newConceptMap();
     current.targetCanonical = p.get('new');
@@ -720,7 +740,7 @@ async function handleDeepLink() {
     current.id = vsName + '-map';
     current.title = 'Map to ' + vsName;
     renderEdit();
-    if (code) focusCode(code);
+    if (code || target) focusCode(code, target);
   }
 }
 
