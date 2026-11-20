@@ -1,0 +1,170 @@
+# FENIX with the sim-on-fhir FHIR package instead of the profiles folder.
+# Copied from config.example.yaml; only the inputs block differs (and the sim-on-fhir source).
+#
+# The package is the IG build of the sim-on-fhir repository (next to this checkout):
+#   cd ../sim-on-fhir && sushi . && <IG Publisher>   -> output/package.tgz
+# FENIX re-reads it on start; a rebuilt package (new content) is picked up automatically.
+#
+# The Nationale Terminologieserver expands what the package cannot (SNOMED ECL, LOINC, ...).
+# Put the sign-in in config/.env (git-ignored), never in this file:
+#   NTS_USERNAME=...
+#   NTS_PASSWORD=...
+#
+#   go run ./cmd/fenix -config config/sim-on-fhir-package.yaml -cmd serve <source>
+#
+# FENIX configuration. Blocks are ordered by dependency, each is defined before it is used:
+#   sources   connections to the outside: databases, APIs, SFTP, directories, git repositories
+#   inputs    which of those FENIX reads queries and terminology from
+#   staging   where loaded data lands
+#   output    where FHIR output goes
+#   deident   optional de-identification of the output
+
+environment: dev  # dev (colored console output) | prod (JSON output)
+logLevel: info    # trace, debug, info, warn, error — omit to use default (debug in dev, info in prod)
+
+# One entry per connection. What a source is used for follows from how it is referenced:
+# loaded into staging as data (default), and/or named under inputs: as a place that holds files.
+# "repo" is always available without declaring it: it is this FENIX checkout, files only.
+sources:
+  # The sim-on-fhir repository next to this checkout, files only (its IG package).
+  sim-on-fhir:
+    type: local
+    dir: ../sim-on-fhir
+    load: false
+
+  # Files only, not loaded into staging. A private git repository with queries:
+  # fenix-queries:
+  #   type: git                         # git sources never load into staging
+  #   url: https://github.com/SanteonNL/fenix-queries.git
+  #   ref: main                         # branch or tag, default: remote default branch
+  #   token_env: FENIX_QUERIES_TOKEN    # env var with a read-only access token (Contents)
+  #   cache_dir: .cache/sources/fenix-queries   # default
+  # A plain directory with terminology:
+  # terminology:
+  #   type: local
+  #   dir: terminology                  # relative to the FENIX checkout, or absolute
+  #   load: false                       # a local dir is loaded as data unless you say not to
+
+  hix-test:
+    type: sqlserver
+    connection_string: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix;encrypt=false;TrustServerCertificate=true"
+
+  luscii:
+    type: luscii
+    base_url: https://vitalsapi.luscii.com
+    api_key: ${LUSCII_API_KEY}
+    endpoints:
+      - path: /v1/patients
+        table: luscii_patients
+        since_param: startDate
+        end_param: endDate
+        id_field: id
+        
+
+  sim:
+    type: local
+    dir: "test/data/sim"
+    delimiter: ";"
+    # json_options (local/sftp only): controls how a JSON file's records are split into tables.
+    # Keyed by filename without extension, lowercased (e.g. journeys.json -> "journeys").
+    #   id_field: response field used as the row's primary key, required for incremental upsert.
+    #   children: map of field name -> sub-config. Each listed field is pulled out of the
+    #             parent record into its own child table, named <source>_<file>_<field>,
+    #             linked back to the parent via a generated FK column.
+    #             - children.<field>: {}                     promote to a child table, flattened with no further nesting
+    #             - children.<field>: {id_field, children}   recurse another level (grandchild tables), same rules apply
+    # Any array field NOT listed under children is left as JSON text in the parent row (default behaviour).
+    json_options:
+      journeys:
+        id_field: id                      # upsert key for the journeys table
+        children:
+          responsible_user_groups: {}     # -> sim_journeys_responsible_user_groups, no deeper nesting
+          steps:                          # -> sim_journeys_steps, recurse one level further
+            id_field: id
+            children:
+              completions: {}             # -> sim_journeys_steps_completions
+
+  zbj-test:
+    type: sftp
+    host: "${ZBJ_SFTP_HOST}"       # e.g. <storage-account>.blob.core.windows.net
+    port: 22
+    username: "${ZBJ_SFTP_USER}"   # Azure format: <storage-account>.<container>.<local-user>
+    key_file: "C:\\Users\\t.hetterscheid\\.ssh\\zbj-test-svc-id_rsa"
+    remote_dir: "/"
+    delimiter: ";"
+
+
+# Which files FENIX uses, as {source, path}. A left-out entry uses the default shown.
+inputs:
+  # Root that holds queries/<source>/fhir|dwh/*.sql and queries/dwh/cross. It REPLACES the
+  # local queries/, including for the SQL paths in the queryConfig YAMLs.
+  queries: {source: repo}                                  # default
+  queryConfig: {source: repo, path: config/queries}        # default; -query-config overrides
+  # Profiles, ValueSets and ObservationDefinitions come from the package below, not from folders.
+  conceptMaps: {source: repo, path: test/data/conceptmaps/fhir}
+
+  # The sim-on-fhir package: every conformance resource is served by the API (/r4/<type>?url=...,
+  # /r4/ValueSet/$expand, /r4/ValueSet/$validate-code) and used by code:in / code:not-in.
+  # use: what is also fed into conversion, as the folder inputs would be.
+  packages:
+    - file: {source: sim-on-fhir, path: output/package.tgz}
+      use: [profiles, valueSets, observationDefinitions]
+      dependencies: true                  # nictiz.nl.gbb, hl7.fhir.eu.base, ... from packages.fhir.org (served only)
+      exclude: [hl7.fhir.r4.core, hl7.fhir.uv.xver-r5.r4]   # FHIR core (built in) and the 163 MB R5 cross-version package
+  # packageCache: .cache/packages         # default
+
+  # Nationale Terminologieserver, signed in the way HipsETL does (OpenID password grant, client cli_client).
+  terminologyServers:
+    - name: nts
+      url: https://terminologieserver.nl/fhir
+      systems: [http://snomed.info/sct, http://loinc.org]
+      valueSets: [https://terminologieserver.nl/]
+      cacheTTL: 24h
+      auth:
+        type: password
+        tokenUrl: https://terminologieserver.nl/authorisation/auth/realms/nictiz/protocol/openid-connect/token
+        clientId: cli_client
+        username_env: NTS_USERNAME          # from config/.env
+        password_env: NTS_PASSWORD          # from config/.env
+
+staging:
+  database: sqlite        # sqlite (default) | postgres | sqlserver
+  #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist
+  path: output/staging.db # persist to file — useful for debugging SQL queries after a run
+  # connection: "host=localhost user=fenix dbname=staging" # postgres: full DSN
+  # connection: "server=127.0.0.1;port=1433;user id=${HIX_USER};password=${HIX_PASSWORD};database=hix_staging;encrypt=false;TrustServerCertificate=true" # sqlserver
+  # driver: sqlite        # pure Go, no CGO — default (modernc.org/sqlite)
+  # driver: sqlite3       # CGO-based, requires GCC/MinGW (github.com/mattn/go-sqlite3)
+  # pool:                  # connection pool when the FHIR API serves from this database (all optional)
+  #   maxOpenConns: 8      # default: one per CPU for a SQLite file, 16 for SQL Server/Postgres; always 1 for in-memory SQLite
+  #   maxIdleConns: 8      # default: maxOpenConns
+  #   connMaxLifetime: 30m
+  #   connMaxIdleTime: 5m
+  # A sources.<name>.pool block does the same for a SQL Server used directly via -data-source.
+
+# FHIR API server tuning, all optional (see config/large-export.yaml for a worked example):
+# performance:
+#   statementWorkers: 8     # statements of one query run at once; default: the pool size
+#   buildWorkers: 12        # goroutines building+validating resources; default: number of CPUs
+#   exportBatchSize: 1000   # patients per Group $export batch (bounds memory); default 1000
+#   exportWorkers: 4        # export batches in flight at once; default 4
+
+output:
+  format: pretty          # json | ndjson | pretty
+  type: local
+  local:
+    dir: output
+    useTimestamp: true    # Create timestamped subdirectories for each run (default: true)
+    archiveCount: 2      # Number of previous runs to keep in archive/ folder (0 = keep all, default: 5)
+  # Data-quality findings (FX-DATA-nnn: wrong types/codes, profile violations) as JSON lines,
+  # one findings-<runID>.jsonl per run, separate from the application log. Meant for dashboards.
+  # findings:
+  #   dir: output/findings   # default: <local.dir>/findings (not archived or pruned with the runs)
+  #   profile:                # what the source delivered per element (values and counts); off by default\n  #     enabled: true\n  #     maxDistinct: 30        # list values only for elements with at most this many distinct values\n  #     skip: []               # elements never listed value by value (FHIR path or last segment, * and ? wildcards)\n  #   includeResources: false # true: keep the full resource of each example (shown on hover). Real data, not de-identified: only if the findings folder is as protected as the data
+
+# De-identification (internal/deident) — disabled by default. See
+# docs/fenix_architecture.md, "❻ De-identification".
+# deident:
+#   enabled: true
+#   rulesetFile: "config/deident/santeon-default.json"  # a resolved DeidentificationRuleset JSON file (deident.Resolve output)
+#   keyEnv: "FENIX_DEIDENT_KEY"                          # env var holding the base64-encoded HMAC key; this is the default if omitted

@@ -87,6 +87,46 @@ inputs:
   # observationDefinitions: {source: repo, path: terminology/observationdefinitions}   # optional: check an Observation's value type and coded answer against the ObservationDefinition of its code
   # valueSets:  {source: repo, path: terminology/valuesets}   # optional: codes that are members of a concept map's target valueset need no mapping
 
+  # FHIR packages (package.tgz, as built by the IG Publisher). All their conformance resources
+  # (also those of the folders above) are served by the API: GET /r4/<type>?url=..., /r4/<type>/<id>,
+  # /r4/ValueSet/$expand, /r4/ValueSet/$validate-code; and used by the search modifiers
+  # code:in=<ValueSet url> / code:not-in=<ValueSet url> (search, _typeFilter, Group member-filter).
+  # "use" also feeds the package's own resources into conversion, like the folder inputs above:
+  # profiles | valueSets | conceptMaps | observationDefinitions. Empty (default): served only.
+  # packages:
+  #   - name: santeon.sim-on-fhir           # from a registry
+  #     version: 0.1.0                      # exact version only
+  #     registry: https://packages.simplifier.net   # default https://packages.fhir.org
+  #     # token_env: SIMPLIFIER_TOKEN       # private registry: env var with a bearer token
+  #     dependencies: true                  # also load nictiz.nl.gbb, hl7.fhir.eu.base, ... (served only)
+  #     # exclude: [hl7.fhir.r4.core]       # default: the core package is not loaded
+  #     use: [valueSets, observationDefinitions]
+  #   - file: {source: repo, path: ../sim-on-fhir/output/package.tgz}   # a local .tgz or extracted folder
+  #     use: [observationDefinitions]
+  # packageCache: .cache/packages           # default
+
+  # Terminology servers, for the ValueSets FENIX cannot expand itself. A ValueSet that is loaded
+  # (folder or package) and lists its codes is always expanded locally. It goes to the first server
+  # that matches when it is not loaded and its url starts with one of valueSets, or when it needs
+  # one of systems (a filter such as SNOMED ECL, all of a code system that is not loaded, or an
+  # implicit ValueSet like http://snomed.info/sct?fhir_vs=ecl/...). Expansions are cached (cacheTTL).
+  # terminologyServers:
+  #   - name: nts
+  #     url: https://terminologieserver.nl/fhir
+  #     systems: [http://snomed.info/sct, http://loinc.org]
+  #     valueSets: [https://terminologieserver.nl/]
+  #     cacheTTL: 24h                       # default 24h
+  #     maxConcepts: 100000                 # default; larger expansions are refused
+  #     auth:
+  #       type: password                    # none | bearer (token_env) | password (OpenID password grant)
+  #       tokenUrl: https://terminologieserver.nl/authorisation/auth/realms/nictiz/protocol/openid-connect/token
+  #       clientId: cli_client
+  #       username_env: NTS_USERNAME
+  #       password_env: NTS_PASSWORD
+  #   - name: art-decor                     # e.g. the zib ValueSets that are not in a package
+  #     url: https://decor.nictiz.nl/fhir/4.0/zib2020bbr-
+  #     valueSets: [http://decor.nictiz.nl/fhir/ValueSet/]
+
 staging:
   database: sqlite        # sqlite (default) | postgres | sqlserver
   #path: ""                # sqlite: "" = in-memory (default), or e.g. data/staging.db to persist

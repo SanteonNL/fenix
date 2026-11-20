@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SanteonNL/fenix/internal/conformance"
 	"github.com/SanteonNL/fenix/internal/converter"
 	"github.com/SanteonNL/fenix/internal/deident"
 	"github.com/SanteonNL/fenix/internal/models/fhir"
@@ -40,6 +41,8 @@ type Server struct {
 
 	conceptMapsDir string                       // directory of FHIR ConceptMap .json files served/edited by the /conceptmaps UI
 	conceptMapSvc  *converter.ConceptMapService // reloaded in place whenever the editor saves/deletes a file
+
+	conformance *conformance.Store // conformance resources served under /r4/<type> and used by :in / :not-in; nil serves none (SetConformance)
 
 	deidentRuleset *deident.Ruleset // nil disables de-identification entirely
 	deidentKey     []byte
@@ -182,6 +185,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	resourceType := segments[0]
 	if resourceType == "" {
 		fhirError(w, "missing resource type in path", http.StatusBadRequest)
+		return
+	}
+
+	if conformance.Serves(resourceType) {
+		s.handleConformance(w, r, resourceType, segments[1:])
 		return
 	}
 
@@ -389,6 +397,9 @@ func (s *Server) searchInGroup(ctx context.Context, resourceType string, fhirPar
 
 // render compiles the queries for (resourceType, fhirParams), restricted to membersSQL when set.
 func (s *Server) render(resourceType string, fhirParams map[string]string, membersSQL string) ([]querycompiler.RenderedQuery, error) {
+	if err := s.checkValueSetParams(fhirParams); err != nil {
+		return nil, err
+	}
 	var rendered []querycompiler.RenderedQuery
 	var err error
 	if membersSQL == "" {
@@ -419,7 +430,7 @@ func (s *Server) convertRendered(ctx context.Context, resourceType string, fhirP
 		return nil, fmt.Errorf("conversion failed: %w", err)
 	}
 
-	return filterUnwiredParams(resourceType, fhirParams, s.sqlPushedCodes(resourceType, fhirParams), resources, s.compiler.SearchParamField), nil
+	return filterUnwiredParams(resourceType, fhirParams, s.sqlPushedCodes(resourceType, fhirParams), resources, s.compiler.SearchParamField, s.valueSetMembers()), nil
 }
 
 // sqlPushedCodes are the params the SQL for (resourceType, fhirParams) really narrows on.

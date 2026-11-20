@@ -50,22 +50,46 @@ func (o *ObservationDefinitions) LoadDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
-	var defs []*obsDef
+	var files []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
-			continue
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			files = append(files, filepath.Join(dir, e.Name()))
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+	}
+	defs := o.read(files)
+	o.mu.Lock()
+	o.defs = defs
+	o.mu.Unlock()
+	o.logger.Info().Str("dir", dir).Int("definitions", len(defs)).Msg("Loaded observation definitions")
+	return nil
+}
+
+// AddFiles adds ObservationDefinition files (e.g. from a FHIR package) to the
+// definitions already loaded, and returns how many it read.
+func (o *ObservationDefinitions) AddFiles(files []string) int {
+	defs := o.read(files)
+	o.mu.Lock()
+	o.defs = append(o.defs, defs...)
+	o.mu.Unlock()
+	return len(defs)
+}
+
+// read parses ObservationDefinition files; unreadable ones are logged and skipped.
+func (o *ObservationDefinitions) read(files []string) []*obsDef {
+	var defs []*obsDef
+	for _, file := range files {
+		name := filepath.Base(file)
+		data, err := os.ReadFile(file)
 		if err != nil {
-			o.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping observation definition")
+			o.logger.Warn().Err(err).Str("file", name).Msg("Skipping observation definition")
 			continue
 		}
 		od, err := fhir.UnmarshalObservationDefinition(data)
 		if err != nil {
-			o.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping observation definition")
+			o.logger.Warn().Err(err).Str("file", name).Msg("Skipping observation definition")
 			continue
 		}
-		d := &obsDef{file: e.Name(), label: stringOrEmpty(od.PreferredReportName)}
+		d := &obsDef{file: name, label: stringOrEmpty(od.PreferredReportName)}
 		if od.Id != nil {
 			d.id = *od.Id
 		}
@@ -81,16 +105,12 @@ func (o *ObservationDefinitions) LoadDir(dir string) error {
 			d.answers = *od.ValidCodedValueSet.Reference
 		}
 		if len(d.codes) == 0 {
-			o.logger.Warn().Str("file", e.Name()).Msg("Observation definition has no code, skipping")
+			o.logger.Warn().Str("file", name).Msg("Observation definition has no code, skipping")
 			continue
 		}
 		defs = append(defs, d)
 	}
-	o.mu.Lock()
-	o.defs = defs
-	o.mu.Unlock()
-	o.logger.Info().Str("dir", dir).Int("definitions", len(defs)).Msg("Loaded observation definitions")
-	return nil
+	return defs
 }
 
 // find returns the first definition for one of the observation's codings. A

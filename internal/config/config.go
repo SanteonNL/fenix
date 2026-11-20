@@ -44,6 +44,13 @@ type InputsConfig struct {
 	ObservationDefinitions DirRef `yaml:"observationDefinitions"` // optional: FHIR ObservationDefinition .json files; an Observation value is checked against the definition of its code
 	ValueSets              DirRef `yaml:"valueSets"`              // optional: FHIR ValueSet .json files; a code that is a member of the valueset a concept map targets needs no mapping
 	SQLFile                string `yaml:"sqlFile"`                // optional single multi-statement SQL file, relative to the repo root (same as the -sql flag)
+
+	// FHIR packages (package.tgz) whose conformance resources FENIX serves and uses, see PackageRef.
+	Packages     []PackageRef `yaml:"packages"`
+	PackageCache string       `yaml:"packageCache"` // where downloaded/extracted packages are kept; default .cache/packages (relative to the repo root)
+
+	// Terminology servers for the ValueSets FENIX cannot expand itself (e.g. SNOMED ECL on the NTS), see TerminologyServer.
+	TerminologyServers []TerminologyServer `yaml:"terminologyServers"`
 }
 
 // DirRef points at a directory inside a source. Only sources that hold files

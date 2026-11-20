@@ -51,6 +51,7 @@ type ConceptMapService struct {
 	valueSets  map[string]map[string]bool // valueset url (no version) -> its member codes, see LoadValueSetsDir
 	vsURLs     map[string]string          // valueset url or "ValueSet/<id>" -> its canonical url (no version)
 	vsConcepts map[string][]ValueSetConcept // valueset url or "ValueSet/<id>" -> its listed concepts, for the editor's pick-lists
+	extraMaps  []string                     // ConceptMap files from outside the editor folder (packages), reloaded by LoadDir
 	logger     zerolog.Logger
 }
 
@@ -146,22 +147,41 @@ func (s *ConceptMapService) LoadValueSetsDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+	n := s.loadValueSets(files, true)
+	s.logger.Info().Str("dir", dir).Int("valuesets", n).Msg("Loaded valuesets")
+	return nil
+}
+
+// AddValueSetFiles adds the member codes of ValueSet files (e.g. from a FHIR
+// package) to the valuesets already loaded, see LoadValueSetsDir. It returns
+// the number of valuesets with listed members it read.
+func (s *ConceptMapService) AddValueSetFiles(files []string) int {
+	return s.loadValueSets(files, false)
+}
+
+// loadValueSets reads ValueSet files; replace drops the valuesets loaded before.
+func (s *ConceptMapService) loadValueSets(files []string, replace bool) int {
 	sets := map[string]map[string]bool{}
 	urls := map[string]string{}
 	concepts := map[string][]ValueSetConcept{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+	read := 0
+	for _, file := range files {
+		data, err := os.ReadFile(file)
 		if err != nil {
-			s.logger.Warn().Err(err).Str("file", e.Name()).Msg("Skipping valueset")
+			s.logger.Warn().Err(err).Str("file", filepath.Base(file)).Msg("Skipping valueset")
 			continue
 		}
 		url, id, list := valueSetMembers(data)
 		if url == "" || len(list) == 0 {
 			continue
 		}
+		read++
 		for _, name := range []string{stripVersion(url), "ValueSet/" + id} {
 			if name == "ValueSet/" {
 				continue
@@ -177,12 +197,44 @@ func (s *ConceptMapService) LoadValueSetsDir(dir string) error {
 		}
 	}
 	s.mu.Lock()
-	s.valueSets = sets
-	s.vsURLs = urls
-	s.vsConcepts = concepts
+	defer s.mu.Unlock()
+	if replace || s.valueSets == nil {
+		s.valueSets, s.vsURLs, s.vsConcepts = sets, urls, concepts
+		return read
+	}
+	for name, members := range sets {
+		if s.valueSets[name] == nil {
+			s.valueSets[name] = map[string]bool{}
+		}
+		for code := range members {
+			s.valueSets[name][code] = true
+		}
+		s.vsURLs[name] = urls[name]
+		s.vsConcepts[name] = append(s.vsConcepts[name], concepts[name]...)
+	}
+	return read
+}
+
+// AddConceptMapFiles loads ConceptMap files that live outside the editor's
+// folder (e.g. from a FHIR package). They are kept across LoadDir, which
+// reloads them first, so an editor save does not drop them.
+func (s *ConceptMapService) AddConceptMapFiles(files []string) int {
+	s.mu.Lock()
+	s.extraMaps = append(s.extraMaps, files...)
 	s.mu.Unlock()
-	s.logger.Info().Str("dir", dir).Int("valuesets", len(sets)).Msg("Loaded valuesets")
-	return nil
+	return s.loadFiles(files)
+}
+
+func (s *ConceptMapService) loadFiles(files []string) int {
+	n := 0
+	for _, f := range files {
+		if err := s.LoadJSON(f); err != nil {
+			s.logger.Warn().Err(err).Str("file", filepath.Base(f)).Msg("Skipping concept map")
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // ValueSetConcept is one listed member of a valueset.
@@ -278,7 +330,9 @@ func (s *ConceptMapService) LoadDir(dir string) error {
 
 	s.mu.Lock()
 	s.byValueset = make(map[string]*valuesetMap)
+	extra := append([]string(nil), s.extraMaps...)
 	s.mu.Unlock()
+	s.loadFiles(extra)
 
 	count := 0
 	for _, e := range entries {
